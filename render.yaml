@@ -14,6 +14,7 @@ services:
   - type: web
     name: q-express
     runtime: node
+    autoDeploy: true
     plan: free
     region: frankfurt
     healthCheckPath: /api/healthz

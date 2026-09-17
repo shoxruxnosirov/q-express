@@ -175,6 +175,11 @@ async function ensureSeedData() {
         })),
       );
     })();
+    // A rejected promise must not stay cached, or every later request
+    // repeats the first failure long after its cause is gone.
+    seedPromise.catch(() => {
+      seedPromise = undefined;
+    });
   }
   await seedPromise;
 }
