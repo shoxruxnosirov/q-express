@@ -1,0 +1,44 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "7StiTAfXyx0ylkg4-DoY1"
+uri = "file://artifacts/qorasuv-express/public/brand/q-express-logo.png"
+type = "image"
+title = "Q express — yangi logo PNG"
+description = "Shaffof fonli logotip, 1840 × 480 piksel."
+logical_id = "364e0a88-4490-452d-a9e4-64aecdf91930"
+content_hash = "sha256:5a0f7232b77ba7356cbe1b083a077840fcfa446ce5ec9e7bc294369f5cec1f5e"
+size = 96631
+mtime_ms = 1789628668896
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:af44da4c-c8b2-45ec-869c-9b9e6534c208/364e0a88-4490-452d-a9e4-64aecdf91930/a5e7bb8d-0396-41d2-9be6-ba89d1faebac"
+storage_version_token = "1789628685983576"
+content_type = "image/png"
+
+[[outputs]]
+id = "cFFet3T2M5AJjb2E-pEHr"
+uri = "file://artifacts/qorasuv-express/public/brand/wordmark.svg"
+type = "image"
+title = "Q express — yangi logo SVG"
+description = "Vektor formatdagi tasdiqlangan paketli Q logotipi."
+logical_id = "75ba08a4-b071-478f-a49d-73013c1e09d4"
+content_hash = "sha256:aa9b9b57748b4bae1407f60ba9507a7ae8c374f6ee72152c8eacb7a1304559b4"
+size = 872
+mtime_ms = 1789628621820
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:af44da4c-c8b2-45ec-869c-9b9e6534c208/75ba08a4-b071-478f-a49d-73013c1e09d4/e800288c-5a8e-44c5-9089-171f74746e8e"
+storage_version_token = "1789628687281987"
+content_type = "image/svg+xml"
+
+[[outputs]]
+id = "Vurl3DAFSlR9LG243fJQw"
+uri = "file://attached_assets/q-express-proposal/preview.png"
+type = "image"
+title = "Q express — yangi logotip taklifi"
+description = "Q harfi va xarid paketi: asosiy logotip hamda Telegram avataridagi ko‘rinishi."
+logical_id = "dbece6c4-1bad-40fd-810a-d491ee396c97"
+content_hash = "sha256:0841900691ecda92debfea97408bb6c8ba16e5c95324cdcdd13bb101bc1cba55"
+size = 51920
+mtime_ms = 1789628532144
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:af44da4c-c8b2-45ec-869c-9b9e6534c208/dbece6c4-1bad-40fd-810a-d491ee396c97/7271a301-d6cc-44b2-92dd-008f770d0fa9"
+storage_version_token = "1789628564920755"
+content_type = "image/png"

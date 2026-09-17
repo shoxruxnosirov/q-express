@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Qorasuv Express"
+description = "Qorasuv Express is a Telegram-ready grocery delivery web app for browsing fresh products, managing a cart, placing orders, tracking delivery, and operating the store through an admin dashboard."
+version = "1.0.0"
+id = "artifacts/qorasuv-express"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19800
+
+[services.development]
+run = "pnpm --filter @workspace/qorasuv-express run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/qorasuv-express", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/qorasuv-express/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19800"
+BASE_PATH = "/"

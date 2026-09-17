@@ -1,0 +1,3 @@
+- [Generated client DOM iterable support](frontend-generated-client-dom-iterable.md) — keep `dom.iterable` enabled for generated fetch helpers that call `Headers.entries()`.
+- [Telegram bot API choice](telegram-bot-api-choice.md) — use a server-only Bot API client because no Telegram connector is available.
+- [Q express logo direction](q-express-brand-direction.md) — user approved the Q + shopping-bag concept after rejecting the standalone-arrow logo.
