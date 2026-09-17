@@ -1,0 +1,38 @@
+# Render Blueprint: one web service serves both the API and the built web app,
+# so the browser's relative /api calls need no proxy or CORS setup.
+#
+# DATABASE_URL comes from a free Neon project (neon.tech) and is entered in the
+# Render dashboard; ADMIN_ACCESS_CODE is the operator login code.
+services:
+  - type: web
+    name: q-express
+    runtime: node
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/healthz
+    buildCommand: >-
+      corepack enable &&
+      corepack prepare pnpm@10.33.0 --activate &&
+      pnpm install --frozen-lockfile &&
+      PORT=5000 BASE_PATH=/ pnpm --filter @workspace/qorasuv-express run build &&
+      pnpm --filter @workspace/api-server run build
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: "24.15.0"
+      - key: NODE_ENV
+        value: production
+      # Resolved against the repository root, which is the start command's
+      # working directory.
+      - key: CLIENT_DIST_DIR
+        value: artifacts/qorasuv-express/dist/public
+      # Paste the Neon connection string here in the Render dashboard.
+      - key: DATABASE_URL
+        sync: false
+      # Operator login code for /admin.
+      - key: ADMIN_ACCESS_CODE
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TELEGRAM_BOT_MODE
+        value: legacy
