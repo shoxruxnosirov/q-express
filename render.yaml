@@ -1,15 +1,10 @@
 # Render Blueprint: one web service serves both the API and the built web app,
-# so the browser's relative /api calls need no proxy or CORS setup, and one
-# free Postgres instance backs it.
+# so the browser's relative /api calls need no proxy or CORS setup.
 #
-# Note: a free Render Postgres expires 30 days after creation. To keep the data
-# past that, create a free Neon project (neon.tech) and replace the
-# DATABASE_URL value below with its connection string.
-databases:
-  - name: q-express-db
-    plan: free
-    region: frankfurt
-
+# The database is a Neon project (neon.tech), not a Render instance: a free
+# Render Postgres expires 30 days after it is created, while a free Neon
+# project does not. Nothing here provisions it, so DATABASE_URL is set once by
+# hand (see below).
 services:
   - type: web
     name: q-express
@@ -34,11 +29,13 @@ services:
       # working directory.
       - key: CLIENT_DIST_DIR
         value: artifacts/qorasuv-express/dist/public
-      # Wired automatically from the database above.
+      # The Neon connection string, entered in the Render dashboard under
+      # q-express > Environment. It is a credential and this repository is
+      # public, so it is never written into this file. Prefer the pooled host
+      # and sslmode=verify-full; fall back to sslmode=require if the
+      # certificate hostname does not verify.
       - key: DATABASE_URL
-        fromDatabase:
-          name: q-express-db
-          property: connectionString
+        sync: false
       # Operator login code for /admin, entered once when the blueprint is
       # applied.
       - key: ADMIN_ACCESS_CODE
