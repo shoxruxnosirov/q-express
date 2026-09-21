@@ -40,6 +40,13 @@ const hasStarted = () => {
     return false;
   }
 };
+const forgetStarted = () => {
+  try {
+    localStorage.removeItem(STARTED_FLAG);
+  } catch {
+    // ignore
+  }
+};
 
 const time = (value: string) =>
   new Intl.DateTimeFormat('uz-UZ', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
@@ -71,8 +78,17 @@ export function CustomerChat() {
 
   // Opening starts the conversation if this browser has none yet. The call is
   // idempotent, so a returning customer lands back in the same thread.
+  //
+  // The ref, not `isPending`, is what makes this run once. React Query only
+  // flips isPending on a later render, and the mutation object is a new
+  // identity each render, so a re-render in that window would fire a second
+  // request. That second request would still carry no cookie and would open a
+  // second thread, leaving the customer talking in one while the operator
+  // answers in the other.
+  const starting = useRef(false);
   useEffect(() => {
-    if (!open || started || startSession.isPending) return;
+    if (!open || started || starting.current) return;
+    starting.current = true;
     const profile = readProfile();
     startSession.mutate(
       { data: { name: profile.name, phone: profile.phone } },
@@ -83,9 +99,26 @@ export function CustomerChat() {
           setFailed('');
         },
         onError: () => setFailed('Suhbatni ochib bo‘lmadi. Keyinroq urinib ko‘ring.'),
+        onSettled: () => {
+          starting.current = false;
+        },
       },
     );
-  }, [open, started, startSession]);
+    // `startSession` is deliberately not a dependency: it changes identity on
+    // every render and the ref above already guarantees a single call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, started]);
+
+  // The cookie and this flag have different lifetimes: cookies can be cleared,
+  // or expire, while localStorage survives. Left alone, the transcript would
+  // then answer 404 forever and the customer could never send anything again.
+  // Dropping the flag re-opens the session, which resumes the same thread when
+  // the cookie is in fact fine, so a transient failure costs one request.
+  useEffect(() => {
+    if (!started || !transcript.isError) return;
+    forgetStarted();
+    setStarted(false);
+  }, [started, transcript.isError]);
 
   // Reading the thread is what clears the dot.
   useEffect(() => {
