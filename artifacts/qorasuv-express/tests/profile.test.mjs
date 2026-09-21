@@ -47,32 +47,60 @@ afterEach(() => {
 test("an empty browser yields an empty profile", () => {
   installStorage();
   assert.deepEqual(readProfile(), emptyProfile);
+  assert.deepEqual(emptyProfile, { name: "", phone: "", dom: "", xonadon: "" });
 });
 
 test("a name saved by the old checkout is carried over", () => {
   installStorage({ seed: { [LEGACY_KEY]: "Bahrom Asrorov" } });
-  assert.deepEqual(readProfile(), { name: "Bahrom Asrorov", phone: "", address: "" });
+  assert.deepEqual(readProfile(), { name: "Bahrom Asrorov", phone: "", dom: "", xonadon: "" });
 });
 
 test("a stored profile wins over the legacy name", () => {
   installStorage({
     seed: {
       [LEGACY_KEY]: "Eski Ism",
-      [PROFILE_KEY]: JSON.stringify({ name: "Yangi Ism", phone: "+998901234567", address: "Qorasuv" }),
+      [PROFILE_KEY]: JSON.stringify({ name: "Yangi Ism", phone: "+998901234567", dom: "12", xonadon: "7" }),
     },
   });
   assert.deepEqual(readProfile(), {
     name: "Yangi Ism",
     phone: "+998901234567",
-    address: "Qorasuv",
+    dom: "12",
+    xonadon: "7",
   });
 });
 
-test("saving trims every field and keeps the legacy name in step", () => {
-  const store = installStorage();
-  const saved = writeProfile({ name: "  Bahrom  ", phone: " +998901234567 ", address: " 12-uy " });
+test("a typed address saved before the selects existed is recovered", () => {
+  installStorage({
+    seed: {
+      [PROFILE_KEY]: JSON.stringify({ name: "Bahrom", phone: "", address: "12-dom, 7-xonadon" }),
+    },
+  });
+  assert.deepEqual(readProfile(), { name: "Bahrom", phone: "", dom: "12", xonadon: "7" });
+});
 
-  assert.deepEqual(saved, { name: "Bahrom", phone: "+998901234567", address: "12-uy" });
+test("a typed address that is not a dom and xonadon is simply re-picked", () => {
+  installStorage({
+    seed: {
+      [PROFILE_KEY]: JSON.stringify({ name: "Bahrom", phone: "", address: "Navoiy ko‘chasi 15" }),
+    },
+  });
+  assert.deepEqual(readProfile(), { name: "Bahrom", phone: "", dom: "", xonadon: "" });
+});
+
+test("a stored value the shop no longer offers is dropped", () => {
+  installStorage({
+    seed: { [PROFILE_KEY]: JSON.stringify({ name: "", phone: "", dom: "9999", xonadon: "7" }) },
+  });
+  // Keeping it would ask the select to display an option it does not have.
+  assert.deepEqual(readProfile(), { name: "", phone: "", dom: "", xonadon: "7" });
+});
+
+test("saving trims the text fields and keeps the legacy name in step", () => {
+  const store = installStorage();
+  const saved = writeProfile({ name: "  Bahrom  ", phone: " +998901234567 ", dom: "12", xonadon: "7" });
+
+  assert.deepEqual(saved, { name: "Bahrom", phone: "+998901234567", dom: "12", xonadon: "7" });
   assert.deepEqual(JSON.parse(store.get(PROFILE_KEY)), saved);
   // An older tab still running the previous bundle reads the legacy key, so it
   // must not be left holding a stale name.
@@ -87,7 +115,7 @@ test("corrupt or foreign stored values never crash the page", () => {
   installStorage({ seed: { [PROFILE_KEY]: JSON.stringify(["unexpected"]) } });
   assert.deepEqual(readProfile(), emptyProfile);
 
-  installStorage({ seed: { [PROFILE_KEY]: JSON.stringify({ name: 42, phone: null }) } });
+  installStorage({ seed: { [PROFILE_KEY]: JSON.stringify({ name: 42, phone: null, dom: [] }) } });
   assert.deepEqual(readProfile(), emptyProfile);
 });
 
@@ -95,17 +123,18 @@ test("unavailable storage degrades to filling the form in by hand", () => {
   installStorage({ failing: true });
   assert.deepEqual(readProfile(), emptyProfile);
   // Writing must not throw either, or submitting an order would fail outright.
-  assert.deepEqual(writeProfile({ name: "Bahrom", phone: "", address: "" }), {
+  assert.deepEqual(writeProfile({ name: "Bahrom", phone: "", dom: "", xonadon: "" }), {
     name: "Bahrom",
     phone: "",
-    address: "",
+    dom: "",
+    xonadon: "",
   });
   assert.doesNotThrow(() => clearProfile());
 });
 
 test("clearing removes both keys", () => {
   const store = installStorage();
-  writeProfile({ name: "Bahrom", phone: "+998901234567", address: "12-uy" });
+  writeProfile({ name: "Bahrom", phone: "+998901234567", dom: "12", xonadon: "7" });
   clearProfile();
 
   assert.equal(store.has(PROFILE_KEY), false);
@@ -115,9 +144,9 @@ test("clearing removes both keys", () => {
 
 test("validation mirrors what checkout will accept", () => {
   assert.equal(profileFieldError(emptyProfile), "", "a blank profile is allowed to be saved");
-  assert.equal(profileFieldError({ name: "B", phone: "", address: "" }).length > 0, true);
-  assert.equal(profileFieldError({ name: "Bahrom", phone: "12345", address: "" }).length > 0, true);
-  assert.equal(profileFieldError({ name: "Bahrom", phone: "+998901234567", address: "" }), "");
+  assert.equal(profileFieldError({ ...emptyProfile, name: "B" }).length > 0, true);
+  assert.equal(profileFieldError({ ...emptyProfile, name: "Bahrom", phone: "12345" }).length > 0, true);
+  assert.equal(profileFieldError({ ...emptyProfile, name: "Bahrom", phone: "+998901234567" }), "");
   // Whitespace is not a value, so it must not trip the length rules.
-  assert.equal(profileFieldError({ name: "   ", phone: "   ", address: "" }), "");
+  assert.equal(profileFieldError({ ...emptyProfile, name: "   ", phone: "   " }), "");
 });
