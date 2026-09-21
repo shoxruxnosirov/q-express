@@ -366,6 +366,113 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UploadTicket"
+  /chat/session:
+    post:
+      operationId: startChatSession
+      tags: [chat]
+      summary: Open or resume this browser's conversation
+      description: >-
+        Idempotent. Returns the existing thread when the browser already holds a
+        valid chat cookie, otherwise creates one and sets the cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatSessionInput"
+      responses:
+        "200":
+          description: The conversation this browser owns
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSession"
+  /chat/messages:
+    get:
+      operationId: getChatTranscript
+      tags: [chat]
+      summary: Read this browser's conversation
+      responses:
+        "200":
+          description: Every message in the thread
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatTranscript"
+        "404":
+          description: This browser has no conversation yet
+    post:
+      operationId: sendChatMessage
+      tags: [chat]
+      summary: Send a message as the customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageInput"
+      responses:
+        "201":
+          description: The stored message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessage"
+  /admin/chats:
+    get:
+      operationId: listAdminChats
+      tags: [admin]
+      summary: List customer conversations, most recent first
+      responses:
+        "200":
+          description: Conversations with their unread counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminChatThread"
+  /admin/chats/{id}/messages:
+    get:
+      operationId: getAdminChatTranscript
+      tags: [admin]
+      summary: Read one conversation and mark it seen
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Every message in the thread
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatTranscript"
+    post:
+      operationId: sendAdminChatMessage
+      tags: [admin]
+      summary: Reply as the operator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageInput"
+      responses:
+        "201":
+          description: The stored message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessage"
   /leaderboard/weekly:
     get:
       operationId: getWeeklyLeaderboard
@@ -745,3 +852,71 @@ components:
           type: boolean
         active:
           type: boolean
+    ChatMessage:
+      type: object
+      required: [id, sender, body, created_at]
+      properties:
+        id:
+          type: integer
+        sender:
+          type: string
+          enum: [customer, operator]
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ChatSession:
+      type: object
+      required: [thread_id, customer_name, phone]
+      properties:
+        thread_id:
+          type: integer
+        customer_name:
+          type: string
+        phone:
+          type: string
+    ChatTranscript:
+      type: object
+      required: [thread_id, messages]
+      properties:
+        thread_id:
+          type: integer
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+    ChatSessionInput:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        phone:
+          type: string
+          maxLength: 32
+    ChatMessageInput:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    AdminChatThread:
+      type: object
+      required: [id, customer_name, phone, last_message, last_message_at, unread_count]
+      properties:
+        id:
+          type: integer
+        customer_name:
+          type: string
+        phone:
+          type: string
+        last_message:
+          type: string
+        last_message_at:
+          type: string
+          format: date-time
+        unread_count:
+          type: integer

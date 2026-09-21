@@ -30,7 +30,12 @@ function formatMoney(value: string | number | null) {
   return `${Number(value ?? 0).toLocaleString("ru-RU")} so'm`;
 }
 
-export async function sendNewOrderNotification(order: TelegramOrder): Promise<TelegramResult> {
+type TelegramCredentials = { token: string; chatId: string };
+
+// The code never checks which bot a token belongs to, so the mode alone decides
+// which variable is read, and a missing one is never quietly swapped for the
+// other bot's.
+function resolveCredentials(): TelegramCredentials | TelegramResult {
   const botMode = process.env.TELEGRAM_BOT_MODE ?? "legacy";
   if (botMode !== "legacy" && botMode !== "new") {
     return { sent: false, error: "Telegram bot mode is invalid" };
@@ -43,7 +48,65 @@ export async function sendNewOrderNotification(order: TelegramOrder): Promise<Te
   if (!token || !chatId) {
     return { sent: false, error: "Telegram bot configuration is missing" };
   }
+  return { token, chatId };
+}
 
+async function sendToAdminChat(text: string): Promise<TelegramResult> {
+  const credentials = resolveCredentials();
+  if (!("token" in credentials)) return credentials;
+  const { token, chatId } = credentials;
+
+  try {
+    const response = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      }),
+    });
+
+    const result = (await response.json()) as { ok?: boolean; error_code?: number };
+    if (!response.ok || !result.ok) {
+      return { sent: false, error: `Telegram returned ${result.error_code ?? response.status}` };
+    }
+
+    return { sent: true };
+  } catch {
+    return {
+      sent: false,
+      // Fetch errors may contain the token-bearing URL. Never return raw errors.
+      error: "Telegram request failed or timed out",
+    };
+  }
+}
+
+// The operator is not always watching the dashboard, so a customer's message
+// reaches the same chat the order notifications already go to.
+export async function sendChatMessageNotification(message: {
+  threadId: number;
+  customerName: string;
+  phone: string;
+  body: string;
+}): Promise<TelegramResult> {
+  const who = message.customerName.trim() || "Noma’lum mijoz";
+  const phone = message.phone.trim();
+  const lines = [
+    "<b>YANGI XABAR</b>",
+    "",
+    "<b>Mijoz:</b> " + escapeHtml(who),
+    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(phone)] : []),
+    "<b>Suhbat:</b> #" + message.threadId,
+    "",
+    escapeHtml(message.body),
+  ];
+  return sendToAdminChat(lines.join("\n"));
+}
+
+export async function sendNewOrderNotification(order: TelegramOrder): Promise<TelegramResult> {
   const items = Array.isArray(order.items)
     ? order.items
         .map((item) => {
@@ -82,30 +145,5 @@ export async function sendNewOrderNotification(order: TelegramOrder): Promise<Te
     `<b>Manzil:</b> ${escapeHtml(order.address)}`,
   ].join("\n");
 
-  try {
-    const response = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: AbortSignal.timeout(15_000),
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
-    });
-
-    const result = (await response.json()) as { ok?: boolean; error_code?: number };
-    if (!response.ok || !result.ok) {
-      return { sent: false, error: `Telegram returned ${result.error_code ?? response.status}` };
-    }
-
-    return { sent: true };
-  } catch {
-    return {
-      sent: false,
-      // Fetch errors may contain the token-bearing URL. Never return raw errors.
-      error: "Telegram request failed or timed out",
-    };
-  }
+  return sendToAdminChat(text);
 }

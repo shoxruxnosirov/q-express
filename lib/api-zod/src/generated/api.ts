@@ -569,6 +569,116 @@ export const CreateAdminUploadTicketResponse = zod.object({
 
 
 /**
+ * Idempotent. Returns the existing thread when the browser already holds a valid chat cookie, otherwise creates one and sets the cookie.
+ * @summary Open or resume this browser's conversation
+ */
+export const startChatSessionBodyNameMax = 80;
+
+export const startChatSessionBodyPhoneMax = 32;
+
+
+
+export const StartChatSessionBody = zod.object({
+  "name": zod.string().max(startChatSessionBodyNameMax).optional(),
+  "phone": zod.string().max(startChatSessionBodyPhoneMax).optional()
+})
+
+export const StartChatSessionResponse = zod.object({
+  "thread_id": zod.number().int(),
+  "customer_name": zod.string(),
+  "phone": zod.string()
+})
+
+
+/**
+ * @summary Read this browser's conversation
+ */
+export const GetChatTranscriptResponse = zod.object({
+  "thread_id": zod.number().int(),
+  "messages": zod.array(zod.object({
+  "id": zod.number().int(),
+  "sender": zod.enum(['customer', 'operator']),
+  "body": zod.string(),
+  "created_at": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Send a message as the customer
+ */
+export const sendChatMessageBodyBodyMax = 1000;
+
+
+
+export const SendChatMessageBody = zod.object({
+  "body": zod.string().min(1).max(sendChatMessageBodyBodyMax)
+})
+
+export const SendChatMessageResponse = zod.object({
+  "id": zod.number().int(),
+  "sender": zod.enum(['customer', 'operator']),
+  "body": zod.string(),
+  "created_at": zod.coerce.date()
+})
+
+
+/**
+ * @summary List customer conversations, most recent first
+ */
+export const ListAdminChatsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "customer_name": zod.string(),
+  "phone": zod.string(),
+  "last_message": zod.string(),
+  "last_message_at": zod.coerce.date(),
+  "unread_count": zod.number().int()
+})
+export const ListAdminChatsResponse = zod.array(ListAdminChatsResponseItem)
+
+
+/**
+ * @summary Read one conversation and mark it seen
+ */
+export const GetAdminChatTranscriptParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const GetAdminChatTranscriptResponse = zod.object({
+  "thread_id": zod.number().int(),
+  "messages": zod.array(zod.object({
+  "id": zod.number().int(),
+  "sender": zod.enum(['customer', 'operator']),
+  "body": zod.string(),
+  "created_at": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Reply as the operator
+ */
+export const SendAdminChatMessageParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const sendAdminChatMessageBodyBodyMax = 1000;
+
+
+
+export const SendAdminChatMessageBody = zod.object({
+  "body": zod.string().min(1).max(sendAdminChatMessageBodyBodyMax)
+})
+
+export const SendAdminChatMessageResponse = zod.object({
+  "id": zod.number().int(),
+  "sender": zod.enum(['customer', 'operator']),
+  "body": zod.string(),
+  "created_at": zod.coerce.date()
+})
+
+
+/**
  * @summary Get the weekly customer leaderboard
  */
 export const GetWeeklyLeaderboardResponseItem = zod.object({

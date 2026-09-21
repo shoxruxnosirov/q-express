@@ -21,6 +21,7 @@ import type {
 
 import type {
   AdminCategoryInput,
+  AdminChatThread,
   AdminDashboard,
   AdminLoginInput,
   AdminProduct,
@@ -28,6 +29,11 @@ import type {
   AdminProductUpdateInput,
   AdminSession,
   Category,
+  ChatMessage,
+  ChatMessageInput,
+  ChatSession,
+  ChatSessionInput,
+  ChatTranscript,
   DeliveryFeeEstimate,
   GetDeliveryFeeEstimateParams,
   HealthStatus,
@@ -1687,6 +1693,503 @@ export const useCreateAdminUploadTicket = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreateAdminUploadTicketMutationOptions(options));
+    }
+
+export const getStartChatSessionUrl = () => {
+
+
+
+
+  return `/api/chat/session`
+}
+
+/**
+ * Idempotent. Returns the existing thread when the browser already holds a valid chat cookie, otherwise creates one and sets the cookie.
+ * @summary Open or resume this browser's conversation
+ */
+export const startChatSession = async (chatSessionInput: ChatSessionInput, options?: Parameters<typeof customFetch>[1]): Promise<ChatSession> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ChatSession>(getStartChatSessionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(chatSessionInput)
+  }
+);}
+
+
+
+
+
+export const getStartChatSessionMutationKey = () => ['startChatSession'] as const;
+
+export const getStartChatSessionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startChatSession>>, TError,StartChatSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startChatSession>>, TError,StartChatSessionMutationVariables, TContext> => {
+
+const mutationKey = getStartChatSessionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startChatSession>>, StartChatSessionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  startChatSession(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartChatSessionMutationResult = NonNullable<Awaited<ReturnType<typeof startChatSession>>>
+    export type StartChatSessionMutationBody = BodyType<ChatSessionInput>
+    export type StartChatSessionMutationError = ErrorType<unknown>
+    export type StartChatSessionMutationVariables = {data: BodyType<ChatSessionInput>}
+
+    /**
+ * @summary Open or resume this browser's conversation
+ */
+export const useStartChatSession = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startChatSession>>, TError,StartChatSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startChatSession>>,
+        TError,
+        StartChatSessionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartChatSessionMutationOptions(options));
+    }
+
+export const getGetChatTranscriptUrl = () => {
+
+
+
+
+  return `/api/chat/messages`
+}
+
+/**
+ * @summary Read this browser's conversation
+ */
+export const getChatTranscript = async ( options?: Parameters<typeof customFetch>[1]): Promise<ChatTranscript> => {
+
+  return customFetch<ChatTranscript>(getGetChatTranscriptUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetChatTranscriptQueryKey = () => {
+    return [
+    `/api/chat/messages`
+    ] as const;
+    }
+
+
+export const getGetChatTranscriptQueryOptions = <TData = Awaited<ReturnType<typeof getChatTranscript>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getChatTranscript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetChatTranscriptQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getChatTranscript>>> = ({ signal }) => getChatTranscript({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getChatTranscript>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetChatTranscriptQueryResult = NonNullable<Awaited<ReturnType<typeof getChatTranscript>>>
+export type GetChatTranscriptQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read this browser's conversation
+ */
+
+export function useGetChatTranscript<TData = Awaited<ReturnType<typeof getChatTranscript>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getChatTranscript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetChatTranscriptQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSendChatMessageUrl = () => {
+
+
+
+
+  return `/api/chat/messages`
+}
+
+/**
+ * @summary Send a message as the customer
+ */
+export const sendChatMessage = async (chatMessageInput: ChatMessageInput, options?: Parameters<typeof customFetch>[1]): Promise<ChatMessage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ChatMessage>(getSendChatMessageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(chatMessageInput)
+  }
+);}
+
+
+
+
+
+export const getSendChatMessageMutationKey = () => ['sendChatMessage'] as const;
+
+export const getSendChatMessageMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendChatMessage>>, TError,SendChatMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendChatMessage>>, TError,SendChatMessageMutationVariables, TContext> => {
+
+const mutationKey = getSendChatMessageMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendChatMessage>>, SendChatMessageMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  sendChatMessage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendChatMessageMutationResult = NonNullable<Awaited<ReturnType<typeof sendChatMessage>>>
+    export type SendChatMessageMutationBody = BodyType<ChatMessageInput>
+    export type SendChatMessageMutationError = ErrorType<unknown>
+    export type SendChatMessageMutationVariables = {data: BodyType<ChatMessageInput>}
+
+    /**
+ * @summary Send a message as the customer
+ */
+export const useSendChatMessage = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendChatMessage>>, TError,SendChatMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendChatMessage>>,
+        TError,
+        SendChatMessageMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSendChatMessageMutationOptions(options));
+    }
+
+export const getListAdminChatsUrl = () => {
+
+
+
+
+  return `/api/admin/chats`
+}
+
+/**
+ * @summary List customer conversations, most recent first
+ */
+export const listAdminChats = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminChatThread[]> => {
+
+  return customFetch<AdminChatThread[]>(getListAdminChatsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminChatsQueryKey = () => {
+    return [
+    `/api/admin/chats`
+    ] as const;
+    }
+
+
+export const getListAdminChatsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminChats>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminChats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminChatsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminChats>>> = ({ signal }) => listAdminChats({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminChats>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminChatsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminChats>>>
+export type ListAdminChatsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List customer conversations, most recent first
+ */
+
+export function useListAdminChats<TData = Awaited<ReturnType<typeof listAdminChats>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminChats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminChatsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminChatTranscriptUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/chats/${id}/messages`
+}
+
+/**
+ * @summary Read one conversation and mark it seen
+ */
+export const getAdminChatTranscript = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ChatTranscript> => {
+
+  return customFetch<ChatTranscript>(getGetAdminChatTranscriptUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminChatTranscriptQueryKey = (id: number,) => {
+    return [
+    `/api/admin/chats/${id}/messages`
+    ] as const;
+    }
+
+
+export const getGetAdminChatTranscriptQueryOptions = <TData = Awaited<ReturnType<typeof getAdminChatTranscript>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminChatTranscript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminChatTranscriptQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminChatTranscript>>> = ({ signal }) => getAdminChatTranscript(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminChatTranscript>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminChatTranscriptQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminChatTranscript>>>
+export type GetAdminChatTranscriptQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Read one conversation and mark it seen
+ */
+
+export function useGetAdminChatTranscript<TData = Awaited<ReturnType<typeof getAdminChatTranscript>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminChatTranscript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminChatTranscriptQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSendAdminChatMessageUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/chats/${id}/messages`
+}
+
+/**
+ * @summary Reply as the operator
+ */
+export const sendAdminChatMessage = async (id: number,
+    chatMessageInput: ChatMessageInput, options?: Parameters<typeof customFetch>[1]): Promise<ChatMessage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ChatMessage>(getSendAdminChatMessageUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(chatMessageInput)
+  }
+);}
+
+
+
+
+
+export const getSendAdminChatMessageMutationKey = () => ['sendAdminChatMessage'] as const;
+
+export const getSendAdminChatMessageMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendAdminChatMessage>>, TError,SendAdminChatMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendAdminChatMessage>>, TError,SendAdminChatMessageMutationVariables, TContext> => {
+
+const mutationKey = getSendAdminChatMessageMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendAdminChatMessage>>, SendAdminChatMessageMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  sendAdminChatMessage(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendAdminChatMessageMutationResult = NonNullable<Awaited<ReturnType<typeof sendAdminChatMessage>>>
+    export type SendAdminChatMessageMutationBody = BodyType<ChatMessageInput>
+    export type SendAdminChatMessageMutationError = ErrorType<unknown>
+    export type SendAdminChatMessageMutationVariables = {id: number;data: BodyType<ChatMessageInput>}
+
+    /**
+ * @summary Reply as the operator
+ */
+export const useSendAdminChatMessage = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendAdminChatMessage>>, TError,SendAdminChatMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendAdminChatMessage>>,
+        TError,
+        SendAdminChatMessageMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSendAdminChatMessageMutationOptions(options));
     }
 
 export const getGetWeeklyLeaderboardUrl = () => {

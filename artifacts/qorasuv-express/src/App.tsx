@@ -4,7 +4,7 @@ import { Link, Route, Switch, Router as WouterRouter, useLocation, useParams } f
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Banknote, BarChart3, Bike, Boxes, Check, ChevronDown,
   ChevronRight, Clock3, CreditCard, Gift, Headphones, Heart, Home as HomeIcon, Info, LayoutDashboard,
-  ListFilter, LoaderCircle, MapPin, Menu, Minus, Package, Phone, Plus, RefreshCw, Search,
+  ListFilter, LoaderCircle, MapPin, Menu, MessageCircle, Minus, Package, Phone, Plus, RefreshCw, Search,
   ShoppingBag, ShoppingBasket, SlidersHorizontal, Sparkles, Star, Store, Tag, Trophy, Truck,
   UserRound, WalletCards, X, Zap,
 } from 'lucide-react';
@@ -25,6 +25,8 @@ import { clearProfile, emptyProfile, profileFieldError, readProfile, writeProfil
 import { DOM_OPTIONS, XONADON_OPTIONS, formatAddress, isCompleteAddress, type AddressParts } from '@/lib/address';
 import { ProductPicker } from '@/components/ProductPicker';
 import { AdminImageField, AdminProductRow, FlagToggle, uploadProductImage } from '@/components/AdminProductRow';
+import { CustomerChat } from '@/components/CustomerChat';
+import { AdminChat } from '@/pages/admin/AdminChat';
 import { AdminGate } from '@/pages/admin/AdminGate';
 import { AdminLogin } from '@/pages/admin/AdminLogin';
 
@@ -47,6 +49,7 @@ function Shell({ children }: { children: ReactNode }) {
     { href: '/admin', label: 'Umumiy ko‘rinish', icon: LayoutDashboard },
     { href: '/admin/orders', label: 'Buyurtmalar', icon: Package },
     { href: '/admin/catalog', label: 'Mahsulotlar', icon: Boxes },
+    { href: '/admin/chat', label: 'Suhbatlar', icon: MessageCircle },
   ] : [
     { href: '/', label: 'Bosh sahifa', icon: HomeIcon },
     { href: '/catalog', label: 'Katalog', icon: ShoppingBag },
@@ -84,6 +87,7 @@ function Shell({ children }: { children: ReactNode }) {
       <main className="min-h-[calc(100dvh-72px)]">{children}</main>
       <ProductPicker />
       {!isAdmin && <footer className="mt-20 border-t border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)]"><div className="container-wide flex flex-col gap-3 py-8 text-sm text-[hsl(var(--muted-foreground))] sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><img src="/brand/icon.svg" alt="Q express" className="h-6 w-6" /><span className="display text-lg font-extrabold text-[hsl(var(--primary))]">Q <span className="text-[hsl(var(--foreground))]">express</span></span></div><span>Yangi mahsulotlar. Oson buyurtma. Mahallangizda.</span><Link href="/admin" data-testid="link-footer-admin" className="font-semibold text-[hsl(var(--primary))]">Operator kirishi <ArrowRight size={14} className="ml-1 inline" /></Link></div></footer>}
+      {!isAdmin && <CustomerChat />}
     </div>
   );
 }
@@ -388,6 +392,7 @@ function Router() {
             <Route path="/admin" component={AdminDashboard} />
             <Route path="/admin/orders" component={AdminOrders} />
             <Route path="/admin/catalog" component={AdminCatalogManager} />
+            <Route path="/admin/chat" component={AdminChat} />
             <Route component={NotFound} />
           </Switch>
         </AdminGate>

@@ -67,6 +67,30 @@ export const ordersTable = pgTable("orders", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// A chat thread belongs to whoever holds its secret, not to a phone number,
+// because the shop has no accounts and a phone number is not a credential.
+// Only the hash of that secret is stored.
+export const chatThreadsTable = pgTable("chat_threads", {
+  id: serial("id").primaryKey(),
+  tokenHash: text("token_hash").notNull().unique(),
+  customerName: text("customer_name").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+  operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
+  customerReadAt: timestamp("customer_read_at", { withTimezone: true }),
+});
+
+export const chatMessagesTable = pgTable("chat_messages", {
+  id: serial("id").primaryKey(),
+  threadId: integer("thread_id")
+    .notNull()
+    .references(() => chatThreadsTable.id, { onDelete: "cascade" }),
+  sender: text("sender").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const insertCategorySchema = createInsertSchema(categoriesTable).omit({ id: true });
 export const insertProductSchema = createInsertSchema(productsTable).omit({ id: true });
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { sendNewOrderNotification } from "../src/lib/telegram.ts";
+import { sendChatMessageNotification, sendNewOrderNotification } from "../src/lib/telegram.ts";
 
 const keys = [
   "TELEGRAM_BOT_MODE",
@@ -107,4 +107,47 @@ test("Telegram rejections expose only status codes, not raw responses", async ()
     sent: false,
     error: "Telegram returned 403",
   });
+});
+
+test("a customer's message is escaped before it becomes HTML", async () => {
+  configure("new");
+  let sent;
+  globalThis.fetch = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+
+  const result = await sendChatMessageNotification({
+    threadId: 7,
+    customerName: "<script>alert(1)</script>",
+    phone: "+998901234567",
+    body: 'Buyurtmam qayerda? <b>"tez"</b> & shoshilinch',
+  });
+
+  assert.deepEqual(result, { sent: true });
+  assert.equal(sent.parse_mode, "HTML");
+  // The notification is sent as HTML, so anything a stranger types must arrive
+  // as text and never as markup that breaks or reshapes the message.
+  assert.ok(!sent.text.includes("<script>"));
+  assert.ok(!sent.text.includes('<b>"tez"</b>'));
+  assert.ok(sent.text.includes("&lt;script&gt;"));
+  assert.ok(sent.text.includes("&lt;b&gt;&quot;tez&quot;&lt;/b&gt;"));
+  assert.ok(sent.text.includes("&amp; shoshilinch"));
+  assert.ok(sent.text.includes("#7"), "the operator needs to know which thread");
+});
+
+test("a chat notification needs the same credentials as an order", async () => {
+  configure("new");
+  delete process.env.TELEGRAM_ADMIN_CHAT_ID;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+
+  assert.deepEqual(await sendChatMessageNotification({ threadId: 1, customerName: "", phone: "", body: "salom" }), {
+    sent: false,
+    error: "Telegram bot configuration is missing",
+  });
+  assert.equal(called, false);
 });

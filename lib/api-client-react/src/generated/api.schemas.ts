@@ -335,6 +335,56 @@ export interface AdminProduct {
   active: boolean;
 }
 
+export type ChatMessageSender = typeof ChatMessageSender[keyof typeof ChatMessageSender];
+
+
+export const ChatMessageSender = {
+  customer: 'customer',
+  operator: 'operator',
+} as const;
+
+export interface ChatMessage {
+  id: number;
+  sender: ChatMessageSender;
+  body: string;
+  created_at: string;
+}
+
+export interface ChatSession {
+  thread_id: number;
+  customer_name: string;
+  phone: string;
+}
+
+export interface ChatTranscript {
+  thread_id: number;
+  messages: ChatMessage[];
+}
+
+export interface ChatSessionInput {
+  /** @maxLength 80 */
+  name?: string;
+  /** @maxLength 32 */
+  phone?: string;
+}
+
+export interface ChatMessageInput {
+  /**
+     * @minLength 1
+     * @maxLength 1000
+     */
+  body: string;
+}
+
+export interface AdminChatThread {
+  id: number;
+  customer_name: string;
+  phone: string;
+  last_message: string;
+  last_message_at: string;
+  unread_count: number;
+}
+
 export type ListProductsParams = {
 search?: string;
 category?: string;

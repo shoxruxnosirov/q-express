@@ -7,6 +7,7 @@
  */
 
 export * from './adminCategoryInput';
+export * from './adminChatThread';
 export * from './adminDashboard';
 export * from './adminLoginInput';
 export * from './adminProduct';
@@ -17,6 +18,12 @@ export * from './adminProductUpdateInput';
 export * from './adminProductUpdateInputUnit';
 export * from './adminSession';
 export * from './category';
+export * from './chatMessage';
+export * from './chatMessageInput';
+export * from './chatMessageSender';
+export * from './chatSession';
+export * from './chatSessionInput';
+export * from './chatTranscript';
 export * from './deliveryFeeEstimate';
 export * from './getDeliveryFeeEstimateParams';
 export * from './healthStatus';

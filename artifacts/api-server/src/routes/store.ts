@@ -6,6 +6,11 @@ import {
   CreateAdminCategoryBody,
   CreateAdminProductBody,
   DeleteAdminProductParams,
+  GetAdminChatTranscriptParams,
+  SendAdminChatMessageBody,
+  SendAdminChatMessageParams,
+  SendChatMessageBody,
+  StartChatSessionBody,
   GetDeliveryFeeEstimateQueryParams,
   GetOrderParams,
   GetProductParams,
@@ -19,10 +24,18 @@ import {
 import { db } from "@workspace/db";
 import {
   categoriesTable,
+  chatMessagesTable,
+  chatThreadsTable,
   ordersTable,
   productsTable,
 } from "@workspace/db/schema";
-import { sendNewOrderNotification } from "../lib/telegram";
+import { sendChatMessageNotification, sendNewOrderNotification } from "../lib/telegram";
+import {
+  createChatToken,
+  hashChatToken,
+  readChatToken,
+  setChatCookie,
+} from "../lib/chat-session";
 import {
   createUploadTicket,
   deleteImage,
@@ -377,6 +390,55 @@ function adminProductDto(product: typeof productsTable.$inferSelect, category: s
   return { ...productDto(product, category), active: product.active };
 }
 
+// A customer may send twenty messages a minute, which is far more than anyone
+// types and far less than a script would. Keyed by thread, so one abusive
+// conversation cannot silence the rest.
+const CHAT_MESSAGE_WINDOW_MS = 60 * 1000;
+const CHAT_MESSAGE_MAX_PER_WINDOW = 20;
+const chatMessageRates = new Map<number, { count: number; windowStartedAt: number }>();
+
+function allowChatMessage(threadId: number) {
+  const now = Date.now();
+  const current = chatMessageRates.get(threadId);
+  if (!current || now - current.windowStartedAt >= CHAT_MESSAGE_WINDOW_MS) {
+    chatMessageRates.set(threadId, { count: 1, windowStartedAt: now });
+    return true;
+  }
+  if (current.count >= CHAT_MESSAGE_MAX_PER_WINDOW) return false;
+  current.count += 1;
+  return true;
+}
+
+function chatMessageDto(message: typeof chatMessagesTable.$inferSelect) {
+  return {
+    id: message.id,
+    sender: message.sender as "customer" | "operator",
+    body: message.body,
+    created_at: message.createdAt.toISOString(),
+  };
+}
+
+// The cookie holds the secret; only its hash is stored, so the lookup is by
+// hash and there is nothing to compare in constant time.
+async function loadThreadByToken(token: string | undefined) {
+  if (!token) return undefined;
+  const [thread] = await db
+    .select()
+    .from(chatThreadsTable)
+    .where(eq(chatThreadsTable.tokenHash, hashChatToken(token)))
+    .limit(1);
+  return thread;
+}
+
+async function chatTranscript(threadId: number) {
+  const messages = await db
+    .select()
+    .from(chatMessagesTable)
+    .where(eq(chatMessagesTable.threadId, threadId))
+    .orderBy(asc(chatMessagesTable.id));
+  return { thread_id: threadId, messages: messages.map(chatMessageDto) };
+}
+
 function categoryDto(
   category: Pick<typeof categoriesTable.$inferSelect, "id" | "name" | "slug" | "icon">,
   productCount = 0,
@@ -696,6 +758,91 @@ router.get("/leaderboard/weekly", async (_req, res, next) => {
   }
 });
 
+// Opening the chat is idempotent: a browser that already holds a valid cookie
+// gets its existing conversation back rather than a second empty one.
+router.post("/chat/session", async (req, res, next) => {
+  try {
+    const input = StartChatSessionBody.parse(req.body ?? {});
+    const name = input.name?.trim() ?? "";
+    const phone = input.phone?.trim() ?? "";
+
+    const existing = await loadThreadByToken(readChatToken(req));
+    if (existing) {
+      // The customer may have filled in their profile since the thread was
+      // opened, so newly supplied details replace blanks without wiping what
+      // is already known.
+      const nextName = name || existing.customerName;
+      const nextPhone = phone || existing.phone;
+      if (nextName !== existing.customerName || nextPhone !== existing.phone) {
+        await db
+          .update(chatThreadsTable)
+          .set({ customerName: nextName, phone: nextPhone })
+          .where(eq(chatThreadsTable.id, existing.id));
+      }
+      return res.json({ thread_id: existing.id, customer_name: nextName, phone: nextPhone });
+    }
+
+    const token = createChatToken();
+    const [thread] = await db
+      .insert(chatThreadsTable)
+      .values({ tokenHash: hashChatToken(token), customerName: name, phone })
+      .returning();
+    setChatCookie(res, token);
+    return res.json({ thread_id: thread.id, customer_name: thread.customerName, phone: thread.phone });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/chat/messages", async (req, res, next) => {
+  try {
+    const thread = await loadThreadByToken(readChatToken(req));
+    if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    await db
+      .update(chatThreadsTable)
+      .set({ customerReadAt: new Date() })
+      .where(eq(chatThreadsTable.id, thread.id));
+    return res.json(await chatTranscript(thread.id));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/chat/messages", async (req, res, next) => {
+  try {
+    const { body } = SendChatMessageBody.parse(req.body);
+    const thread = await loadThreadByToken(readChatToken(req));
+    if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    if (!allowChatMessage(thread.id)) {
+      return res.status(429).json({ error: "Juda ko‘p xabar yuborildi. Biroz kuting." });
+    }
+
+    const [message] = await db
+      .insert(chatMessagesTable)
+      .values({ threadId: thread.id, sender: "customer", body: body.trim() })
+      .returning();
+    await db
+      .update(chatThreadsTable)
+      .set({ lastMessageAt: message.createdAt, customerReadAt: message.createdAt })
+      .where(eq(chatThreadsTable.id, thread.id));
+
+    // Best effort, exactly like the order notification: the message is stored
+    // either way, and a Telegram outage must not lose what the customer wrote.
+    const notified = await sendChatMessageNotification({
+      threadId: thread.id,
+      customerName: thread.customerName,
+      phone: thread.phone,
+      body: message.body,
+    });
+    if (!notified.sent) {
+      req.log.warn({ reason: notified.error }, "Telegram chat notification failed");
+    }
+    return res.status(201).json(chatMessageDto(message));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/admin/auth", async (req, res, next) => {
   try {
     const { code } = AdminLoginBody.parse(req.body);
@@ -915,6 +1062,92 @@ router.post("/admin/uploads/signature", (_req, res, next) => {
       return res.status(503).json({ error: "Rasm ombori sozlanmagan" });
     }
     return res.status(201).json(createUploadTicket());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/admin/chats", async (_req, res, next) => {
+  try {
+    // Two correlated subqueries rather than a query per thread, so the list
+    // stays one round trip as conversations pile up.
+    const rows = await db
+      .select({
+        id: chatThreadsTable.id,
+        customerName: chatThreadsTable.customerName,
+        phone: chatThreadsTable.phone,
+        lastMessageAt: chatThreadsTable.lastMessageAt,
+        lastMessage: sql<string | null>`(
+          select m.body from chat_messages m
+          where m.thread_id = ${chatThreadsTable.id}
+          order by m.id desc limit 1
+        )`,
+        unreadCount: sql<number>`(
+          select count(*) from chat_messages m
+          where m.thread_id = ${chatThreadsTable.id}
+            and m.sender = 'customer'
+            and (${chatThreadsTable.operatorReadAt} is null
+                 or m.created_at > ${chatThreadsTable.operatorReadAt})
+        )`,
+      })
+      .from(chatThreadsTable)
+      .orderBy(desc(chatThreadsTable.lastMessageAt));
+
+    res.json(
+      rows.map((row) => ({
+        id: row.id,
+        customer_name: row.customerName,
+        phone: row.phone,
+        last_message: row.lastMessage ?? "",
+        last_message_at: row.lastMessageAt.toISOString(),
+        unread_count: Number(row.unreadCount),
+      })),
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/admin/chats/:id/messages", async (req, res, next) => {
+  try {
+    const { id } = GetAdminChatTranscriptParams.parse(req.params);
+    const [thread] = await db
+      .select({ id: chatThreadsTable.id })
+      .from(chatThreadsTable)
+      .where(eq(chatThreadsTable.id, id))
+      .limit(1);
+    if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    // Opening the thread is what clears its unread badge.
+    await db
+      .update(chatThreadsTable)
+      .set({ operatorReadAt: new Date() })
+      .where(eq(chatThreadsTable.id, id));
+    return res.json(await chatTranscript(id));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/admin/chats/:id/messages", async (req, res, next) => {
+  try {
+    const { id } = SendAdminChatMessageParams.parse(req.params);
+    const { body } = SendAdminChatMessageBody.parse(req.body);
+    const [thread] = await db
+      .select({ id: chatThreadsTable.id })
+      .from(chatThreadsTable)
+      .where(eq(chatThreadsTable.id, id))
+      .limit(1);
+    if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+
+    const [message] = await db
+      .insert(chatMessagesTable)
+      .values({ threadId: id, sender: "operator", body: body.trim() })
+      .returning();
+    await db
+      .update(chatThreadsTable)
+      .set({ lastMessageAt: message.createdAt, operatorReadAt: message.createdAt })
+      .where(eq(chatThreadsTable.id, id));
+    return res.status(201).json(chatMessageDto(message));
   } catch (error) {
     return next(error);
   }
