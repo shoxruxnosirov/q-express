@@ -287,6 +287,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/Category"
   /admin/products:
+    get:
+      operationId: listAdminProducts
+      tags: [admin]
+      summary: List every product, hidden ones included
+      responses:
+        "200":
+          description: All products with their visibility
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminProduct"
     post:
       operationId: createAdminProduct
       tags: [admin]
@@ -328,6 +341,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Product"
+    delete:
+      operationId: deleteAdminProduct
+      tags: [admin]
+      summary: Delete a product and the image it owns
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Product deleted
+  /admin/uploads/signature:
+    post:
+      operationId: createAdminUploadTicket
+      tags: [admin]
+      summary: Sign one direct image upload to Cloudinary
+      responses:
+        "201":
+          description: Short-lived credentials for a single upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadTicket"
   /leaderboard/weekly:
     get:
       operationId: getWeeklyLeaderboard
@@ -562,6 +600,11 @@ components:
           type: boolean
         is_new:
           type: boolean
+        image_public_id:
+          type: ["string", "null"]
+          minLength: 1
+        active:
+          type: boolean
     AdminProductUpdateInput:
       type: object
       minProperties: 1
@@ -593,6 +636,11 @@ components:
         is_popular:
           type: boolean
         is_new:
+          type: boolean
+        image_public_id:
+          type: ["string", "null"]
+          minLength: 1
+        active:
           type: boolean
     DeliveryFeeEstimate:
       type: object
@@ -648,4 +696,52 @@ components:
           type: integer
         low_stock_count:
           type: integer
-
+    UploadTicket:
+      type: object
+      required: [cloud_name, api_key, timestamp, folder, signature, expires_in]
+      properties:
+        cloud_name:
+          type: string
+        api_key:
+          type: string
+        timestamp:
+          type: integer
+        folder:
+          type: string
+        signature:
+          type: string
+        expires_in:
+          type: integer
+    AdminProduct:
+      type: object
+      required: [id, category_id, category, name, description, image_url, price, old_price, unit, stock, is_popular, is_new, active]
+      properties:
+        id:
+          type: integer
+        category_id:
+          type: integer
+        category:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        image_url:
+          type: string
+          format: uri
+        price:
+          type: number
+        old_price:
+          type: ["number", "null"]
+        unit:
+          type: string
+          enum: [dona, kg, litr, qadoq]
+        stock:
+          type: number
+          minimum: 0
+        is_popular:
+          type: boolean
+        is_new:
+          type: boolean
+        active:
+          type: boolean

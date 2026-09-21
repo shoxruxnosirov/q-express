@@ -44,3 +44,14 @@ services:
         generateValue: true
       - key: TELEGRAM_BOT_MODE
         value: legacy
+      # Product images are uploaded from the admin panel to Cloudinary. The
+      # browser uploads directly, so the image bytes never wait on this free
+      # instance waking from sleep; the API only signs each upload and deletes
+      # the file a product no longer uses. All three are entered by hand in the
+      # Render dashboard, because this repository is public.
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

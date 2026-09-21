@@ -9,8 +9,10 @@
 export * from './adminCategoryInput';
 export * from './adminDashboard';
 export * from './adminLoginInput';
+export * from './adminProduct';
 export * from './adminProductInput';
 export * from './adminProductInputUnit';
+export * from './adminProductUnit';
 export * from './adminProductUpdateInput';
 export * from './adminProductUpdateInputUnit';
 export * from './adminSession';
@@ -35,4 +37,5 @@ export * from './orderStatusInput';
 export * from './orderStatusInputStatus';
 export * from './product';
 export * from './productUnit';
+export * from './uploadTicket';
 export * from './weeklyLeaderboardEntry';

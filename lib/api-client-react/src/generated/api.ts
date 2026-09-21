@@ -23,6 +23,7 @@ import type {
   AdminCategoryInput,
   AdminDashboard,
   AdminLoginInput,
+  AdminProduct,
   AdminProductInput,
   AdminProductUpdateInput,
   AdminSession,
@@ -36,6 +37,7 @@ import type {
   OrderInput,
   OrderStatusInput,
   Product,
+  UploadTicket,
   WeeklyLeaderboardEntry
 } from './api.schemas';
 
@@ -1285,6 +1287,83 @@ export const useCreateAdminCategory = <TError = ErrorType<unknown>,
       return useMutation(getCreateAdminCategoryMutationOptions(options));
     }
 
+export const getListAdminProductsUrl = () => {
+
+
+
+
+  return `/api/admin/products`
+}
+
+/**
+ * @summary List every product, hidden ones included
+ */
+export const listAdminProducts = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminProduct[]> => {
+
+  return customFetch<AdminProduct[]>(getListAdminProductsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminProductsQueryKey = () => {
+    return [
+    `/api/admin/products`
+    ] as const;
+    }
+
+
+export const getListAdminProductsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminProducts>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminProducts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminProductsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminProducts>>> = ({ signal }) => listAdminProducts({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminProducts>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminProductsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminProducts>>>
+export type ListAdminProductsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List every product, hidden ones included
+ */
+
+export function useListAdminProducts<TData = Awaited<ReturnType<typeof listAdminProducts>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminProducts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminProductsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getCreateAdminProductUrl = () => {
 
 
@@ -1460,6 +1539,154 @@ export const useUpdateAdminProduct = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getUpdateAdminProductMutationOptions(options));
+    }
+
+export const getDeleteAdminProductUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/products/${id}`
+}
+
+/**
+ * @summary Delete a product and the image it owns
+ */
+export const deleteAdminProduct = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAdminProductUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAdminProductMutationKey = () => ['deleteAdminProduct'] as const;
+
+export const getDeleteAdminProductMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminProduct>>, TError,DeleteAdminProductMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminProduct>>, TError,DeleteAdminProductMutationVariables, TContext> => {
+
+const mutationKey = getDeleteAdminProductMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdminProduct>>, DeleteAdminProductMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAdminProduct(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAdminProductMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdminProduct>>>
+
+    export type DeleteAdminProductMutationError = ErrorType<unknown>
+    export type DeleteAdminProductMutationVariables = {id: number}
+
+    /**
+ * @summary Delete a product and the image it owns
+ */
+export const useDeleteAdminProduct = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminProduct>>, TError,DeleteAdminProductMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAdminProduct>>,
+        TError,
+        DeleteAdminProductMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteAdminProductMutationOptions(options));
+    }
+
+export const getCreateAdminUploadTicketUrl = () => {
+
+
+
+
+  return `/api/admin/uploads/signature`
+}
+
+/**
+ * @summary Sign one direct image upload to Cloudinary
+ */
+export const createAdminUploadTicket = async ( options?: Parameters<typeof customFetch>[1]): Promise<UploadTicket> => {
+
+  return customFetch<UploadTicket>(getCreateAdminUploadTicketUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCreateAdminUploadTicketMutationKey = () => ['createAdminUploadTicket'] as const;
+
+export const getCreateAdminUploadTicketMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminUploadTicket>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAdminUploadTicket>>, TError,void, TContext> => {
+
+const mutationKey = getCreateAdminUploadTicketMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAdminUploadTicket>>, void> = () => {
+
+
+          return  createAdminUploadTicket(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAdminUploadTicketMutationResult = NonNullable<Awaited<ReturnType<typeof createAdminUploadTicket>>>
+
+    export type CreateAdminUploadTicketMutationError = ErrorType<unknown>
+
+
+    /**
+ * @summary Sign one direct image upload to Cloudinary
+ */
+export const useCreateAdminUploadTicket = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminUploadTicket>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAdminUploadTicket>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCreateAdminUploadTicketMutationOptions(options));
     }
 
 export const getGetWeeklyLeaderboardUrl = () => {

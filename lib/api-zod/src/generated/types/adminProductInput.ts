@@ -27,4 +27,10 @@ export interface AdminProductInput {
   stock: number;
   is_popular?: boolean;
   is_new?: boolean;
+  /**
+     * @minLength 1
+     * @nullable
+     */
+  image_public_id?: string | null;
+  active?: boolean;
 }

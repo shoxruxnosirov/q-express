@@ -28,6 +28,9 @@ export const productsTable = pgTable("products", {
   name: text("name").notNull(),
   description: text("description").notNull(),
   imageUrl: text("image_url").notNull(),
+  // Set when the image lives in our own Cloudinary account, NULL when image_url
+  // points at a third party. Only a non-NULL id is ever deleted remotely.
+  imagePublicId: text("image_public_id"),
   price: numeric("price", { precision: 12, scale: 2 }).notNull(),
   oldPrice: numeric("old_price", { precision: 12, scale: 2 }),
   unit: text("unit").notNull(),

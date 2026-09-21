@@ -413,6 +413,31 @@ export const CreateAdminCategoryResponse = zod.object({
 
 
 /**
+ * @summary List every product, hidden ones included
+ */
+export const listAdminProductsResponseStockMin = 0;
+
+
+
+export const ListAdminProductsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "category_id": zod.number().int(),
+  "category": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "image_url": zod.string().url(),
+  "price": zod.number(),
+  "old_price": zod.number().nullable(),
+  "unit": zod.enum(['dona', 'kg', 'litr', 'qadoq']),
+  "stock": zod.number().min(listAdminProductsResponseStockMin),
+  "is_popular": zod.boolean(),
+  "is_new": zod.boolean(),
+  "active": zod.boolean()
+})
+export const ListAdminProductsResponse = zod.array(ListAdminProductsResponseItem)
+
+
+/**
  * @summary Create a product
  */
 
@@ -428,6 +453,7 @@ export const createAdminProductBodyStockMin = 0;
 
 
 
+
 export const CreateAdminProductBody = zod.object({
   "category_id": zod.number().int().min(1),
   "name": zod.string().min(createAdminProductBodyNameMin),
@@ -438,7 +464,9 @@ export const CreateAdminProductBody = zod.object({
   "unit": zod.enum(['dona', 'kg', 'litr', 'qadoq']),
   "stock": zod.number().min(createAdminProductBodyStockMin),
   "is_popular": zod.boolean().optional(),
-  "is_new": zod.boolean().optional()
+  "is_new": zod.boolean().optional(),
+  "image_public_id": zod.string().min(1).nullish(),
+  "active": zod.boolean().optional()
 })
 
 export const createAdminProductResponseStockMin = 0;
@@ -481,6 +509,7 @@ export const updateAdminProductBodyStockMin = 0;
 
 
 
+
 export const UpdateAdminProductBody = zod.object({
   "category_id": zod.number().int().min(1).optional(),
   "name": zod.string().min(updateAdminProductBodyNameMin).optional(),
@@ -491,7 +520,9 @@ export const UpdateAdminProductBody = zod.object({
   "unit": zod.enum(['dona', 'kg', 'litr', 'qadoq']).optional(),
   "stock": zod.number().min(updateAdminProductBodyStockMin).optional(),
   "is_popular": zod.boolean().optional(),
-  "is_new": zod.boolean().optional()
+  "is_new": zod.boolean().optional(),
+  "image_public_id": zod.string().min(1).nullish(),
+  "active": zod.boolean().optional()
 })
 
 export const updateAdminProductResponseStockMin = 0;
@@ -511,6 +542,29 @@ export const UpdateAdminProductResponse = zod.object({
   "stock": zod.number().min(updateAdminProductResponseStockMin),
   "is_popular": zod.boolean(),
   "is_new": zod.boolean()
+})
+
+
+/**
+ * @summary Delete a product and the image it owns
+ */
+export const DeleteAdminProductParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteAdminProductResponse = zod.void()
+
+
+/**
+ * @summary Sign one direct image upload to Cloudinary
+ */
+export const CreateAdminUploadTicketResponse = zod.object({
+  "cloud_name": zod.string(),
+  "api_key": zod.string(),
+  "timestamp": zod.number().int(),
+  "folder": zod.string(),
+  "signature": zod.string(),
+  "expires_in": zod.number().int()
 })
 
 

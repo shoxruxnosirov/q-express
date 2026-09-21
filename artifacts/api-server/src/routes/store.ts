@@ -1,10 +1,11 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
 import {
   AdminLoginBody,
   CreateOrderBody,
   CreateAdminCategoryBody,
   CreateAdminProductBody,
+  DeleteAdminProductParams,
   GetDeliveryFeeEstimateQueryParams,
   GetOrderParams,
   GetProductParams,
@@ -22,6 +23,12 @@ import {
   productsTable,
 } from "@workspace/db/schema";
 import { sendNewOrderNotification } from "../lib/telegram";
+import {
+  createUploadTicket,
+  deleteImage,
+  isCloudinaryConfigured,
+  isOwnImageUrl,
+} from "../lib/cloudinary";
 import {
   addMicroquantities,
   deriveAmountQuantityMicro,
@@ -136,7 +143,7 @@ const seedProducts = [
     categorySlug: "shirinliklar",
     name: "Qora shokolad",
     description: "Kakao miqdori yuqori premium shokolad",
-    imageUrl: "https://images.unsplash.com/photo-1548907040-4d42f0c1e73b?auto=format&fit=crop&w=640&q=85",
+    imageUrl: "https://images.unsplash.com/photo-1511381939415-e44015466834?auto=format&fit=crop&w=640&q=85",
     price: "28000",
     oldPrice: "35000",
     unit: "qadoq",
@@ -339,6 +346,37 @@ function productDto(product: typeof productsTable.$inferSelect, category: string
   };
 }
 
+// An image_public_id is a claim that we own the file and may delete it later.
+// Only honour that claim when image_url really points into our own Cloudinary
+// account. Otherwise a wrong value would either make us delete a stranger's
+// file or, worse, delete ours while the product still displays a foreign link.
+function resolveImagePublicId(
+  imageUrl: string | undefined,
+  imagePublicId: string | null | undefined,
+) {
+  if (imagePublicId === undefined) return undefined;
+  if (imagePublicId === null) return null;
+  if (!imageUrl || !isOwnImageUrl(imageUrl)) {
+    invalidOrder("Rasm manzili yuklangan faylga mos kelmadi");
+  }
+  return imagePublicId;
+}
+
+// Deleting the stored file is best effort and never fails the request. The
+// database row is already written by the time this runs, so a failure leaves
+// an unreferenced file in Cloudinary rather than a product whose image is gone.
+async function discardStoredImage(req: Request, publicId: string | null | undefined) {
+  if (!publicId) return;
+  const outcome = await deleteImage(publicId);
+  if (!outcome.deleted) {
+    req.log.warn({ publicId, reason: outcome.reason }, "Stored image delete failed");
+  }
+}
+
+function adminProductDto(product: typeof productsTable.$inferSelect, category: string) {
+  return { ...productDto(product, category), active: product.active };
+}
+
 function categoryDto(
   category: Pick<typeof categoriesTable.$inferSelect, "id" | "name" | "slug" | "icon">,
   productCount = 0,
@@ -381,7 +419,10 @@ router.get("/categories", async (_req, res, next) => {
         product_count: sql<number>`count(${productsTable.id})`,
       })
       .from(categoriesTable)
-      .leftJoin(productsTable, eq(productsTable.categoryId, categoriesTable.id))
+      .leftJoin(
+        productsTable,
+        and(eq(productsTable.categoryId, categoriesTable.id), eq(productsTable.active, true)),
+      )
       .where(eq(categoriesTable.active, true))
       .groupBy(categoriesTable.id)
       .orderBy(asc(categoriesTable.sortOrder));
@@ -724,6 +765,20 @@ router.post("/admin/categories", async (req, res, next) => {
   }
 });
 
+router.get("/admin/products", async (_req, res, next) => {
+  try {
+    await ensureSeedData();
+    const rows = await db
+      .select({ product: productsTable, category: categoriesTable.name })
+      .from(productsTable)
+      .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
+      .orderBy(asc(categoriesTable.sortOrder), asc(productsTable.name));
+    res.json(rows.map(({ product, category }) => adminProductDto(product, category)));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/admin/products", async (req, res, next) => {
   try {
     await ensureSeedData();
@@ -743,10 +798,12 @@ router.post("/admin/products", async (req, res, next) => {
         name: input.name.trim(),
         description: input.description.trim(),
         imageUrl: input.image_url,
+        imagePublicId: resolveImagePublicId(input.image_url, input.image_public_id) ?? null,
         price: String(input.price),
         oldPrice: input.old_price == null ? null : String(input.old_price),
         unit: input.unit,
         stock: input.stock,
+        active: input.active ?? true,
         isPopular: input.is_popular ?? false,
         isNew: input.is_new ?? false,
       })
@@ -779,11 +836,21 @@ router.patch("/admin/products/:id", async (req, res, next) => {
     if (input.category_id !== undefined) update.categoryId = input.category_id;
     if (input.name !== undefined) update.name = input.name.trim();
     if (input.description !== undefined) update.description = input.description.trim();
-    if (input.image_url !== undefined) update.imageUrl = input.image_url;
+    // The URL and the public id always move together. A new URL without an id
+    // is a link to somebody else's server, so the id becomes NULL and the file it
+    // used to name is retired below. Leaving a stale id behind would later
+    // delete a file the product no longer shows.
+    if (input.image_url !== undefined) {
+      update.imageUrl = input.image_url;
+      update.imagePublicId = resolveImagePublicId(input.image_url, input.image_public_id ?? null);
+    } else if (input.image_public_id !== undefined) {
+      invalidOrder("Rasm identifikatori manzilsiz yuborildi");
+    }
     if (input.price !== undefined) update.price = String(input.price);
     if (input.old_price !== undefined) update.oldPrice = input.old_price == null ? null : String(input.old_price);
     if (input.unit !== undefined) update.unit = input.unit;
     if (input.stock !== undefined) update.stock = input.stock;
+    if (input.active !== undefined) update.active = input.active;
     if (input.is_popular !== undefined) update.isPopular = input.is_popular;
     if (input.is_new !== undefined) update.isNew = input.is_new;
     if (Object.keys(update).length === 0) return res.status(400).json({ error: "No product changes supplied" });
@@ -806,11 +873,49 @@ router.patch("/admin/products/:id", async (req, res, next) => {
       .from(categoriesTable)
       .where(eq(categoriesTable.id, product.categoryId))
       .limit(1);
+    // The row now points at the new image, so the previous file is orphaned.
+    if (
+      existingProduct.imagePublicId &&
+      existingProduct.imagePublicId !== product.imagePublicId
+    ) {
+      await discardStoredImage(req, existingProduct.imagePublicId);
+    }
     return res.json(productDto(product, category?.name ?? "Noma'lum"));
   } catch (error) {
     if (error instanceof OrderValidationError) {
       return res.status(400).json({ error: error.message });
     }
+    return next(error);
+  }
+});
+
+router.delete("/admin/products/:id", async (req, res, next) => {
+  try {
+    const { id } = DeleteAdminProductParams.parse(req.params);
+    // Orders keep their own snapshot of every line item, so removing a product
+    // never rewrites history. There is no foreign key to block this either.
+    const [product] = await db
+      .delete(productsTable)
+      .where(eq(productsTable.id, id))
+      .returning();
+    if (!product) return res.status(404).json({ error: "Product not found" });
+    await discardStoredImage(req, product.imagePublicId);
+    return res.status(204).send();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// The operator's browser uploads straight to Cloudinary so the image bytes
+// never queue behind this free instance waking from sleep. This hands out a
+// signature that authorises exactly one upload into one folder.
+router.post("/admin/uploads/signature", (_req, res, next) => {
+  try {
+    if (!isCloudinaryConfigured()) {
+      return res.status(503).json({ error: "Rasm ombori sozlanmagan" });
+    }
+    return res.status(201).json(createUploadTicket());
+  } catch (error) {
     return next(error);
   }
 });

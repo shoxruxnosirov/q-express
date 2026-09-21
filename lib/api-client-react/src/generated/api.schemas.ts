@@ -221,6 +221,12 @@ export interface AdminProductInput {
   stock: number;
   is_popular?: boolean;
   is_new?: boolean;
+  /**
+     * @minLength 1
+     * @nullable
+     */
+  image_public_id?: string | null;
+  active?: boolean;
 }
 
 export type AdminProductUpdateInputUnit = typeof AdminProductUpdateInputUnit[keyof typeof AdminProductUpdateInputUnit];
@@ -253,6 +259,12 @@ export interface AdminProductUpdateInput {
   stock?: number;
   is_popular?: boolean;
   is_new?: boolean;
+  /**
+     * @minLength 1
+     * @nullable
+     */
+  image_public_id?: string | null;
+  active?: boolean;
 }
 
 export interface DeliveryFeeEstimate {
@@ -284,6 +296,43 @@ export interface AdminDashboard {
   customer_count: number;
   product_count: number;
   low_stock_count: number;
+}
+
+export interface UploadTicket {
+  cloud_name: string;
+  api_key: string;
+  timestamp: number;
+  folder: string;
+  signature: string;
+  expires_in: number;
+}
+
+export type AdminProductUnit = typeof AdminProductUnit[keyof typeof AdminProductUnit];
+
+
+export const AdminProductUnit = {
+  dona: 'dona',
+  kg: 'kg',
+  litr: 'litr',
+  qadoq: 'qadoq',
+} as const;
+
+export interface AdminProduct {
+  id: number;
+  category_id: number;
+  category: string;
+  name: string;
+  description: string;
+  image_url: string;
+  price: number;
+  /** @nullable */
+  old_price: number | null;
+  unit: AdminProductUnit;
+  /** @minimum 0 */
+  stock: number;
+  is_popular: boolean;
+  is_new: boolean;
+  active: boolean;
 }
 
 export type ListProductsParams = {
