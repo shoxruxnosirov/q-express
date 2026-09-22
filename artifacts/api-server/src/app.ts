@@ -8,6 +8,14 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Render terminates TLS and forwards to this process, so the socket address is
+// always their proxy: without this every caller would share one rate-limit
+// bucket and the first flood would lock out the whole town. Trusting exactly
+// one hop makes req.ip the address Render reports for the client; trusting
+// more would let a caller name its own address in X-Forwarded-For and shed
+// the limits. Off in development, where nothing sits in front of this.
+app.set("trust proxy", process.env.NODE_ENV === "production" ? 1 : false);
+
 app.use(
   pinoHttp({
     logger,

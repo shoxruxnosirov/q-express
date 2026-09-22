@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
 import {
   AdminLoginBody,
@@ -36,6 +36,7 @@ import {
   readChatToken,
   setChatCookie,
 } from "../lib/chat-session";
+import { createRateLimiter } from "../lib/rate-window";
 import {
   createUploadTicket,
   deleteImage,
@@ -67,6 +68,13 @@ const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_BLOCK_MS = 15 * 60 * 1000;
 const adminLoginAttempts = new Map<string, { count: number; windowStartedAt: number; blockedUntil: number }>();
+
+// Everything limited per caller is keyed by this. Behind Render the socket
+// address is always their proxy, so app.ts trusts exactly one hop and req.ip
+// becomes the address Render reports for the client.
+function clientKey(req: Request) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
 
 const seedCategories = [
   { name: "Meva va sabzavotlar", slug: "meva-sabzavot", icon: "leaf", sortOrder: 1 },
@@ -393,21 +401,15 @@ function adminProductDto(product: typeof productsTable.$inferSelect, category: s
 // A customer may send twenty messages a minute, which is far more than anyone
 // types and far less than a script would. Keyed by thread, so one abusive
 // conversation cannot silence the rest.
-const CHAT_MESSAGE_WINDOW_MS = 60 * 1000;
-const CHAT_MESSAGE_MAX_PER_WINDOW = 20;
-const chatMessageRates = new Map<number, { count: number; windowStartedAt: number }>();
+const chatMessageLimiter = createRateLimiter<number>({ windowMs: 60 * 1000, max: 20 });
 
-function allowChatMessage(threadId: number) {
-  const now = Date.now();
-  const current = chatMessageRates.get(threadId);
-  if (!current || now - current.windowStartedAt >= CHAT_MESSAGE_WINDOW_MS) {
-    chatMessageRates.set(threadId, { count: 1, windowStartedAt: now });
-    return true;
-  }
-  if (current.count >= CHAT_MESSAGE_MAX_PER_WINDOW) return false;
-  current.count += 1;
-  return true;
-}
+// Opening a conversation is the one chat action that needs no cookie, so it is
+// the one a script can repeat from nothing, and every such call writes a row.
+// The message limit above cannot see it: each new thread arrives with its own
+// empty counter, so a script that opens a thread per message never trips it.
+// Ten an hour per address is far more than a household needs and far less than
+// a flood, and only a caller that actually creates a thread is charged.
+const chatSessionLimiter = createRateLimiter<string>({ windowMs: 60 * 60 * 1000, max: 10 });
 
 function chatMessageDto(message: typeof chatMessagesTable.$inferSelect) {
   return {
@@ -428,6 +430,16 @@ async function loadThreadByToken(token: string | undefined) {
     .where(eq(chatThreadsTable.tokenHash, hashChatToken(token)))
     .limit(1);
   return thread;
+}
+
+// The session cookie is rolling: every request that presents a usable token
+// has its 180 days written again, so a customer who keeps visiting never loses
+// the conversation, while a browser that stops visiting still expires. A
+// cookie carries no age of its own, so there is nothing cheaper to test
+// against than refreshing it each time; the header is a hundred bytes on a
+// response that was never cacheable.
+function refreshChatSession(res: Response, token: string | undefined) {
+  if (token) setChatCookie(res, token);
 }
 
 async function chatTranscript(threadId: number) {
@@ -766,7 +778,8 @@ router.post("/chat/session", async (req, res, next) => {
     const name = input.name?.trim() ?? "";
     const phone = input.phone?.trim() ?? "";
 
-    const existing = await loadThreadByToken(readChatToken(req));
+    const existingToken = readChatToken(req);
+    const existing = await loadThreadByToken(existingToken);
     if (existing) {
       // The customer may have filled in their profile since the thread was
       // opened, so newly supplied details replace blanks without wiping what
@@ -779,7 +792,12 @@ router.post("/chat/session", async (req, res, next) => {
           .set({ customerName: nextName, phone: nextPhone })
           .where(eq(chatThreadsTable.id, existing.id));
       }
+      refreshChatSession(res, existingToken);
       return res.json({ thread_id: existing.id, customer_name: nextName, phone: nextPhone });
+    }
+
+    if (!chatSessionLimiter.allow(clientKey(req))) {
+      return res.status(429).json({ error: "Juda ko‘p suhbat ochildi. Biroz kuting." });
     }
 
     const token = createChatToken();
@@ -796,8 +814,10 @@ router.post("/chat/session", async (req, res, next) => {
 
 router.get("/chat/messages", async (req, res, next) => {
   try {
-    const thread = await loadThreadByToken(readChatToken(req));
+    const token = readChatToken(req);
+    const thread = await loadThreadByToken(token);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    refreshChatSession(res, token);
     await db
       .update(chatThreadsTable)
       .set({ customerReadAt: new Date() })
@@ -811,9 +831,11 @@ router.get("/chat/messages", async (req, res, next) => {
 router.post("/chat/messages", async (req, res, next) => {
   try {
     const { body } = SendChatMessageBody.parse(req.body);
-    const thread = await loadThreadByToken(readChatToken(req));
+    const token = readChatToken(req);
+    const thread = await loadThreadByToken(token);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
-    if (!allowChatMessage(thread.id)) {
+    refreshChatSession(res, token);
+    if (!chatMessageLimiter.allow(thread.id)) {
       return res.status(429).json({ error: "Juda ko‘p xabar yuborildi. Biroz kuting." });
     }
 
@@ -848,7 +870,7 @@ router.post("/admin/auth", async (req, res, next) => {
     const { code } = AdminLoginBody.parse(req.body);
     const expectedCode = process.env.ADMIN_ACCESS_CODE;
     if (!expectedCode) throw new Error("ADMIN_ACCESS_CODE is not configured");
-    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const key = clientKey(req);
     const now = Date.now();
     const previous = adminLoginAttempts.get(key);
     const attempt = previous && now - previous.windowStartedAt < ADMIN_LOGIN_WINDOW_MS
