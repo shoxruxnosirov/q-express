@@ -37,8 +37,12 @@ export function AdminLogin({ onSuccess }: { onSuccess?: () => void }) {
             id="admin-access-code" 
             data-testid="input-admin-access-code" 
             type="password" 
-            autoComplete="current-password" 
-            inputMode="numeric" 
+            autoComplete="current-password"
+            // The code may contain letters, so the phone must offer its full
+            // keyboard and must not capitalise or correct what is typed.
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             value={code} 
             onChange={event => setCode(event.target.value)} 
             placeholder="Kodni kiriting" 
