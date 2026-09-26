@@ -8,7 +8,7 @@
 // else in the app needs to change when they do.
 const range = (count: number) => Array.from({ length: count }, (_, index) => String(index + 1));
 
-export const DOM_OPTIONS = range(60);
+export const DOM_OPTIONS = range(200);
 export const XONADON_OPTIONS = range(100);
 
 export type AddressParts = { dom: string; xonadon: string };
