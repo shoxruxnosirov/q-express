@@ -14,6 +14,8 @@ import {
   getListCategoriesQueryKey, getHealthCheckQueryKey, getGetDeliveryFeeEstimateQueryKey,
   getGetWeeklyLeaderboardQueryKey, useAdminLogout, useCreateAdminCategory, useCreateAdminProduct, useCreateOrder,
   useGetAdminDashboard, useGetAdminSession, useGetDeliveryFeeEstimate,
+  getGetChatTranscriptQueryKey, getGetCustomerProfileQueryKey, useCustomerLogout, useGetCustomerProfile,
+  useReplaceCustomerAddresses, useUpdateCustomerProfile, type CustomerProfile as ApiCustomerProfile,
   useGetOrder, useGetProduct, useGetWeeklyLeaderboard, useHealthCheck, useListAdminOrders,
   useListAdminProducts, useListCategories, useListOrders, useListProducts, useUpdateAdminOrderStatus,
   type AdminDashboard, type Category, type Order, type OrderStatus, type Product, type WeeklyLeaderboardEntry,
@@ -25,12 +27,15 @@ import { inStockFirst, isSoldOut, lineProblemText, useCartAvailability } from '@
 import { cleanAddresses, clearProfile, emptyProfile, forgetAddress, profileFieldError, readProfile, rememberAddress, writeProfile, type CustomerProfile } from '@/lib/profile';
 import { emptyAddress, formatAddress, isCompleteAddress, parseAddress, type AddressParts } from '@/lib/address';
 import { AddressPicker, AddressSelects, SavedAddressList, type AddressChoice } from '@/components/AddressFields';
+import { VerifyPhone } from '@/components/VerifyPhone';
+import { formatUzPhone, normalizeUzPhone, samePhone } from '@/lib/phone';
 import { ProductPicker } from '@/components/ProductPicker';
 import { AdminImageField, AdminProductRow, FlagToggle, uploadProductImage } from '@/components/AdminProductRow';
 import { CustomerChat } from '@/components/CustomerChat';
 import { AdminChat } from '@/pages/admin/AdminChat';
 import { AdminGate } from '@/pages/admin/AdminGate';
 import { AdminAccounts } from '@/pages/admin/AdminAccounts';
+import { AdminCustomers } from '@/pages/admin/AdminCustomers';
 import { apiErrorMessage } from '@/pages/admin/AdminLogin';
 import { AdminProfile } from '@/pages/admin/AdminProfile';
 
@@ -62,6 +67,7 @@ function Shell({ children }: { children: ReactNode }) {
     { href: '/admin/orders', label: 'Buyurtmalar', icon: Package },
     { href: '/admin/catalog', label: 'Mahsulotlar', icon: Boxes },
     { href: '/admin/chat', label: 'Suhbatlar', icon: MessageCircle },
+    { href: '/admin/customers', label: 'Mijozlar', icon: UserRound },
     ...(isSuperAdmin ? [{ href: '/admin/admins', label: 'Adminlar', icon: ShieldCheck }] : []),
     { href: '/admin/profile', label: 'Profilim', icon: UserRound },
   ] : [
@@ -187,7 +193,7 @@ function Cart() {
     const isContinuous = product.unit === 'kg' || product.unit === 'litr';
     const lineLabel = purchaseMode === 'amount' ? `${money(amount!)} lik (~${quantity} ${product.unit})` : `${isContinuous ? quantity : Math.round(quantity)} ${product.unit}`;
     return <div data-testid={`row-cart-${product.id}`} key={product.id} className="animate-rise flex gap-3 rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 sm:gap-5 sm:p-4"><ProductVisual product={live.get(product.id) ?? product} className="h-24 w-24 shrink-0 rounded-2xl sm:h-28 sm:w-28" /><div className="flex min-w-0 flex-1 flex-col justify-between py-1"><div className="flex justify-between items-start gap-2"><div><p className="text-[15px] font-bold">{product.name}</p><p className="mt-1 text-xs font-semibold text-[hsl(var(--muted-foreground))]">{lineLabel}</p>{problems.get(product.id) && <p data-testid={`text-cart-problem-${product.id}`} className="mt-1.5 rounded-lg bg-[#fdf0ed] px-2 py-1 text-[11px] font-bold text-[#9d493e]">{lineProblemText(problems.get(product.id)!, product.unit)}</p>}</div><button data-testid={`button-remove-cart-${product.id}`} onClick={() => remove(product.id)} className="flex h-8 w-8 items-center justify-center rounded-full text-[hsl(var(--muted-foreground))] hover:bg-[#f8e3de] hover:text-[#a64b3f] transition"><X size={16} /></button></div><div className="flex items-end justify-between mt-2"><button data-testid={`button-edit-cart-${product.id}`} onClick={() => openPicker(live.get(product.id) ?? product)} className="text-xs font-bold text-[hsl(var(--primary))] underline underline-offset-2">O'zgartirish</button><p className="display text-base font-extrabold">{money(lineTotal)}</p></div></div></div>;
-  })}</section><aside className="h-fit rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6 lg:sticky lg:top-24"><h2 className="display text-xl font-extrabold">Buyurtma xulosasi</h2><div className="mt-5 space-y-3 border-b border-[hsl(var(--border))] pb-5 text-sm"><div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Mahsulotlar</span><span className="font-bold">{money(subtotal)}</span></div><div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Yetkazib berish</span><span className="font-bold">Checkoutda aniqlanadi</span></div></div><div className="mt-5 flex justify-between"><span className="font-bold">Mahsulotlar jami</span><span data-testid="text-cart-total" className="display text-2xl font-extrabold">{money(subtotal)}</span></div><p className="mt-3 rounded-xl bg-[#fff2d4] p-3 text-xs font-semibold text-[#91600f]">Birinchi buyurtma bepul. Keyingi buyurtmalar uchun yetkazish 4 590 so‘m.</p>{problems.size > 0 ? <p data-testid="text-cart-blocked" className="mt-5 rounded-2xl bg-[#fdf0ed] p-3.5 text-center text-xs font-bold text-[#9d493e]">Savatdagi ba’zi mahsulotlar tugagan yoki kam qolgan. Ularni o‘zgartiring yoki olib tashlang.</p> : <Link href="/checkout" data-testid="link-checkout" className="tap mt-5 flex h-13 items-center justify-center gap-2 rounded-2xl bg-[hsl(var(--primary))] px-5 py-3.5 text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.2)]">Buyurtmani rasmiylashtirish <ArrowRight size={17} /></Link>}<div className="mt-4 flex items-center justify-center gap-2 text-xs text-[hsl(var(--muted-foreground))]"><Clock3 size={14} /> Taxminan 15–19 daqiqada</div></aside></div>}</div>;
+  })}</section><aside className="h-fit rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6 lg:sticky lg:top-24"><h2 className="display text-xl font-extrabold">Buyurtma xulosasi</h2><div className="mt-5 space-y-3 border-b border-[hsl(var(--border))] pb-5 text-sm"><div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Mahsulotlar</span><span className="font-bold">{money(subtotal)}</span></div><div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Yetkazib berish</span><span className="font-bold">Checkoutda aniqlanadi</span></div></div><div className="mt-5 flex justify-between"><span className="font-bold">Mahsulotlar jami</span><span data-testid="text-cart-total" className="display text-2xl font-extrabold">{money(subtotal)}</span></div><p className="mt-3 rounded-xl bg-[#fff2d4] p-3 text-xs font-semibold text-[#91600f]">Birinchi buyurtma bepul (raqam Telegram orqali tasdiqlansa). Keyingi buyurtmalar uchun yetkazish 4 590 so‘m.</p>{problems.size > 0 ? <p data-testid="text-cart-blocked" className="mt-5 rounded-2xl bg-[#fdf0ed] p-3.5 text-center text-xs font-bold text-[#9d493e]">Savatdagi ba’zi mahsulotlar tugagan yoki kam qolgan. Ularni o‘zgartiring yoki olib tashlang.</p> : <Link href="/checkout" data-testid="link-checkout" className="tap mt-5 flex h-13 items-center justify-center gap-2 rounded-2xl bg-[hsl(var(--primary))] px-5 py-3.5 text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.2)]">Buyurtmani rasmiylashtirish <ArrowRight size={17} /></Link>}<div className="mt-4 flex items-center justify-center gap-2 text-xs text-[hsl(var(--muted-foreground))]"><Clock3 size={14} /> Taxminan 15–19 daqiqada</div></aside></div>}</div>;
 }
 
 function Checkout() {
@@ -195,16 +201,32 @@ function Checkout() {
   const { problems } = useCartAvailability(lines);
   const createOrder = useCreateOrder();
   const [, setLocation] = useLocation();
+  const qc = useQueryClient();
   const [savedProfile] = useState(readProfile);
   const [customerName, setCustomerName] = useState(savedProfile.name);
   const [phone, setPhone] = useState(savedProfile.phone);
-  // Addresses this browser already delivered to: the ones the profile keeps,
-  // plus any from its own past orders, so a customer whose profile was never
-  // saved still finds them. Most recent first.
+  const [detailsTouched, setDetailsTouched] = useState(false);
+  // The account the server knows this browser as. Its details win over what
+  // this browser remembers locally, once they arrive, unless the customer has
+  // started typing.
+  const customer = useGetCustomerProfile({ query: { queryKey: getGetCustomerProfileQueryKey() } });
+  const account = customer.data?.authenticated ? customer.data : undefined;
+  useEffect(() => {
+    if (!account || detailsTouched) return;
+    if (account.name) setCustomerName(account.name);
+    if (account.phone) setPhone(formatUzPhone(account.phone));
+  }, [account, detailsTouched]);
+  const phoneVerified = Boolean(account?.phone_verified && samePhone(phone, account.phone));
+  // Addresses this customer already uses: the account's, this browser's own,
+  // and those of its past orders, most recent first.
   const myOrders = useListOrders({ query: { queryKey: getListOrdersQueryKey() } });
   const savedAddresses = useMemo(
-    () => cleanAddresses([...savedProfile.addresses, ...(myOrders.data ?? []).map(order => parseAddress(order.address))]),
-    [savedProfile, myOrders.data],
+    () => cleanAddresses([
+      ...(account?.addresses ?? []),
+      ...savedProfile.addresses,
+      ...(myOrders.data ?? []).map(order => parseAddress(order.address)),
+    ]),
+    [account, savedProfile, myOrders.data],
   );
   const [addressChoice, setAddressChoice] = useState<AddressChoice>(savedProfile.addresses.length ? 0 : 'new');
   const [addressTouched, setAddressTouched] = useState(false);
@@ -218,7 +240,8 @@ function Checkout() {
   const chooseAddress = (choice: AddressChoice) => { setAddressTouched(true); setAddressChoice(choice); };
   const [payment, setPayment] = useState<'cash' | 'click' | 'payme' | 'uzcard' | 'humo'>('cash');
   const [serverError, setServerError] = useState('');
-  const canEstimate = phone.trim().length >= 7;
+  const phoneProblem = phone.trim().length >= 7 && !normalizeUzPhone(phone) ? 'Faqat O‘zbekiston raqami: +998 90 123 45 67' : '';
+  const canEstimate = Boolean(normalizeUzPhone(phone));
   const deliveryEstimate = useGetDeliveryFeeEstimate(
     { phone: phone.trim() },
     { query: { queryKey: getGetDeliveryFeeEstimateQueryKey({ phone: phone.trim() }), enabled: canEstimate } },
@@ -226,7 +249,7 @@ function Checkout() {
   const delivery = deliveryEstimate.data?.delivery_fee;
   
   const submit = () => {
-    if (customerName.trim().length < 2 || !isCompleteAddress(address) || phone.trim().length < 7 || !lines.length || problems.size > 0) return;
+    if (customerName.trim().length < 2 || !isCompleteAddress(address) || !normalizeUzPhone(phone) || !lines.length || problems.size > 0) return;
     // Saved before the request rather than after it, so a rejected order still
     // leaves the details filled in for the next attempt.
     writeProfile({ name: customerName, phone, addresses: rememberAddress(savedAddresses, address) });
@@ -244,18 +267,24 @@ function Checkout() {
         })) 
       } 
     }, { 
-      onSuccess: order => { clear(); setLocation(`/orders/${order.id}`); },
+      onSuccess: order => {
+        clear();
+        // The order created or updated this browser's account.
+        qc.invalidateQueries({ queryKey: getGetCustomerProfileQueryKey() });
+        qc.invalidateQueries({ queryKey: getListOrdersQueryKey() });
+        setLocation(`/orders/${order.id}`);
+      },
       // The API answers { error } in Uzbek, e.g. that stock ran out.
       onError: err => setServerError(apiErrorMessage(err, 'Buyurtma yuborishda xatolik yuz berdi'))
     });
   };
   
   if (!lines.length) return <div className="container-wide py-10"><EmptyState title="Rasmiylashtirish uchun savatni to‘ldiring" text="Buyurtmaga kamida bitta mahsulot qo‘shing." action="Katalogga borish" href="/catalog" /></div>;
-  return <div className="container-wide py-7 sm:py-10"><Link href="/cart" data-testid="link-back-cart" className="mb-6 inline-flex items-center gap-2 text-sm font-bold text-[hsl(var(--muted-foreground))]"><ArrowLeft size={16} /> Savatga qaytish</Link><div className="mb-7"><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Qadam 2 / 2</p><h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Buyurtmani yakunlash</h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Yetkazish ma’lumotlarini kiriting — tez orada eshigingizni taqillatamiz.</p></div><div className="grid gap-5 lg:grid-cols-[1fr_370px]"><section className="space-y-5"><div className="rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-7"><SectionTitle number="01" title="Yetkazish manzili" /><label className="mt-5 block text-sm font-bold">Ism-familiya<input data-testid="input-customer-name" value={customerName} onChange={event => setCustomerName(event.target.value)} placeholder="Masalan: Aziz Karimov" maxLength={80} autoComplete="name" className="mt-2 h-12 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 text-sm outline-none focus:border-[hsl(var(--primary))]" /></label><div className="mt-4"><p className="text-sm font-bold">Manzil</p><AddressPicker saved={savedAddresses} choice={addressChoice} onChoice={chooseAddress} draft={newAddress} onDraft={parts => { setAddressTouched(true); setNewAddress(parts); }} /></div><label className="mt-4 block text-sm font-bold">Telefon raqam<input data-testid="input-phone" value={phone} onChange={event => setPhone(event.target.value)} type="tel" placeholder="+998 90 123 45 67" className="mt-2 h-12 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 text-sm outline-none focus:border-[hsl(var(--primary))]" /></label><p className="mt-3 rounded-xl bg-[#e8efdc] p-3 text-xs font-semibold text-[hsl(var(--primary))]">Birinchi buyurtma bepul, keyingi buyurtmalar uchun yetkazish 4 590 so‘m.</p></div><div className="rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-7"><SectionTitle number="02" title="To‘lov usuli" /><div className="mt-5 grid gap-2 sm:grid-cols-2">{[['cash', 'Naqd pul', Banknote], ['click', 'Click', CreditCard], ['payme', 'Payme', WalletCards], ['uzcard', 'Uzcard', CreditCard], ['humo', 'Humo', CreditCard]].map(([value, label, Icon]) => <button data-testid={`button-payment-${value}`} key={value as string} onClick={() => setPayment(value as typeof payment)} className={`flex items-center gap-3 rounded-xl border p-3.5 text-left text-sm font-bold transition ${payment === value ? 'border-[hsl(var(--primary))] bg-[#e8efdc] text-[hsl(var(--primary))]' : 'border-[hsl(var(--border))] hover:bg-[hsl(var(--muted))]'}`}><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[hsl(var(--card))]"><Icon size={16} /></span>{label as string}{payment === value && <Check size={16} className="ml-auto" />}</button>)}</div></div>{problems.size > 0 && <div data-testid="text-checkout-stock-problem" className="rounded-2xl border border-[#e6b2a8] bg-[#fdf0ed] p-4 text-sm font-semibold text-[#9d493e]">Savatdagi ba’zi mahsulotlar tugagan yoki kam qolgan. <Link href="/cart" className="underline underline-offset-2">Savatga qaytib</Link> ularni o‘zgartiring.</div>}{serverError && <div className="rounded-2xl border border-[#e6b2a8] bg-[#fdf0ed] p-4 text-sm font-semibold text-[#9d493e]">{serverError}</div>}</section><aside className="h-fit rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6 lg:sticky lg:top-24"><SectionTitle number="03" title="Buyurtma" /><div className="mt-5 space-y-3">{lines.map(line => {
+  return <div className="container-wide py-7 sm:py-10"><Link href="/cart" data-testid="link-back-cart" className="mb-6 inline-flex items-center gap-2 text-sm font-bold text-[hsl(var(--muted-foreground))]"><ArrowLeft size={16} /> Savatga qaytish</Link><div className="mb-7"><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Qadam 2 / 2</p><h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Buyurtmani yakunlash</h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Yetkazish ma’lumotlarini kiriting — tez orada eshigingizni taqillatamiz.</p></div><div className="grid gap-5 lg:grid-cols-[1fr_370px]"><section className="space-y-5"><div className="rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-7"><SectionTitle number="01" title="Yetkazish manzili" /><label className="mt-5 block text-sm font-bold">Ism-familiya<input data-testid="input-customer-name" value={customerName} onChange={event => { setDetailsTouched(true); setCustomerName(event.target.value); }} placeholder="Masalan: Aziz Karimov" maxLength={80} autoComplete="name" className="mt-2 h-12 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 text-sm outline-none focus:border-[hsl(var(--primary))]" /></label><div className="mt-4"><p className="text-sm font-bold">Manzil</p><AddressPicker saved={savedAddresses} choice={addressChoice} onChoice={chooseAddress} draft={newAddress} onDraft={parts => { setAddressTouched(true); setNewAddress(parts); }} /></div><label className="mt-4 block text-sm font-bold"><span className="flex items-center justify-between gap-2">Telefon raqam{phoneVerified && <span data-testid="badge-phone-verified" className="inline-flex items-center gap-1 rounded-full bg-[#e8efdc] px-2 py-0.5 text-[10px] font-bold text-[hsl(var(--primary))]"><BadgeCheck size={12} /> Tasdiqlangan</span>}</span><input data-testid="input-phone" value={phone} onChange={event => { setDetailsTouched(true); setPhone(event.target.value); }} type="tel" autoComplete="tel" placeholder="+998 90 123 45 67" className="mt-2 h-12 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 text-sm outline-none focus:border-[hsl(var(--primary))]" /></label>{phoneProblem && <p className="mt-2 text-xs font-semibold text-[#9d493e]">{phoneProblem}</p>}{deliveryEstimate.data?.verification_required ? <div className="mt-3"><VerifyPhone key={normalizeUzPhone(phone) ?? ''} phone={phone} title="Birinchi yetkazish bepul bo‘lsin" hint="Birinchi buyurtmangiz uchun yetkazish bepul, faqat raqamingiz Telegram orqali tasdiqlansa. Tasdiqlamasangiz ham buyurtma bera olasiz, yetkazish 4 590 so‘m bo‘ladi." onVerified={profile => { if (profile.phone) setPhone(formatUzPhone(profile.phone)); }} /></div> : <p className="mt-3 rounded-xl bg-[#e8efdc] p-3 text-xs font-semibold text-[hsl(var(--primary))]">Birinchi buyurtma Telegram orqali tasdiqlangan raqam uchun bepul, keyingilari uchun yetkazish 4 590 so‘m.</p>}</div><div className="rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-7"><SectionTitle number="02" title="To‘lov usuli" /><div className="mt-5 grid gap-2 sm:grid-cols-2">{[['cash', 'Naqd pul', Banknote], ['click', 'Click', CreditCard], ['payme', 'Payme', WalletCards], ['uzcard', 'Uzcard', CreditCard], ['humo', 'Humo', CreditCard]].map(([value, label, Icon]) => <button data-testid={`button-payment-${value}`} key={value as string} onClick={() => setPayment(value as typeof payment)} className={`flex items-center gap-3 rounded-xl border p-3.5 text-left text-sm font-bold transition ${payment === value ? 'border-[hsl(var(--primary))] bg-[#e8efdc] text-[hsl(var(--primary))]' : 'border-[hsl(var(--border))] hover:bg-[hsl(var(--muted))]'}`}><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[hsl(var(--card))]"><Icon size={16} /></span>{label as string}{payment === value && <Check size={16} className="ml-auto" />}</button>)}</div></div>{problems.size > 0 && <div data-testid="text-checkout-stock-problem" className="rounded-2xl border border-[#e6b2a8] bg-[#fdf0ed] p-4 text-sm font-semibold text-[#9d493e]">Savatdagi ba’zi mahsulotlar tugagan yoki kam qolgan. <Link href="/cart" className="underline underline-offset-2">Savatga qaytib</Link> ularni o‘zgartiring.</div>}{serverError && <div className="rounded-2xl border border-[#e6b2a8] bg-[#fdf0ed] p-4 text-sm font-semibold text-[#9d493e]">{serverError}</div>}</section><aside className="h-fit rounded-[24px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6 lg:sticky lg:top-24"><SectionTitle number="03" title="Buyurtma" /><div className="mt-5 space-y-3">{lines.map(line => {
     const lineTotal = line.purchaseMode === 'amount' ? line.amount! : line.quantity * line.product.price;
     const lineLabel = line.purchaseMode === 'amount' ? `${money(line.amount!)} lik` : `${line.quantity} ${line.product.unit}`;
     return <div key={line.product.id} className="flex justify-between gap-3 text-sm"><span className="truncate text-[hsl(var(--muted-foreground))]">{line.product.name} ({lineLabel})</span><span className="shrink-0 font-bold">{money(lineTotal)}</span></div>;
-  })}</div><div className="mt-5 space-y-3 border-t border-[hsl(var(--border))] pt-5 text-sm"><div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Yetkazib berish</span><span className="font-bold">{delivery === undefined ? (canEstimate ? 'Hisoblanmoqda...' : 'Telefon kiriting') : delivery === 0 ? 'Bepul' : money(delivery)}</span></div><div className="flex justify-between"><span className="font-bold">Jami</span><span data-testid="text-checkout-total" className="display text-2xl font-extrabold">{delivery === undefined ? '—' : money(subtotal + delivery)}</span></div></div><button data-testid="button-submit-order" onClick={submit} disabled={createOrder.isPending || customerName.trim().length < 2 || !isCompleteAddress(address) || phone.length < 7 || problems.size > 0} className="tap mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[hsl(var(--primary))] text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.2)] disabled:cursor-not-allowed disabled:opacity-50">{createOrder.isPending ? <><LoaderCircle size={18} className="animate-spin" /> Yuborilmoqda...</> : <>Buyurtma berish <ArrowRight size={17} /></>}</button></aside></div></div>;
+  })}</div><div className="mt-5 space-y-3 border-t border-[hsl(var(--border))] pt-5 text-sm"><div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Yetkazib berish</span><span className="font-bold">{delivery === undefined ? (canEstimate ? 'Hisoblanmoqda...' : 'Telefon kiriting') : delivery === 0 ? 'Bepul' : money(delivery)}</span></div><div className="flex justify-between"><span className="font-bold">Jami</span><span data-testid="text-checkout-total" className="display text-2xl font-extrabold">{delivery === undefined ? '—' : money(subtotal + delivery)}</span></div></div><button data-testid="button-submit-order" onClick={submit} disabled={createOrder.isPending || customerName.trim().length < 2 || !isCompleteAddress(address) || !normalizeUzPhone(phone) || problems.size > 0} className="tap mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[hsl(var(--primary))] text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.2)] disabled:cursor-not-allowed disabled:opacity-50">{createOrder.isPending ? <><LoaderCircle size={18} className="animate-spin" /> Yuborilmoqda...</> : <>Buyurtma berish <ArrowRight size={17} /></>}</button></aside></div></div>;
 }
 function SectionTitle({ number, title }: { number: string; title: string }) { return <div className="flex items-center gap-3"><span className="mono flex h-8 w-8 items-center justify-center rounded-lg bg-[hsl(var(--secondary))] text-[11px] font-bold">{number}</span><h2 className="display text-xl font-extrabold">{title}</h2></div>; }
 
@@ -281,45 +310,114 @@ function OrderDetail() {
 }
 
 function Profile() {
-  // Read once on mount rather than on every render, so typing into the form is
-  // not fighting whatever is still in storage.
-  const [profile, setProfile] = useState<CustomerProfile>(readProfile);
-  const [feedback, setFeedback] = useState('');
+  const qc = useQueryClient();
+  const customer = useGetCustomerProfile({ query: { queryKey: getGetCustomerProfileQueryKey() } });
+  const account = customer.data?.authenticated ? customer.data : undefined;
+  const updateProfile = useUpdateCustomerProfile();
+  const replaceAddresses = useReplaceCustomerAddresses();
+  const logout = useCustomerLogout();
+  // The form starts from this browser's memory and switches to the account's
+  // details once they arrive, unless the customer has started typing.
+  const [local] = useState<CustomerProfile>(readProfile);
+  const [name, setName] = useState(local.name);
+  const [phone, setPhone] = useState(local.phone);
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!account || touched) return;
+    setName(account.name);
+    setPhone(account.phone ? formatUzPhone(account.phone) : '');
+  }, [account, touched]);
+  const addresses = account ? account.addresses : local.addresses;
+  const [feedback, setFeedback] = useState<{ text: string; error?: boolean } | null>(null);
+  const [newAddress, setNewAddress] = useState<AddressParts>(emptyAddress);
   const leaderboard = useGetWeeklyLeaderboard({ query: { queryKey: getGetWeeklyLeaderboardQueryKey() } });
-  const displayName = profile.name.trim();
+  const displayName = (account?.name || name).trim();
+  const verified = Boolean(account?.phone_verified);
+
+  const afterSave = (profile: ApiCustomerProfile, text: string) => {
+    qc.setQueryData(getGetCustomerProfileQueryKey(), profile);
+    // Kept in step so checkout still prefills if the network is slow.
+    writeProfile({ name: profile.name, phone: profile.phone, addresses: profile.addresses });
+    setFeedback({ text });
+  };
+  const failed = (err: unknown, fallback: string) => setFeedback({ text: apiErrorMessage(err, fallback), error: true });
 
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const error = profileFieldError(profile);
-    if (error) return setFeedback(error);
-    setProfile(writeProfile(profile));
-    setFeedback('Ma’lumotlaringiz saqlandi. Buyurtma berishda o‘zi to‘ldiriladi.');
+    const error = profileFieldError({ name, phone });
+    if (error) return setFeedback({ text: error, error: true });
+    if (phone.trim() && !normalizeUzPhone(phone)) return setFeedback({ text: 'Faqat O‘zbekiston raqami: +998 90 123 45 67', error: true });
+    updateProfile.mutate({ data: { name: name.trim(), ...(verified ? {} : { phone: phone.trim() }) } }, {
+      onSuccess: profile => { setTouched(false); afterSave(profile, 'Ma’lumotlaringiz saqlandi. Buyurtma berishda o‘zi to‘ldiriladi.'); },
+      onError: err => failed(err, 'Saqlab bo‘lmadi.'),
+    });
   };
-
-  const forget = () => {
-    clearProfile();
-    setProfile(emptyProfile);
-    setFeedback('Ma’lumotlar bu qurilmadan o‘chirildi.');
-  };
-
-  // Address changes are saved at once, merged with whatever name and phone are
-  // already stored, so removing an address never needs the Save button and
-  // never saves a half-typed name along with it.
-  const [newAddress, setNewAddress] = useState<AddressParts>(emptyAddress);
-  const saveAddresses = (addresses: AddressParts[], message: string) => {
-    const stored = writeProfile({ ...readProfile(), addresses });
-    setProfile(current => ({ ...current, addresses: stored.addresses }));
-    setFeedback(message);
+  // Address changes are saved at once, without the Save button.
+  const saveAddresses = (next: AddressParts[], text: string) => {
+    replaceAddresses.mutate({ data: { addresses: next } }, {
+      onSuccess: profile => afterSave(profile, text),
+      onError: err => failed(err, 'Manzilni saqlab bo‘lmadi.'),
+    });
   };
   const addAddress = () => {
-    if (!isCompleteAddress(newAddress)) return setFeedback('Dom va xonadonni tanlang.');
-    saveAddresses(rememberAddress(profile.addresses, newAddress), 'Manzil qo‘shildi.');
+    if (!isCompleteAddress(newAddress)) return setFeedback({ text: 'Dom va xonadonni tanlang.', error: true });
+    saveAddresses(rememberAddress(addresses, newAddress), 'Manzil qo‘shildi.');
     setNewAddress(emptyAddress);
   };
+  // Ends this device's session and forgets its details, for a shared phone.
+  const signOut = () => {
+    logout.mutate(undefined, {
+      onSuccess: profile => {
+        clearProfile();
+        qc.setQueryData(getGetCustomerProfileQueryKey(), profile);
+        qc.removeQueries({ queryKey: getListOrdersQueryKey() });
+        qc.removeQueries({ queryKey: getGetChatTranscriptQueryKey() });
+        try { localStorage.removeItem('qorasuv-chat-started'); } catch { /* storage may be unavailable */ }
+        setName(''); setPhone(''); setTouched(false);
+        setFeedback({ text: 'Bu qurilmadan chiqdingiz. Ma’lumotlaringiz shu qurilmadan o‘chirildi.' });
+      },
+      onError: err => failed(err, 'Chiqib bo‘lmadi.'),
+    });
+  };
 
-  const field = 'mt-2 h-12 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 text-sm outline-none focus:border-[hsl(var(--primary))]';
+  const field = 'mt-2 h-12 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 text-sm outline-none focus:border-[hsl(var(--primary))] disabled:opacity-70';
+  const busy = updateProfile.isPending || replaceAddresses.isPending || logout.isPending;
 
-  return <div className="container-wide py-7 sm:py-10"><div className="mb-8"><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Q express / Profil</p><h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Siz uchun</h1></div><div className="grid gap-5 lg:grid-cols-[.82fr_1.18fr]"><section className="rounded-[26px] bg-[hsl(var(--primary))] p-6 text-white sm:p-8"><div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f4cc73] text-2xl font-extrabold text-[#25483e]">{(displayName || 'I').charAt(0).toUpperCase()}</div><h2 data-testid="text-profile-name" className="display mt-6 text-3xl font-extrabold">{displayName || 'Ism kiritilmagan'}</h2>{profile.phone.trim() && <p className="mt-2 text-sm text-[#d9e5ce]">{profile.phone.trim()}</p>}{profile.addresses[0] && <p className="mt-1 text-sm text-[#d9e5ce]">{formatAddress(profile.addresses[0])}{profile.addresses.length > 1 ? ` (+${profile.addresses.length - 1})` : ''}</p>}{!profile.phone.trim() && !profile.addresses.length && <p className="mt-2 text-sm text-[#d9e5ce]">Ma’lumotlaringizni saqlang, keyingi buyurtmada qayta yozmaysiz.</p>}<Link href="/orders" data-testid="link-profile-orders" className="mt-8 flex items-center justify-between rounded-2xl bg-white/10 p-4 text-sm font-bold transition hover:bg-white/15">Buyurtmalarim <ArrowRight size={17} /></Link></section><section className="space-y-3"><form onSubmit={save} data-testid="form-profile" className="rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-extrabold">Shaxsiy ma’lumotlar</p><p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">Faqat shu qurilmada saqlanadi va buyurtma shaklini o‘zi to‘ldiradi.</p></div><UserRound size={19} className="shrink-0 text-[hsl(var(--primary))]" /></div><label className="mt-5 block text-sm font-bold">Ism-familiya<input data-testid="input-profile-name" value={profile.name} onChange={event => setProfile({ ...profile, name: event.target.value })} placeholder="Masalan: Aziz Karimov" maxLength={80} autoComplete="name" className={field} /></label><label className="mt-4 block text-sm font-bold">Telefon raqam<input data-testid="input-profile-phone" value={profile.phone} onChange={event => setProfile({ ...profile, phone: event.target.value })} type="tel" placeholder="+998 90 123 45 67" autoComplete="tel" className={field} /></label><div className="mt-4"><p className="text-sm font-bold">Saqlangan manzillar</p><SavedAddressList addresses={profile.addresses} onRemove={removed => saveAddresses(forgetAddress(profile.addresses, removed), 'Manzil o‘chirildi.')} onMakeFirst={chosen => saveAddresses(rememberAddress(profile.addresses, chosen), 'Asosiy manzil o‘zgardi.')} /><p className="mt-4 text-xs font-bold text-[hsl(var(--muted-foreground))]">Yangi manzil qo‘shish</p><AddressSelects idPrefix="profile" value={newAddress} onChange={setNewAddress} /><button type="button" data-testid="button-add-address" onClick={addAddress} disabled={!isCompleteAddress(newAddress)} className="mt-2 w-full rounded-xl border border-[hsl(var(--primary)/.4)] py-2.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-40">+ Manzilni qo‘shish</button></div>{feedback && <p role="status" data-testid="text-profile-feedback" className="mt-4 rounded-xl bg-[#e8efdc] p-3 text-xs font-semibold text-[hsl(var(--primary))]"><Check size={14} className="mr-1.5 inline" />{feedback}</p>}<div className="mt-5 flex gap-2"><button data-testid="button-profile-save" className="tap h-12 flex-1 rounded-xl bg-[hsl(var(--primary))] text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.2)]">Saqlash</button><button type="button" data-testid="button-profile-forget" onClick={forget} className="h-12 rounded-xl border border-[hsl(var(--border))] px-4 text-xs font-bold text-[hsl(var(--muted-foreground))] transition hover:border-[hsl(var(--primary))] hover:text-[hsl(var(--primary))]">Tozalash</button></div></form><ProfileSetting icon={Headphones} title="Yordam markazi" description="Savollaringizga javob toping" action="Ko‘rish" /><ProfileSetting icon={Info} title="Q express haqida" description="Yetkazish hududi va shartlar" action="O‘qish" /><WeeklyLeaderboard entries={leaderboard.data} loading={leaderboard.isLoading} /></section></div></div>;
+  return <div className="container-wide py-7 sm:py-10">
+    <div className="mb-8"><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Q express / Profil</p><h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Siz uchun</h1></div>
+    <div className="grid gap-5 lg:grid-cols-[.82fr_1.18fr]">
+      <section className="h-fit rounded-[26px] bg-[hsl(var(--primary))] p-6 text-white sm:p-8">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f4cc73] text-2xl font-extrabold text-[#25483e]">{(displayName || 'I').charAt(0).toUpperCase()}</div>
+        <h2 data-testid="text-profile-name" className="display mt-6 text-3xl font-extrabold">{displayName || 'Ism kiritilmagan'}</h2>
+        {account?.phone && <p className="mt-2 flex items-center gap-2 text-sm text-[#d9e5ce]">{formatUzPhone(account.phone)}{verified && <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white"><BadgeCheck size={12} /> Tasdiqlangan</span>}</p>}
+        {addresses[0] && <p className="mt-1 text-sm text-[#d9e5ce]">{formatAddress(addresses[0])}{addresses.length > 1 ? ` (+${addresses.length - 1})` : ''}</p>}
+        {!account && <p className="mt-2 text-sm text-[#d9e5ce]">Ma’lumotlaringizni saqlang, keyingi buyurtmada qayta yozmaysiz.</p>}
+        <Link href="/orders" data-testid="link-profile-orders" className="mt-8 flex items-center justify-between rounded-2xl bg-white/10 p-4 text-sm font-bold transition hover:bg-white/15">Buyurtmalarim <ArrowRight size={17} /></Link>
+      </section>
+      <section className="space-y-3">
+        {!verified && <VerifyPhone phone={phone} title="Raqamingizni tasdiqlang" hint="Tasdiqlangan raqam bilan istalgan telefondan kirib, buyurtmalaringiz, manzillaringiz va suhbatingizni ko‘rasiz. Birinchi buyurtmangiz uchun yetkazish ham bepul bo‘ladi." onVerified={profile => { setTouched(false); afterSave(profile, 'Raqamingiz tasdiqlandi.'); }} />}
+        <form onSubmit={save} data-testid="form-profile" className="rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-extrabold">Shaxsiy ma’lumotlar</p><p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{verified ? 'Tasdiqlangan raqamingizga bog‘langan: istalgan qurilmadan kirsangiz ham shu ma’lumotlar chiqadi.' : 'Buyurtma shaklini o‘zi to‘ldiradi. Boshqa qurilmada ko‘rish uchun raqamingizni tasdiqlang.'}</p></div><UserRound size={19} className="shrink-0 text-[hsl(var(--primary))]" /></div>
+          <label className="mt-5 block text-sm font-bold">Ism-familiya<input data-testid="input-profile-name" value={name} onChange={event => { setTouched(true); setName(event.target.value); }} placeholder="Masalan: Aziz Karimov" maxLength={80} autoComplete="name" className={field} /></label>
+          <label className="mt-4 block text-sm font-bold">Telefon raqam<input data-testid="input-profile-phone" value={phone} onChange={event => { setTouched(true); setPhone(event.target.value); }} disabled={verified} type="tel" placeholder="+998 90 123 45 67" autoComplete="tel" className={field} />{verified && <span className="mt-1 block text-[11px] font-semibold text-[hsl(var(--muted-foreground))]">Tasdiqlangan raqamni o‘zgartirish uchun chiqib, yangi raqam bilan tasdiqlang.</span>}</label>
+          <div className="mt-4"><p className="text-sm font-bold">Saqlangan manzillar</p>
+            <SavedAddressList addresses={addresses} onRemove={removed => saveAddresses(forgetAddress(addresses, removed), 'Manzil o‘chirildi.')} onMakeFirst={chosen => saveAddresses(rememberAddress(addresses, chosen), 'Asosiy manzil o‘zgardi.')} />
+            <p className="mt-4 text-xs font-bold text-[hsl(var(--muted-foreground))]">Yangi manzil qo‘shish</p>
+            <AddressSelects idPrefix="profile" value={newAddress} onChange={setNewAddress} />
+            <button type="button" data-testid="button-add-address" onClick={addAddress} disabled={!isCompleteAddress(newAddress) || busy} className="mt-2 w-full rounded-xl border border-[hsl(var(--primary)/.4)] py-2.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-40">+ Manzilni qo‘shish</button>
+          </div>
+          {feedback && <p role="status" data-testid="text-profile-feedback" className={`mt-4 rounded-xl p-3 text-xs font-semibold ${feedback.error ? 'bg-[#fdf0ed] text-[#9d493e]' : 'bg-[#e8efdc] text-[hsl(var(--primary))]'}`}>{!feedback.error && <Check size={14} className="mr-1.5 inline" />}{feedback.text}</p>}
+          <div className="mt-5 flex gap-2">
+            <button data-testid="button-profile-save" disabled={busy} className="tap h-12 flex-1 rounded-xl bg-[hsl(var(--primary))] text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.2)] disabled:opacity-60">Saqlash</button>
+            {account && <button type="button" data-testid="button-profile-logout" onClick={signOut} disabled={busy} className="h-12 rounded-xl border border-[hsl(var(--border))] px-4 text-xs font-bold text-[hsl(var(--muted-foreground))] transition hover:border-[#b3261e] hover:text-[#b3261e] disabled:opacity-60">Bu qurilmadan chiqish</button>}
+          </div>
+        </form>
+        <ProfileSetting icon={Headphones} title="Yordam markazi" description="Savollaringizga javob toping" action="Ko‘rish" />
+        <ProfileSetting icon={Info} title="Q express haqida" description="Yetkazish hududi va shartlar" action="O‘qish" />
+        <WeeklyLeaderboard entries={leaderboard.data} loading={leaderboard.isLoading} />
+      </section>
+    </div>
+  </div>;
 }
 function ProfileSetting({ icon: Icon, title, description, action, toggle, onClick }: { icon: typeof MapPin; title: string; description: string; action?: string; toggle?: boolean; onClick?: () => void }) { return <div className="flex items-center gap-4 rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 sm:p-5"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#e8efdc] text-[hsl(var(--primary))]"><Icon size={19} /></span><div className="min-w-0 flex-1"><p className="text-sm font-extrabold">{title}</p><p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{description}</p></div>{toggle ? <button data-testid={`button-toggle-${title}`} className="relative h-6 w-11 rounded-full bg-[hsl(var(--primary))]"><span className="absolute right-1 top-1 h-4 w-4 rounded-full bg-white" /></button> : action && <button data-testid={`button-profile-${title}`} onClick={onClick} className="rounded-full border border-[hsl(var(--border))] px-3 py-1.5 text-xs font-bold transition hover:border-[hsl(var(--primary))] hover:text-[hsl(var(--primary))]">{action}</button>}</div>; }
 
@@ -434,6 +532,7 @@ function Router() {
             <Route path="/admin/orders" component={AdminOrders} />
             <Route path="/admin/catalog" component={AdminCatalogManager} />
             <Route path="/admin/chat" component={AdminChat} />
+            <Route path="/admin/customers" component={AdminCustomers} />
             <Route path="/admin/admins" component={AdminAccounts} />
             <Route path="/admin/profile" component={AdminProfile} />
             <Route component={NotFound} />

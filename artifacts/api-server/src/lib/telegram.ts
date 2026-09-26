@@ -212,8 +212,10 @@ type TelegramUpdate = {
   update_id?: number;
   message?: {
     message_id?: number;
-    chat?: { id?: number | string };
+    chat?: { id?: number | string; type?: string };
+    from?: { id?: number };
     text?: string;
+    contact?: { phone_number?: string; user_id?: number };
     reply_to_message?: {
       from?: { id?: number; is_bot?: boolean };
       text?: string;
@@ -225,6 +227,11 @@ export type AdminUpdate =
   // "/start <code>" from a t.me link an admin created on the dashboard. Taken
   // from any chat, because linking is how a new chat becomes known.
   | { kind: "link"; chatId: string; code: string; messageId: number }
+  // A customer opening the bot to verify their phone.
+  | { kind: "customer-start"; chatId: string }
+  // A shared contact. ownContact is Telegram's own statement that the number
+  // belongs to the account that sent it; a forwarded card fails it.
+  | { kind: "contact"; chatId: string; telegramUserId: string; phone: string; ownContact: boolean }
   // A reply to one of our chat notifications: deliver it to that thread.
   | { kind: "reply"; chatId: string; threadId: number; body: string; messageId: number; ref: string }
   // Something a known admin sent that we cannot route; answer with a hint.
@@ -236,6 +243,8 @@ export type AdminUpdate =
 export const MAX_REPLY_LENGTH = 1000;
 // What createTelegramLinkCode produces: 32 hex characters.
 const LINK_COMMAND_PATTERN = /^\/start(?:@\w+)?\s+([0-9a-f]{32})$/;
+const CUSTOMER_START_PATTERN = /^\/start(?:@\w+)?\s+login$/;
+const BARE_START_PATTERN = /^\/start(?:@\w+)?$/;
 
 // Pure so it can be tested without Telegram: decides what an update means.
 // Only the owner's chat and chats linked to an admin are listened to, since
@@ -253,7 +262,27 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
   const link = LINK_COMMAND_PATTERN.exec(body);
   if (link) return { kind: "link", chatId, code: link[1], messageId: message.message_id };
 
-  if (!recipientChats(linkedChatIds).includes(chatId)) return { kind: "ignore" };
+  // Customers only ever talk to the bot in a private chat.
+  const isPrivate = message.chat?.type === undefined || message.chat.type === "private";
+  if (message.contact && isPrivate) {
+    const senderId = message.from?.id;
+    return {
+      kind: "contact",
+      chatId,
+      telegramUserId: String(senderId ?? ""),
+      phone: String(message.contact.phone_number ?? ""),
+      ownContact: typeof senderId === "number" && message.contact.user_id === senderId,
+    };
+  }
+
+  const isAdminChat = recipientChats(linkedChatIds).includes(chatId);
+  // "/start login" from the site's button, or a bare /start from anyone who is
+  // not an admin, is a customer who wants to verify their phone.
+  if (isPrivate && (CUSTOMER_START_PATTERN.test(body) || (!isAdminChat && BARE_START_PATTERN.test(body)))) {
+    return { kind: "customer-start", chatId };
+  }
+
+  if (!isAdminChat) return { kind: "ignore" };
 
   const original = message.reply_to_message;
   const botId = Number(bot.token.split(":")[0]);
@@ -294,6 +323,53 @@ export async function sendReplyHint(chatId: string, messageId: number, reason: "
     ? "Bu suhbat topilmadi, javob yuborilmadi."
     : `Mijozga javob berish uchun uning xabariga <b>Reply</b> qilib yozing (matn ${MAX_REPLY_LENGTH} belgidan oshmasin).`;
   return sendToChat(chatId, text, messageId);
+}
+
+// ---------------------------------------------------------------------------
+// Customer phone verification
+// ---------------------------------------------------------------------------
+
+async function sendToChatWithMarkup(chatId: string, text: string, replyMarkup: Record<string, unknown>) {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  const { sent, error } = await callBotApi(bot.token, "sendMessage", {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    reply_markup: replyMarkup,
+  });
+  return error === undefined ? { sent } : { sent, error };
+}
+
+// Telegram's own button: it sends the account's verified number, which a
+// customer cannot type or fake.
+export function sendContactRequest(chatId: string) {
+  return sendToChatWithMarkup(
+    chatId,
+    "Q express: telefon raqamingizni tasdiqlash uchun pastdagi <b>📱 Raqamni yuborish</b> tugmasini bosing.",
+    {
+      keyboard: [[{ text: "📱 Raqamni yuborish", request_contact: true }]],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  );
+}
+
+export function sendLoginCode(chatId: string, code: string) {
+  return sendToChatWithMarkup(
+    chatId,
+    `Kirish kodi: <b>${code}</b>\n\nUni saytga kiriting. Kod 5 daqiqa amal qiladi. <b>Hech kimga bermang</b>, Q express xodimlari ham so‘ramaydi.`,
+    { remove_keyboard: true },
+  );
+}
+
+export function sendContactRejected(chatId: string, reason: "not-own" | "not-uzbek" | "too-many") {
+  const text = reason === "not-own"
+    ? "Faqat o‘zingizning raqamingizni tugma orqali yuboring."
+    : reason === "not-uzbek"
+      ? "Faqat O‘zbekiston raqamlari (+998) qabul qilinadi."
+      : "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.";
+  return sendToChatWithMarkup(chatId, text, { remove_keyboard: true });
 }
 
 export async function sendLinkResult(chatId: string, displayName: string | undefined) {

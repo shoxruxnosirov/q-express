@@ -16,6 +16,8 @@ tags:
     description: Customer order operations
   - name: admin
     description: Store operations and dashboard
+  - name: customer
+    description: The customer's own account on this browser
 paths:
   /healthz:
     get:
@@ -171,6 +173,120 @@ paths:
                 $ref: "#/components/schemas/Order"
         "404":
           description: No such order, or it was placed from another browser
+  /customer/me:
+    get:
+      operationId: getCustomerProfile
+      tags: [customer]
+      summary: The customer this browser is signed in as, if any
+      responses:
+        "200":
+          description: Profile, or authenticated false with empty fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+    patch:
+      operationId: updateCustomerProfile
+      tags: [customer]
+      summary: Save name and phone, creating the customer on first save
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerProfileInput"
+      responses:
+        "200":
+          description: Saved profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+        "400":
+          description: Invalid phone, or a verified phone cannot be changed here
+  /customer/me/addresses:
+    put:
+      operationId: replaceCustomerAddresses
+      tags: [customer]
+      summary: Replace the saved delivery addresses, most recent first
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerAddressesInput"
+      responses:
+        "200":
+          description: Saved profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+  /customer/login:
+    get:
+      operationId: getCustomerLoginLink
+      tags: [customer]
+      summary: The Telegram link that starts phone verification
+      responses:
+        "200":
+          description: Open it, share the phone number, and the bot sends a code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerLoginLink"
+        "503":
+          description: The Telegram bot is not configured
+    post:
+      operationId: verifyCustomerLogin
+      tags: [customer]
+      summary: Verify the phone with the code the bot sent, and sign in
+      description: >-
+        If the verified phone already belongs to a customer (another device),
+        this browser signs in as that customer and brings its orders,
+        addresses and chat along.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerLoginInput"
+      responses:
+        "200":
+          description: Verified and signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+        "401":
+          description: Wrong or expired code
+        "429":
+          description: Too many attempts
+  /customer/logout:
+    post:
+      operationId: customerLogout
+      tags: [customer]
+      summary: Sign this browser out
+      responses:
+        "200":
+          description: Signed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+  /admin/customers:
+    get:
+      operationId: listAdminCustomers
+      tags: [admin]
+      summary: Every customer account with their order totals
+      responses:
+        "200":
+          description: Customers, most recent order first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminCustomer"
   /admin/auth:
     post:
       operationId: adminLogin
@@ -1019,7 +1135,7 @@ components:
           type: boolean
     DeliveryFeeEstimate:
       type: object
-      required: [delivery_fee, previous_order_count, is_first_order]
+      required: [delivery_fee, previous_order_count, is_first_order, verification_required]
       properties:
         delivery_fee:
           type: number
@@ -1027,6 +1143,99 @@ components:
           type: integer
         is_first_order:
           type: boolean
+        verification_required:
+          type: boolean
+          description: >-
+            True when this would be the phone's first order but the phone is
+            not verified on this browser, so the fee applies until it is.
+    DeliveryAddress:
+      type: object
+      required: [dom, xonadon]
+      properties:
+        dom:
+          type: string
+          maxLength: 10
+        xonadon:
+          type: string
+          maxLength: 10
+    CustomerProfile:
+      type: object
+      required: [authenticated, name, phone, phone_verified, addresses]
+      properties:
+        authenticated:
+          type: boolean
+        name:
+          type: string
+        phone:
+          type: string
+        phone_verified:
+          type: boolean
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryAddress"
+    CustomerProfileInput:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        phone:
+          type: string
+          maxLength: 32
+    CustomerAddressesInput:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/DeliveryAddress"
+    CustomerLoginLink:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+    CustomerLoginInput:
+      type: object
+      required: [phone, code]
+      properties:
+        phone:
+          type: string
+          minLength: 7
+          maxLength: 32
+        code:
+          type: string
+          pattern: "^[0-9]{6}$"
+    AdminCustomer:
+      type: object
+      required: [id, name, phone, phone_verified, order_count, total_spent, last_order_at, created_at, addresses]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        phone_verified:
+          type: boolean
+        order_count:
+          type: integer
+        total_spent:
+          type: number
+        last_order_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryAddress"
     WeeklyLeaderboardEntry:
       type: object
       required: [rank, customer_name, phone_masked, order_count, is_winner, prize]

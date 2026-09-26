@@ -371,6 +371,61 @@ export interface DeliveryFeeEstimate {
   delivery_fee: number;
   previous_order_count: number;
   is_first_order: boolean;
+  /** True when this would be the phone's first order but the phone is not verified on this browser, so the fee applies until it is. */
+  verification_required: boolean;
+}
+
+export interface DeliveryAddress {
+  /** @maxLength 10 */
+  dom: string;
+  /** @maxLength 10 */
+  xonadon: string;
+}
+
+export interface CustomerProfile {
+  authenticated: boolean;
+  name: string;
+  phone: string;
+  phone_verified: boolean;
+  addresses: DeliveryAddress[];
+}
+
+export interface CustomerProfileInput {
+  /** @maxLength 80 */
+  name?: string;
+  /** @maxLength 32 */
+  phone?: string;
+}
+
+export interface CustomerAddressesInput {
+  /** @maxItems 5 */
+  addresses: DeliveryAddress[];
+}
+
+export interface CustomerLoginLink {
+  url: string;
+}
+
+export interface CustomerLoginInput {
+  /**
+     * @minLength 7
+     * @maxLength 32
+     */
+  phone: string;
+  /** @pattern ^[0-9]{6}$ */
+  code: string;
+}
+
+export interface AdminCustomer {
+  id: number;
+  name: string;
+  phone: string;
+  phone_verified: boolean;
+  order_count: number;
+  total_spent: number;
+  last_order_at: string | null;
+  created_at: string;
+  addresses: DeliveryAddress[];
 }
 
 export interface WeeklyLeaderboardEntry {

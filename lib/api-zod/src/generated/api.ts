@@ -208,7 +208,8 @@ export const GetDeliveryFeeEstimateQueryParams = zod.object({
 export const GetDeliveryFeeEstimateResponse = zod.object({
   "delivery_fee": zod.number(),
   "previous_order_count": zod.number().int(),
-  "is_first_order": zod.boolean()
+  "is_first_order": zod.boolean(),
+  "verification_required": zod.boolean().describe('True when this would be the phone\'s first order but the phone is not verified on this browser, so the fee applies until it is.')
 })
 
 
@@ -252,6 +253,183 @@ export const GetOrderResponse = zod.object({
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
   "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
+
+
+/**
+ * @summary The customer this browser is signed in as, if any
+ */
+export const getCustomerProfileResponseAddressesItemDomMax = 10;
+
+export const getCustomerProfileResponseAddressesItemXonadonMax = 10;
+
+
+
+export const GetCustomerProfileResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(getCustomerProfileResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(getCustomerProfileResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
+ * @summary Save name and phone, creating the customer on first save
+ */
+export const updateCustomerProfileBodyNameMax = 80;
+
+export const updateCustomerProfileBodyPhoneMax = 32;
+
+
+
+export const UpdateCustomerProfileBody = zod.object({
+  "name": zod.string().max(updateCustomerProfileBodyNameMax).optional(),
+  "phone": zod.string().max(updateCustomerProfileBodyPhoneMax).optional()
+})
+
+export const updateCustomerProfileResponseAddressesItemDomMax = 10;
+
+export const updateCustomerProfileResponseAddressesItemXonadonMax = 10;
+
+
+
+export const UpdateCustomerProfileResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(updateCustomerProfileResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(updateCustomerProfileResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
+ * @summary Replace the saved delivery addresses, most recent first
+ */
+export const replaceCustomerAddressesBodyAddressesItemDomMax = 10;
+
+export const replaceCustomerAddressesBodyAddressesItemXonadonMax = 10;
+
+export const replaceCustomerAddressesBodyAddressesMax = 5;
+
+
+
+export const ReplaceCustomerAddressesBody = zod.object({
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(replaceCustomerAddressesBodyAddressesItemDomMax),
+  "xonadon": zod.string().max(replaceCustomerAddressesBodyAddressesItemXonadonMax)
+})).max(replaceCustomerAddressesBodyAddressesMax)
+})
+
+export const replaceCustomerAddressesResponseAddressesItemDomMax = 10;
+
+export const replaceCustomerAddressesResponseAddressesItemXonadonMax = 10;
+
+
+
+export const ReplaceCustomerAddressesResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(replaceCustomerAddressesResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(replaceCustomerAddressesResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
+ * @summary The Telegram link that starts phone verification
+ */
+export const GetCustomerLoginLinkResponse = zod.object({
+  "url": zod.string()
+})
+
+
+/**
+ * If the verified phone already belongs to a customer (another device), this browser signs in as that customer and brings its orders, addresses and chat along.
+ * @summary Verify the phone with the code the bot sent, and sign in
+ */
+export const verifyCustomerLoginBodyPhoneMin = 7;
+export const verifyCustomerLoginBodyPhoneMax = 32;
+
+export const verifyCustomerLoginBodyCodeRegExp = new RegExp('^[0-9]{6}$');
+
+
+export const VerifyCustomerLoginBody = zod.object({
+  "phone": zod.string().min(verifyCustomerLoginBodyPhoneMin).max(verifyCustomerLoginBodyPhoneMax),
+  "code": zod.string().regex(verifyCustomerLoginBodyCodeRegExp)
+})
+
+export const verifyCustomerLoginResponseAddressesItemDomMax = 10;
+
+export const verifyCustomerLoginResponseAddressesItemXonadonMax = 10;
+
+
+
+export const VerifyCustomerLoginResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(verifyCustomerLoginResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(verifyCustomerLoginResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
+ * @summary Sign this browser out
+ */
+export const customerLogoutResponseAddressesItemDomMax = 10;
+
+export const customerLogoutResponseAddressesItemXonadonMax = 10;
+
+
+
+export const CustomerLogoutResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(customerLogoutResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(customerLogoutResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
+ * @summary Every customer account with their order totals
+ */
+export const listAdminCustomersResponseAddressesItemDomMax = 10;
+
+export const listAdminCustomersResponseAddressesItemXonadonMax = 10;
+
+
+
+export const ListAdminCustomersResponseItem = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "order_count": zod.number().int(),
+  "total_spent": zod.number(),
+  "last_order_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(listAdminCustomersResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(listAdminCustomersResponseAddressesItemXonadonMax)
+}))
+})
+export const ListAdminCustomersResponse = zod.array(ListAdminCustomersResponseItem)
 
 
 /**

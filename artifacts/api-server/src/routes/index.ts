@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import adminsRouter from "./admins";
+import customerRouter from "./customer";
 import healthRouter from "./health";
 import storeRouter from "./store";
 
@@ -9,6 +10,7 @@ router.use(healthRouter);
 // Before the store routes: it holds the /admin guard every operator route
 // relies on.
 router.use(adminsRouter);
+router.use(customerRouter);
 router.use(storeRouter);
 
 export default router;

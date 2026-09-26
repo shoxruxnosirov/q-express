@@ -24,6 +24,7 @@ import type {
   AdminCategoryInput,
   AdminChatThread,
   AdminCreateInput,
+  AdminCustomer,
   AdminDashboard,
   AdminLoginInput,
   AdminPasswordChangeInput,
@@ -39,6 +40,11 @@ import type {
   ChatSession,
   ChatSessionInput,
   ChatTranscript,
+  CustomerAddressesInput,
+  CustomerLoginInput,
+  CustomerLoginLink,
+  CustomerProfile,
+  CustomerProfileInput,
   DeliveryFeeEstimate,
   GetDeliveryFeeEstimateParams,
   HealthStatus,
@@ -711,6 +717,576 @@ export function useGetOrder<TData = Awaited<ReturnType<typeof getOrder>>, TError
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetOrderQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCustomerProfileUrl = () => {
+
+
+
+
+  return `/api/customer/me`
+}
+
+/**
+ * @summary The customer this browser is signed in as, if any
+ */
+export const getCustomerProfile = async ( options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+
+  return customFetch<CustomerProfile>(getGetCustomerProfileUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCustomerProfileQueryKey = () => {
+    return [
+    `/api/customer/me`
+    ] as const;
+    }
+
+
+export const getGetCustomerProfileQueryOptions = <TData = Awaited<ReturnType<typeof getCustomerProfile>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomerProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCustomerProfileQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCustomerProfile>>> = ({ signal }) => getCustomerProfile({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCustomerProfile>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCustomerProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getCustomerProfile>>>
+export type GetCustomerProfileQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary The customer this browser is signed in as, if any
+ */
+
+export function useGetCustomerProfile<TData = Awaited<ReturnType<typeof getCustomerProfile>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomerProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCustomerProfileQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateCustomerProfileUrl = () => {
+
+
+
+
+  return `/api/customer/me`
+}
+
+/**
+ * @summary Save name and phone, creating the customer on first save
+ */
+export const updateCustomerProfile = async (customerProfileInput: CustomerProfileInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CustomerProfile>(getUpdateCustomerProfileUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(customerProfileInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateCustomerProfileMutationKey = () => ['updateCustomerProfile'] as const;
+
+export const getUpdateCustomerProfileMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCustomerProfile>>, TError,UpdateCustomerProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateCustomerProfile>>, TError,UpdateCustomerProfileMutationVariables, TContext> => {
+
+const mutationKey = getUpdateCustomerProfileMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateCustomerProfile>>, UpdateCustomerProfileMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateCustomerProfile(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateCustomerProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateCustomerProfile>>>
+    export type UpdateCustomerProfileMutationBody = BodyType<CustomerProfileInput>
+    export type UpdateCustomerProfileMutationError = ErrorType<void>
+    export type UpdateCustomerProfileMutationVariables = {data: BodyType<CustomerProfileInput>}
+
+    /**
+ * @summary Save name and phone, creating the customer on first save
+ */
+export const useUpdateCustomerProfile = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCustomerProfile>>, TError,UpdateCustomerProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateCustomerProfile>>,
+        TError,
+        UpdateCustomerProfileMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateCustomerProfileMutationOptions(options));
+    }
+
+export const getReplaceCustomerAddressesUrl = () => {
+
+
+
+
+  return `/api/customer/me/addresses`
+}
+
+/**
+ * @summary Replace the saved delivery addresses, most recent first
+ */
+export const replaceCustomerAddresses = async (customerAddressesInput: CustomerAddressesInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CustomerProfile>(getReplaceCustomerAddressesUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(customerAddressesInput)
+  }
+);}
+
+
+
+
+
+export const getReplaceCustomerAddressesMutationKey = () => ['replaceCustomerAddresses'] as const;
+
+export const getReplaceCustomerAddressesMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceCustomerAddresses>>, TError,ReplaceCustomerAddressesMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof replaceCustomerAddresses>>, TError,ReplaceCustomerAddressesMutationVariables, TContext> => {
+
+const mutationKey = getReplaceCustomerAddressesMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replaceCustomerAddresses>>, ReplaceCustomerAddressesMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  replaceCustomerAddresses(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReplaceCustomerAddressesMutationResult = NonNullable<Awaited<ReturnType<typeof replaceCustomerAddresses>>>
+    export type ReplaceCustomerAddressesMutationBody = BodyType<CustomerAddressesInput>
+    export type ReplaceCustomerAddressesMutationError = ErrorType<unknown>
+    export type ReplaceCustomerAddressesMutationVariables = {data: BodyType<CustomerAddressesInput>}
+
+    /**
+ * @summary Replace the saved delivery addresses, most recent first
+ */
+export const useReplaceCustomerAddresses = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceCustomerAddresses>>, TError,ReplaceCustomerAddressesMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof replaceCustomerAddresses>>,
+        TError,
+        ReplaceCustomerAddressesMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReplaceCustomerAddressesMutationOptions(options));
+    }
+
+export const getGetCustomerLoginLinkUrl = () => {
+
+
+
+
+  return `/api/customer/login`
+}
+
+/**
+ * @summary The Telegram link that starts phone verification
+ */
+export const getCustomerLoginLink = async ( options?: Parameters<typeof customFetch>[1]): Promise<CustomerLoginLink> => {
+
+  return customFetch<CustomerLoginLink>(getGetCustomerLoginLinkUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCustomerLoginLinkQueryKey = () => {
+    return [
+    `/api/customer/login`
+    ] as const;
+    }
+
+
+export const getGetCustomerLoginLinkQueryOptions = <TData = Awaited<ReturnType<typeof getCustomerLoginLink>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomerLoginLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCustomerLoginLinkQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCustomerLoginLink>>> = ({ signal }) => getCustomerLoginLink({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCustomerLoginLink>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCustomerLoginLinkQueryResult = NonNullable<Awaited<ReturnType<typeof getCustomerLoginLink>>>
+export type GetCustomerLoginLinkQueryError = ErrorType<void>
+
+
+/**
+ * @summary The Telegram link that starts phone verification
+ */
+
+export function useGetCustomerLoginLink<TData = Awaited<ReturnType<typeof getCustomerLoginLink>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomerLoginLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCustomerLoginLinkQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getVerifyCustomerLoginUrl = () => {
+
+
+
+
+  return `/api/customer/login`
+}
+
+/**
+ * If the verified phone already belongs to a customer (another device), this browser signs in as that customer and brings its orders, addresses and chat along.
+ * @summary Verify the phone with the code the bot sent, and sign in
+ */
+export const verifyCustomerLogin = async (customerLoginInput: CustomerLoginInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CustomerProfile>(getVerifyCustomerLoginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(customerLoginInput)
+  }
+);}
+
+
+
+
+
+export const getVerifyCustomerLoginMutationKey = () => ['verifyCustomerLogin'] as const;
+
+export const getVerifyCustomerLoginMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomerLogin>>, TError,VerifyCustomerLoginMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyCustomerLogin>>, TError,VerifyCustomerLoginMutationVariables, TContext> => {
+
+const mutationKey = getVerifyCustomerLoginMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyCustomerLogin>>, VerifyCustomerLoginMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyCustomerLogin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyCustomerLoginMutationResult = NonNullable<Awaited<ReturnType<typeof verifyCustomerLogin>>>
+    export type VerifyCustomerLoginMutationBody = BodyType<CustomerLoginInput>
+    export type VerifyCustomerLoginMutationError = ErrorType<void>
+    export type VerifyCustomerLoginMutationVariables = {data: BodyType<CustomerLoginInput>}
+
+    /**
+ * @summary Verify the phone with the code the bot sent, and sign in
+ */
+export const useVerifyCustomerLogin = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomerLogin>>, TError,VerifyCustomerLoginMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof verifyCustomerLogin>>,
+        TError,
+        VerifyCustomerLoginMutationVariables,
+        TContext
+      > => {
+      return useMutation(getVerifyCustomerLoginMutationOptions(options));
+    }
+
+export const getCustomerLogoutUrl = () => {
+
+
+
+
+  return `/api/customer/logout`
+}
+
+/**
+ * @summary Sign this browser out
+ */
+export const customerLogout = async ( options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+
+  return customFetch<CustomerProfile>(getCustomerLogoutUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCustomerLogoutMutationKey = () => ['customerLogout'] as const;
+
+export const getCustomerLogoutMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof customerLogout>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof customerLogout>>, TError,void, TContext> => {
+
+const mutationKey = getCustomerLogoutMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof customerLogout>>, void> = () => {
+
+
+          return  customerLogout(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CustomerLogoutMutationResult = NonNullable<Awaited<ReturnType<typeof customerLogout>>>
+
+    export type CustomerLogoutMutationError = ErrorType<unknown>
+
+
+    /**
+ * @summary Sign this browser out
+ */
+export const useCustomerLogout = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof customerLogout>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof customerLogout>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCustomerLogoutMutationOptions(options));
+    }
+
+export const getListAdminCustomersUrl = () => {
+
+
+
+
+  return `/api/admin/customers`
+}
+
+/**
+ * @summary Every customer account with their order totals
+ */
+export const listAdminCustomers = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminCustomer[]> => {
+
+  return customFetch<AdminCustomer[]>(getListAdminCustomersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminCustomersQueryKey = () => {
+    return [
+    `/api/admin/customers`
+    ] as const;
+    }
+
+
+export const getListAdminCustomersQueryOptions = <TData = Awaited<ReturnType<typeof listAdminCustomers>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminCustomers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminCustomersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminCustomers>>> = ({ signal }) => listAdminCustomers({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminCustomers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminCustomersQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminCustomers>>>
+export type ListAdminCustomersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Every customer account with their order totals
+ */
+
+export function useListAdminCustomers<TData = Awaited<ReturnType<typeof listAdminCustomers>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminCustomers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminCustomersQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

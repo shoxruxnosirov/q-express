@@ -26,14 +26,19 @@ import {
   categoriesTable,
   chatMessagesTable,
   chatThreadsTable,
+  customerSessionsTable,
   ordersTable,
   productsTable,
+  usersTable,
 } from "@workspace/db/schema";
 import {
   acknowledgeAdminReply,
   parseAdminUpdate,
   sendChatMessageNotification,
+  sendContactRejected,
+  sendContactRequest,
   sendLinkResult,
+  sendLoginCode,
   sendNewOrderNotification,
   sendOperatorReplyNotification,
   sendReplyHint,
@@ -44,9 +49,16 @@ import { telegramLinkHash } from "./admins";
 import {
   createCustomerToken,
   hashCustomerToken,
-  readCustomerToken,
   setCustomerCookie,
 } from "../lib/customer-session";
+import {
+  isVerified,
+  issueLoginCode,
+  rememberOrderAddress,
+  resolveCustomer,
+  type SignedInCustomer,
+} from "../lib/customer-accounts";
+import { normalizeUzPhone } from "../lib/phone";
 import { canChangeStatus, stockToRestore, tashkentDayStart, tashkentWeekStart } from "../lib/order-rules";
 import {
   createChatToken,
@@ -434,6 +446,37 @@ async function loadThreadByToken(token: string | undefined) {
   return thread;
 }
 
+// The conversation this request may read and write. A signed-in customer's
+// conversation follows them to any device; otherwise it is the one this
+// browser's chat cookie opened. A thread the browser opened before signing in
+// is adopted by the account, unless it already belongs to someone else (a
+// shared phone that switched accounts), which is then not shown at all.
+async function resolveThread(req: Request, res: Response) {
+  const customer = await resolveCustomer(req, res);
+  const token = readChatToken(req);
+  const cookieThread = await loadThreadByToken(token);
+  if (cookieThread) refreshChatSession(res, token);
+  if (customer) {
+    const [own] = await db
+      .select()
+      .from(chatThreadsTable)
+      .where(eq(chatThreadsTable.userId, customer.user.id))
+      .orderBy(desc(chatThreadsTable.lastMessageAt))
+      .limit(1);
+    if (own) return { thread: own, customer };
+    if (cookieThread && cookieThread.userId === null) {
+      const [adopted] = await db
+        .update(chatThreadsTable)
+        .set({ userId: customer.user.id })
+        .where(eq(chatThreadsTable.id, cookieThread.id))
+        .returning();
+      return { thread: adopted, customer };
+    }
+    if (cookieThread && cookieThread.userId !== customer.user.id) return { thread: undefined, customer };
+  }
+  return { thread: cookieThread, customer };
+}
+
 // The session cookie is rolling: every request that presents a usable token
 // has its 180 days written again, so a customer who keeps visiting never loses
 // the conversation, while a browser that stops visiting still expires. A
@@ -507,12 +550,15 @@ function adminOrderDto(order: typeof ordersTable.$inferSelect, changedBy: string
   };
 }
 
-// Customers own orders through the browser that placed them. A request with no
-// valid cookie owns nothing.
-function customerOrderCondition(req: Request) {
-  const token = readCustomerToken(req);
-  return token ? eq(ordersTable.customerTokenHash, hashCustomerToken(token)) : undefined;
+// The first delivery is free once per phone, and only for a phone this
+// browser has verified through the Telegram bot; an unverified number is just
+// what somebody typed, and would earn a free delivery every time it changed.
+function firstOrderFree(previousOrders: number, customer: SignedInCustomer | undefined, phone: string) {
+  return previousOrders === 0 && Boolean(customer && isVerified(customer.user) && customer.user.phone === phone);
 }
+
+// Bot codes per Telegram account, so a script cannot make the bot spam codes.
+const loginCodeLimiter = createRateLimiter<string>({ windowMs: 60 * 60 * 1000, max: 5 });
 
 router.get("/categories", async (_req, res, next) => {
   try {
@@ -591,16 +637,19 @@ router.get("/products/:id", async (req, res, next) => {
 router.get("/orders/delivery-fee", async (req, res, next) => {
   try {
     const { phone } = GetDeliveryFeeEstimateQueryParams.parse(req.query);
-    const normalizedPhone = normalizePhone(phone);
+    const normalizedPhone = normalizeUzPhone(phone) ?? normalizePhone(phone);
     const [result] = await db
       .select({ count: sql<number>`count(*)` })
       .from(ordersTable)
       .where(and(phoneCondition(normalizedPhone), sql`${ordersTable.status} <> 'cancelled'`));
     const previousOrderCount = Number(result.count);
+    const customer = await resolveCustomer(req, res);
+    const free = firstOrderFree(previousOrderCount, customer, normalizedPhone);
     res.json({
-      delivery_fee: previousOrderCount === 0 ? 0 : DELIVERY_FEE_CENTS / 100,
+      delivery_fee: free ? 0 : DELIVERY_FEE_CENTS / 100,
       previous_order_count: previousOrderCount,
       is_first_order: previousOrderCount === 0,
+      verification_required: previousOrderCount === 0 && !free,
     });
   } catch (error) {
     return next(error);
@@ -609,9 +658,13 @@ router.get("/orders/delivery-fee", async (req, res, next) => {
 
 router.get("/orders", async (req, res, next) => {
   try {
-    const owned = customerOrderCondition(req);
-    if (!owned) return res.json([]);
-    const orders = await db.select().from(ordersTable).where(owned).orderBy(desc(ordersTable.createdAt));
+    const customer = await resolveCustomer(req, res);
+    if (!customer) return res.json([]);
+    const orders = await db
+      .select()
+      .from(ordersTable)
+      .where(eq(ordersTable.userId, customer.user.id))
+      .orderBy(desc(ordersTable.createdAt));
     res.json(orders.map(orderDto));
   } catch (error) {
     return next(error);
@@ -621,11 +674,15 @@ router.get("/orders", async (req, res, next) => {
 router.get("/orders/:id", async (req, res, next) => {
   try {
     const { id } = GetOrderParams.parse(req.params);
-    const owned = customerOrderCondition(req);
+    const customer = await resolveCustomer(req, res);
     // Somebody else's order answers exactly like a missing one, so order ids
     // cannot be probed.
-    if (!owned) return res.status(404).json({ error: "Order not found" });
-    const [order] = await db.select().from(ordersTable).where(and(eq(ordersTable.id, id), owned)).limit(1);
+    if (!customer) return res.status(404).json({ error: "Order not found" });
+    const [order] = await db
+      .select()
+      .from(ordersTable)
+      .where(and(eq(ordersTable.id, id), eq(ordersTable.userId, customer.user.id)))
+      .limit(1);
     if (!order) return res.status(404).json({ error: "Order not found" });
     return res.json(orderDto(order));
   } catch (error) {
@@ -642,17 +699,23 @@ router.post("/orders", async (req, res, next) => {
       res.status(400).json({ error: "Mijoz ismi 2-80 ta belgidan iborat bo‘lishi kerak" });
       return;
     }
-    const phone = normalizePhone(input.phone);
-    // The order belongs to this browser. A returning customer keeps their
-    // secret, a new one gets one, and the cookie is refreshed either way.
-    const customerToken = readCustomerToken(req) ?? createCustomerToken();
+    const phone = normalizeUzPhone(input.phone);
+    if (!phone) {
+      res.status(400).json({ error: "Telefon raqam noto‘g‘ri. Masalan: +998 90 123 45 67" });
+      return;
+    }
+    // The order belongs to a customer account. A browser without one gets an
+    // unverified account inside the same transaction, so a rejected order
+    // never leaves an empty account behind.
+    const customer = await resolveCustomer(req, res);
+    const newToken = customer ? undefined : createCustomerToken();
     const order = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${phone}))`);
       const [previousOrders] = await tx
         .select({ count: sql<number>`count(*)` })
         .from(ordersTable)
         .where(and(phoneCondition(phone), sql`${ordersTable.status} <> 'cancelled'`));
-      const deliveryFeeCents = Number(previousOrders.count) === 0 ? 0 : DELIVERY_FEE_CENTS;
+      const deliveryFeeCents = firstOrderFree(Number(previousOrders.count), customer, phone) ? 0 : DELIVERY_FEE_CENTS;
       const productIds = [...new Set(input.items.map((item) => item.product_id))].sort((a, b) => a - b);
       const products = await tx
         .select({ product: productsTable, category: categoriesTable.name })
@@ -778,12 +841,28 @@ router.post("/orders", async (req, res, next) => {
         sql`select nextval(pg_get_serial_sequence('orders', 'id')) as id`,
       );
       const orderNumber = `QE-${String(orderId).padStart(7, "0")}`;
+      let userId = customer?.user.id;
+      if (!userId) {
+        const [created] = await tx
+          .insert(usersTable)
+          .values({ name: customerName, phone, lastSeenAt: new Date() })
+          .returning();
+        await tx.insert(customerSessionsTable).values({ userId: created.id, tokenHash: hashCustomerToken(newToken!) });
+        userId = created.id;
+      } else {
+        // The latest details win; a verified number is the account's identity
+        // and is never replaced by what was typed on one order.
+        await tx
+          .update(usersTable)
+          .set(isVerified(customer!.user) ? { name: customerName } : { name: customerName, phone })
+          .where(eq(usersTable.id, userId));
+      }
       const [created] = await tx
         .insert(ordersTable)
         .values({
           id: Number(orderId),
           orderNumber,
-          customerTokenHash: hashCustomerToken(customerToken),
+          userId,
           customerName,
           phone,
           address: input.address,
@@ -803,7 +882,8 @@ router.post("/orders", async (req, res, next) => {
       }
       return created;
     });
-    setCustomerCookie(res, customerToken);
+    if (newToken) setCustomerCookie(res, newToken);
+    if (order.userId) await rememberOrderAddress(order.userId, order.address);
     const notification = await sendNewOrderNotification(order, await linkedTelegramChatIds());
     if (!notification.sent) {
       req.log.error({ error: notification.error, orderId: order.id }, "Telegram order notification failed");
@@ -834,8 +914,7 @@ router.post("/chat/session", async (req, res, next) => {
     const name = input.name?.trim() ?? "";
     const phone = input.phone?.trim() ?? "";
 
-    const existingToken = readChatToken(req);
-    const existing = await loadThreadByToken(existingToken);
+    const { thread: existing, customer } = await resolveThread(req, res);
     if (existing) {
       // The customer may have filled in their profile since the thread was
       // opened, so newly supplied details replace blanks without wiping what
@@ -848,7 +927,6 @@ router.post("/chat/session", async (req, res, next) => {
           .set({ customerName: nextName, phone: nextPhone })
           .where(eq(chatThreadsTable.id, existing.id));
       }
-      refreshChatSession(res, existingToken);
       return res.json({ thread_id: existing.id, customer_name: nextName, phone: nextPhone });
     }
 
@@ -859,7 +937,12 @@ router.post("/chat/session", async (req, res, next) => {
     const token = createChatToken();
     const [thread] = await db
       .insert(chatThreadsTable)
-      .values({ tokenHash: hashChatToken(token), customerName: name, phone })
+      .values({
+        tokenHash: hashChatToken(token),
+        customerName: name || customer?.user.name || "",
+        phone: phone || customer?.user.phone || "",
+        userId: customer?.user.id ?? null,
+      })
       .returning();
     setChatCookie(res, token);
     return res.json({ thread_id: thread.id, customer_name: thread.customerName, phone: thread.phone });
@@ -870,10 +953,8 @@ router.post("/chat/session", async (req, res, next) => {
 
 router.get("/chat/messages", async (req, res, next) => {
   try {
-    const token = readChatToken(req);
-    const thread = await loadThreadByToken(token);
+    const { thread } = await resolveThread(req, res);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
-    refreshChatSession(res, token);
     await db
       .update(chatThreadsTable)
       .set({ customerReadAt: new Date() })
@@ -887,10 +968,8 @@ router.get("/chat/messages", async (req, res, next) => {
 router.post("/chat/messages", async (req, res, next) => {
   try {
     const { body } = SendChatMessageBody.parse(req.body);
-    const token = readChatToken(req);
-    const thread = await loadThreadByToken(token);
+    const { thread } = await resolveThread(req, res);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
-    refreshChatSession(res, token);
     if (!chatMessageLimiter.allow(thread.id)) {
       return res.status(429).json({ error: "Juda ko‘p xabar yuborildi. Biroz kuting." });
     }
@@ -961,6 +1040,32 @@ router.post("/telegram/webhook", async (req, res, next) => {
         return updated;
       });
       await sendLinkResult(update.chatId, linked?.displayName);
+      return res.json({ ok: true });
+    }
+
+    // A customer verifying their phone: the site's button opens the bot with
+    // "/start login", the bot asks for the contact through Telegram's own
+    // button, and answers with a one-time code for the site.
+    if (update.kind === "customer-start") {
+      await sendContactRequest(update.chatId);
+      return res.json({ ok: true });
+    }
+    if (update.kind === "contact") {
+      if (!update.ownContact) {
+        await sendContactRejected(update.chatId, "not-own");
+        return res.json({ ok: true });
+      }
+      const phone = normalizeUzPhone(update.phone);
+      if (!phone) {
+        await sendContactRejected(update.chatId, "not-uzbek");
+        return res.json({ ok: true });
+      }
+      if (!loginCodeLimiter.allow(update.telegramUserId)) {
+        await sendContactRejected(update.chatId, "too-many");
+        return res.json({ ok: true });
+      }
+      const code = await issueLoginCode(phone, update.telegramUserId);
+      await sendLoginCode(update.chatId, code);
       return res.json({ ok: true });
     }
 

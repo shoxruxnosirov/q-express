@@ -422,9 +422,48 @@ test("a /start link code is accepted from any chat, anything else from strangers
   const start = (text, chatId = 999) => ({ message: { message_id: 5, chat: { id: chatId }, text } });
   assert.deepEqual(parseAdminUpdate(start(`/start ${code}`)), { kind: "link", chatId: "999", code, messageId: 5 });
   assert.equal(parseAdminUpdate(start(`/start@Q_express_bot ${code}`)).kind, "link");
-  assert.equal(parseAdminUpdate(start("/start")).kind, "ignore");
+  assert.equal(parseAdminUpdate(start("/start")).kind, "customer-start", "a stranger's /start is a customer arriving");
   assert.equal(parseAdminUpdate(start("/start not-a-code")).kind, "ignore");
   assert.equal(parseAdminUpdate(start(`/start ${code.toUpperCase()}`)).kind, "ignore");
   assert.equal(parseAdminUpdate(start("salom")).kind, "ignore");
   assert.equal(parseAdminUpdate(start("salom", 5550001)).kind, "hint", "a known admin gets a hint");
+});
+
+// --- Customer phone verification --------------------------------------------
+
+test("the site's login link and a customer's bare /start both ask for the contact", () => {
+  configureInbound();
+  const msg = (text, chat = { id: 777, type: "private" }) => ({ message: { message_id: 1, chat, from: { id: 777 }, text } });
+  assert.deepEqual(parseAdminUpdate(msg("/start login")), { kind: "customer-start", chatId: "777" });
+  assert.deepEqual(parseAdminUpdate(msg("/start")), { kind: "customer-start", chatId: "777" });
+  assert.equal(parseAdminUpdate(msg("/start login", { id: 5550001, type: "private" })).kind, "customer-start", "admins can verify too");
+  assert.equal(parseAdminUpdate(msg("/start", { id: 5550001, type: "private" })).kind, "hint", "an admin's bare /start stays a hint");
+  assert.equal(parseAdminUpdate(msg("/start login", { id: -100, type: "group" })).kind, "ignore", "never in a group");
+});
+
+test("a shared contact says whether it is the sender's own number", () => {
+  configureInbound();
+  const contact = (userId, fromId = 777) => ({
+    message: { message_id: 2, chat: { id: 777, type: "private" }, from: { id: fromId }, contact: { phone_number: "+998901112233", user_id: userId } },
+  });
+  assert.deepEqual(parseAdminUpdate(contact(777)), {
+    kind: "contact", chatId: "777", telegramUserId: "777", phone: "+998901112233", ownContact: true,
+  });
+  assert.equal(parseAdminUpdate(contact(888)).ownContact, false, "a forwarded card is someone else's");
+  assert.equal(parseAdminUpdate(contact(undefined)).ownContact, false, "a contact with no account is not proof");
+});
+
+test("the contact button and the code message are well formed", async () => {
+  configureInbound();
+  const { sendContactRequest, sendLoginCode } = await import("../src/lib/telegram.ts");
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  await sendContactRequest("777");
+  await sendLoginCode("777", "012345");
+  assert.equal(bodies[0].reply_markup.keyboard[0][0].request_contact, true);
+  assert.ok(bodies[1].text.includes("012345"));
+  assert.equal(bodies[1].reply_markup.remove_keyboard, true);
 });

@@ -55,3 +55,13 @@ export function stockToRestore(items: unknown) {
   }
   return new Map([...restore].map(([id, micro]) => [id, micro / 1_000_000]));
 }
+
+export type AddressParts = { dom: string; xonadon: string };
+
+// The storefront composes an order's address as "12-dom, 45-xonadon"; this is
+// the inverse, so an order can add to the customer's saved addresses.
+const ADDRESS_PATTERN = /^\s*([0-9A-Za-z]{1,10})\s*-?\s*dom\s*[,\s]\s*([0-9A-Za-z]{1,10})\s*-?\s*xonadon\s*$/i;
+export function parseOrderAddress(address: string): AddressParts | undefined {
+  const match = ADDRESS_PATTERN.exec(address);
+  return match ? { dom: match[1], xonadon: match[2] } : undefined;
+}

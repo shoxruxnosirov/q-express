@@ -7,6 +7,7 @@ import {
   serial,
   text,
   timestamp,
+  unique,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -48,6 +49,46 @@ export const usersTable = pgTable("users", {
   name: text("name").notNull(),
   phone: text("phone"),
   role: text("role").notNull().default("customer"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Set once the phone was confirmed through the Telegram bot. Only a verified
+  // phone identifies a customer across devices, and only it earns the free
+  // first delivery. Unique among verified customers (partial index).
+  phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+});
+
+// One row per signed-in browser. The cookie holds a random secret and only its
+// SHA-256 is stored, as with the chat; a customer may have several devices.
+export const customerSessionsTable = pgTable("customer_sessions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const customerAddressesTable = pgTable(
+  "customer_addresses",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    dom: text("dom").notNull(),
+    xonadon: text("xonadon").notNull(),
+    // Checkout lists these newest first and preselects the top one.
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique("customer_addresses_user_address_key").on(table.userId, table.dom, table.xonadon)],
+);
+
+// The code the bot sent after a customer shared their own phone. One live code
+// per phone; only its hash is kept, and it dies after five minutes or five
+// wrong guesses.
+export const phoneLoginCodesTable = pgTable("phone_login_codes", {
+  phone: text("phone").primaryKey(),
+  codeHash: text("code_hash").notNull(),
+  telegramUserId: text("telegram_user_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -107,6 +148,9 @@ export const chatThreadsTable = pgTable("chat_threads", {
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
   operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
   customerReadAt: timestamp("customer_read_at", { withTimezone: true }),
+  // The customer account this conversation belongs to, so it follows them to
+  // another device once they verify their phone.
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
 });
 
 export const chatMessagesTable = pgTable("chat_messages", {
