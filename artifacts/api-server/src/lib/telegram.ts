@@ -2,14 +2,28 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const TELEGRAM_API = "https://api.telegram.org";
 
-// Every chat notification carries this line, and a reply in Telegram is routed
-// back to the customer by reading it from the message being replied to. The
-// renderer and the parser share one place so they cannot drift apart.
-const THREAD_LABEL = "Suhbat:";
-const THREAD_PATTERN = new RegExp(`${THREAD_LABEL}\\s*#(\\d+)`);
+// Every chat notification opens with this header, and a reply in Telegram is
+// routed back to the customer by reading it from the message being replied to.
+// It must be the FIRST line and only the first line is parsed: everything
+// below it includes text a customer chose, and a name such as "Suhbat #5"
+// placed above the real number would send the operator's answer to somebody
+// else's conversation. The renderer and the parser share one place so they
+// cannot drift apart.
+const THREAD_SEPARATOR = " · Suhbat #";
+const THREAD_HEADER_PATTERN = /^[A-Z ]+ · Suhbat #(\d+)$/;
+// Postgres `serial` ids stop here; anything larger cannot name a thread.
+const MAX_THREAD_ID = 2_147_483_647;
 
-function threadLine(threadId: number) {
-  return `<b>${THREAD_LABEL}</b> #${threadId}`;
+function threadHeader(title: string, threadId: number) {
+  return `<b>${title}</b>${THREAD_SEPARATOR}${threadId}`;
+}
+
+function threadIdFromNotification(text: string | undefined) {
+  const firstLine = (text ?? "").split("\n", 1)[0].trim();
+  const match = THREAD_HEADER_PATTERN.exec(firstLine);
+  if (!match) return undefined;
+  const threadId = Number(match[1]);
+  return Number.isSafeInteger(threadId) && threadId > 0 && threadId <= MAX_THREAD_ID ? threadId : undefined;
 }
 
 type TelegramResult = {
@@ -173,7 +187,8 @@ export type AdminReply =
   // Not ours to handle at all: another chat, an edit, a sticker, and so on.
   | { kind: "ignore" };
 
-export const MAX_REPLY_LENGTH = 2000;
+// The same ceiling the website puts on a chat message (ChatMessageInput).
+export const MAX_REPLY_LENGTH = 1000;
 
 // Pure so it can be tested without Telegram: decides what an update means.
 // Only the configured admin chat is ever listened to, since anybody in the
@@ -190,14 +205,14 @@ export function parseAdminReply(update: unknown): AdminReply {
   const original = message.reply_to_message;
   const botId = Number(credentials.token.split(":")[0]);
   const fromThisBot = original?.from?.is_bot === true && original.from.id === botId;
-  const match = fromThisBot ? THREAD_PATTERN.exec(original?.text ?? "") : null;
+  const threadId = fromThisBot ? threadIdFromNotification(original?.text) : undefined;
 
-  if (!match || !body || body.length > MAX_REPLY_LENGTH) {
+  if (threadId === undefined || !body || body.length > MAX_REPLY_LENGTH) {
     return { kind: "hint", messageId: message.message_id };
   }
   return {
     kind: "reply",
-    threadId: Number(match[1]),
+    threadId,
     body,
     messageId: message.message_id,
     // Telegram retries a webhook it thinks failed, for instance while this
@@ -237,11 +252,10 @@ export async function sendChatMessageNotification(message: {
   const who = message.customerName.trim() || "Noma’lum mijoz";
   const phone = message.phone.trim();
   const lines = [
-    "<b>YANGI XABAR</b>",
+    threadHeader("YANGI XABAR", message.threadId),
     "",
     "<b>Mijoz:</b> " + escapeHtml(who),
     ...(phone ? ["<b>Telefon:</b> " + escapeHtml(phone)] : []),
-    threadLine(message.threadId),
     "",
     escapeHtml(message.body),
     "",
@@ -251,8 +265,8 @@ export async function sendChatMessageNotification(message: {
 }
 
 // What the operator wrote from the dashboard, copied to Telegram so the admin
-// chat holds the whole conversation. It carries the thread line too, so the
-// operator can carry on by replying to it.
+// chat holds the whole conversation. It opens with the thread header too, so
+// the operator can carry on by replying to it.
 export async function sendOperatorReplyNotification(message: {
   threadId: number;
   customerName: string;
@@ -262,11 +276,11 @@ export async function sendOperatorReplyNotification(message: {
   const who = message.customerName.trim() || "Noma’lum mijoz";
   const phone = message.phone.trim();
   const lines = [
-    "<b>OPERATOR JAVOBI</b> (admin panel)",
+    threadHeader("OPERATOR JAVOBI", message.threadId),
+    "<i>admin paneldan yozildi</i>",
     "",
     "<b>Kimga:</b> " + escapeHtml(who),
     ...(phone ? ["<b>Telefon:</b> " + escapeHtml(phone)] : []),
-    threadLine(message.threadId),
     "",
     escapeHtml(message.body),
   ];

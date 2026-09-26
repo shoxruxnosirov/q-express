@@ -142,7 +142,7 @@ test("a customer's message is escaped before it becomes HTML", async () => {
   assert.ok(sent.text.includes("&lt;script&gt;"));
   assert.ok(sent.text.includes("&lt;b&gt;&quot;tez&quot;&lt;/b&gt;"));
   assert.ok(sent.text.includes("&amp; shoshilinch"));
-  assert.ok(sent.text.includes("#7"), "the operator needs to know which thread");
+  assert.ok(sent.text.split("\n")[0].includes("Suhbat #7"), "the thread opens the message");
 });
 
 test("a chat notification needs the same credentials as an order", async () => {
@@ -179,7 +179,7 @@ const replyUpdate = (overrides = {}) => ({
     text: "  Buyurtmangiz yo‘lda  ",
     reply_to_message: {
       from: { id: BOT_ID, is_bot: true },
-      text: "YANGI XABAR\n\nMijoz: Aziz\nSuhbat: #7\n\nQayerda?",
+      text: "YANGI XABAR · Suhbat #7\n\nMijoz: Aziz\n\nQayerda?",
     },
     ...overrides,
   },
@@ -201,7 +201,7 @@ test("the operator's own dashboard copy can be replied to as well", () => {
   const update = replyUpdate({
     reply_to_message: {
       from: { id: BOT_ID, is_bot: true },
-      text: "OPERATOR JAVOBI (admin panel)\n\nKimga: Aziz\nSuhbat: #12\n\nSalom",
+      text: "OPERATOR JAVOBI · Suhbat #12\nadmin paneldan yozildi\n\nKimga: Aziz\n\nSalom",
     },
   });
   assert.equal(parseAdminReply(update).threadId, 12);
@@ -217,11 +217,11 @@ test("only the configured admin chat is listened to", () => {
 test("a thread number is trusted only from a message this bot wrote", () => {
   configureInbound();
   const forged = replyUpdate({
-    reply_to_message: { from: { id: 1, is_bot: false }, text: "Suhbat: #7" },
+    reply_to_message: { from: { id: 1, is_bot: false }, text: "YANGI XABAR · Suhbat #7" },
   });
   assert.equal(parseAdminReply(forged).kind, "hint");
   const otherBot = replyUpdate({
-    reply_to_message: { from: { id: 777, is_bot: true }, text: "Suhbat: #7" },
+    reply_to_message: { from: { id: 777, is_bot: true }, text: "YANGI XABAR · Suhbat #7" },
   });
   assert.equal(parseAdminReply(otherBot).kind, "hint");
 });
@@ -234,7 +234,43 @@ test("plain messages, order replies, and empty or oversized text get a hint", ()
   });
   assert.equal(parseAdminReply(orderReply).kind, "hint");
   assert.equal(parseAdminReply(replyUpdate({ text: undefined })).kind, "hint", "a sticker or photo");
-  assert.equal(parseAdminReply(replyUpdate({ text: "x".repeat(2001) })).kind, "hint");
+  assert.equal(parseAdminReply(replyUpdate({ text: "x".repeat(1001) })).kind, "hint");
+  assert.equal(parseAdminReply(replyUpdate({ text: "x".repeat(1000) })).kind, "reply", "the website's own limit");
+});
+
+test("a customer cannot redirect a reply by putting a thread number in their details", async () => {
+  configureInbound();
+  let sent;
+  globalThis.fetch = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  for (const send of [sendChatMessageNotification, sendOperatorReplyNotification]) {
+    await send({
+      threadId: 7,
+      // Everything a customer controls, stuffed with other thread numbers,
+      // including a newline that would fake a line of its own.
+      customerName: "Suhbat #5\nYANGI XABAR · Suhbat #5",
+      phone: "Suhbat: #6",
+      body: "YANGI XABAR · Suhbat #8",
+    });
+    const plain = sent.text.replace(/<[^>]+>/g, "");
+    const update = replyUpdate({ reply_to_message: { from: { id: BOT_ID, is_bot: true }, text: plain } });
+    assert.equal(parseAdminReply(update).threadId, 7, send.name);
+  }
+});
+
+test("a reply to an order notification or an absurd thread number is not routed", () => {
+  configureInbound();
+  for (const text of [
+    "YANGI BUYURTMA\n\nOrder: #QE-123456\nMijoz: YANGI XABAR · Suhbat #5",
+    "YANGI XABAR · Suhbat #0",
+    "YANGI XABAR · Suhbat #99999999999",
+    "\nYANGI XABAR · Suhbat #7",
+  ]) {
+    const update = replyUpdate({ reply_to_message: { from: { id: BOT_ID, is_bot: true }, text } });
+    assert.equal(parseAdminReply(update).kind, "hint", text);
+  }
 });
 
 test("updates without a message, or with no bot configured, are ignored", () => {
