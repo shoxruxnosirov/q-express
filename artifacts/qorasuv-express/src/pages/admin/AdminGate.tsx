@@ -76,8 +76,12 @@ export function AdminGate({ children }: { children: ReactNode }) {
 
   if (!unlocked) {
     return <AdminLogin onSuccess={() => {
+      // The cached session still says "not authenticated" from when the page
+      // opened, and the effect above would read that before any refetch lands
+      // and lock the panel again, so the first correct code seemed to fail.
+      // The server has just set the cookie, so record that before unlocking.
+      qc.setQueryData(getGetAdminSessionQueryKey(), { authenticated: true });
       setUnlocked(true);
-      session.refetch();
     }} />;
   }
   
