@@ -36,3 +36,10 @@ test("every problem has a message the customer can act on", () => {
   assert.match(lineProblemText({ kind: "sold-out" }, "dona"), /Tugagan/);
   assert.match(lineProblemText({ kind: "short", available: 2 }, "kg"), /faqat 2 kg/);
 });
+
+test("floating-point noise is not reported as a shortage", () => {
+  const problems = findLineProblems([{ productId: 1, quantity: 0.1 + 0.2 }], [{ id: 1, stock: 0.3 }]);
+  assert.equal(problems.size, 0, "0.30000000000000004 kg of 0.3 kg is all of it, not too much");
+  const short = findLineProblems([{ productId: 1, quantity: 0.302 }], [{ id: 1, stock: 0.3 }]);
+  assert.equal(short.get(1)?.kind, "short", "a real shortage is still caught");
+});
