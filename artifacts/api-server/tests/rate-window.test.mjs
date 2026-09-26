@@ -71,3 +71,16 @@ test("the cap drops the oldest windows, so the newest callers keep their counts"
   assert.equal(limiter.allow("newest"), false, "the newest caller is still counted");
   assert.equal(limiter.allow("oldest"), true, "the oldest window was the one dropped");
 });
+
+test("isExhausted reports a used-up window without charging it", () => {
+  let clock = 0;
+  const limiter = createRateLimiter({ windowMs: 1000, max: 2, now: () => clock });
+  for (let i = 0; i < 5; i += 1) assert.equal(limiter.isExhausted("a"), false, "checking is free");
+  limiter.allow("a");
+  assert.equal(limiter.isExhausted("a"), false);
+  limiter.allow("a");
+  assert.equal(limiter.isExhausted("a"), true);
+  assert.equal(limiter.isExhausted("b"), false, "other keys are unaffected");
+  clock = 1000;
+  assert.equal(limiter.isExhausted("a"), false, "the window expires");
+});

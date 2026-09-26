@@ -21,6 +21,9 @@ export type RateLimiterOptions = {
 
 export type RateLimiter<Key> = {
   allow: (key: Key) => boolean;
+  // Whether the key has used up its window, without counting this call. For
+  // limits that charge only failures: check first, charge after a failure.
+  isExhausted: (key: Key) => boolean;
   size: () => number;
 };
 
@@ -72,6 +75,10 @@ export function createRateLimiter<Key>(options: RateLimiterOptions): RateLimiter
       if (current.count >= max) return false;
       current.count += 1;
       return true;
+    },
+    isExhausted(key: Key) {
+      const current = windows.get(key);
+      return Boolean(current && !isExpired(current.windowStartedAt, now()) && current.count >= max);
     },
     size() {
       return windows.size;

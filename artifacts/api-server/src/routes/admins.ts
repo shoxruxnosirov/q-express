@@ -35,18 +35,23 @@ function clientKey(req: Request) {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-// Every sign-in or first-password attempt is charged, successful or not, which
-// no person comes near and which keeps a guessing script slow. Per address, so
-// one caller cannot lock out the shop, plus a looser per-username ceiling so
-// rotating addresses does not buy unlimited guesses at one account.
+// Only FAILED sign-in or first-password attempts are charged. The dashboard
+// asks for the password on every visit and several admins may share the
+// shop's one Wi-Fi address, so charging successes would lock out honest staff
+// while a guessing script is slowed just the same. Per address, so one caller
+// cannot lock out the shop, plus a looser per-username ceiling so rotating
+// addresses does not buy unlimited guesses at one account.
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
-const attemptsByAddress = createRateLimiter<string>({ windowMs: ATTEMPT_WINDOW_MS, max: 10 });
-const attemptsByUsername = createRateLimiter<string>({ windowMs: ATTEMPT_WINDOW_MS, max: 30 });
+const failuresByAddress = createRateLimiter<string>({ windowMs: ATTEMPT_WINDOW_MS, max: 10 });
+const failuresByUsername = createRateLimiter<string>({ windowMs: ATTEMPT_WINDOW_MS, max: 30 });
 
-function tooManyAttempts(req: Request, username: string) {
-  const addressAllowed = attemptsByAddress.allow(clientKey(req));
-  const usernameAllowed = attemptsByUsername.allow(username);
-  return !addressAllowed || !usernameAllowed;
+function tooManyFailures(req: Request, username: string) {
+  return failuresByAddress.isExhausted(clientKey(req)) || failuresByUsername.isExhausted(username);
+}
+
+function chargeFailure(req: Request, username: string) {
+  failuresByAddress.allow(clientKey(req));
+  failuresByUsername.allow(username);
 }
 
 const TOO_MANY = "Juda ko‘p urinish. 15 daqiqadan keyin qayta urinib ko‘ring.";
@@ -80,11 +85,12 @@ router.post("/admin/auth", async (req, res, next) => {
   try {
     const input = AdminLoginBody.parse(req.body);
     const username = normalizeUsername(input.username);
-    if (tooManyAttempts(req, username)) return res.status(429).json({ error: TOO_MANY });
+    if (tooManyFailures(req, username)) return res.status(429).json({ error: TOO_MANY });
 
     const admin = await findByUsername(username);
     if (!admin) {
       await burnPasswordCheck(input.password);
+      chargeFailure(req, username);
       return res.status(401).json({ error: WRONG_LOGIN });
     }
     // Seeded super admins are public in the repository anyway, so saying that
@@ -93,6 +99,7 @@ router.post("/admin/auth", async (req, res, next) => {
       return res.status(409).json({ error: "Bu hisobga hali parol o‘rnatilmagan", needs_setup: true });
     }
     if (!(await verifyPassword(input.password, admin.passwordHash))) {
+      chargeFailure(req, username);
       return res.status(401).json({ error: WRONG_LOGIN });
     }
 
@@ -111,7 +118,7 @@ router.post("/admin/setup", async (req, res, next) => {
   try {
     const input = AdminSetupBody.parse(req.body);
     const username = normalizeUsername(input.username);
-    if (tooManyAttempts(req, username)) return res.status(429).json({ error: TOO_MANY });
+    if (tooManyFailures(req, username)) return res.status(429).json({ error: TOO_MANY });
 
     const expectedCode = process.env.ADMIN_ACCESS_CODE;
     if (!expectedCode) throw new Error("ADMIN_ACCESS_CODE is not configured");
@@ -119,6 +126,7 @@ router.post("/admin/setup", async (req, res, next) => {
     const admin = await findByUsername(username);
     const codeMatches = adminCodesMatch(input.access_code, expectedCode);
     if (!admin || admin.role !== "super_admin" || admin.passwordHash !== null || !codeMatches) {
+      chargeFailure(req, username);
       return res.status(401).json({ error: "Kirish kodi noto‘g‘ri yoki bu hisob sozlangan" });
     }
     const problem = newPasswordProblem(input.new_password, username);
