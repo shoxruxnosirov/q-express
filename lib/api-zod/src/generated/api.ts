@@ -386,6 +386,36 @@ export const VerifyCustomerLoginResponse = zod.object({
 
 
 /**
+ * Takes the Mini App's signed initData. If that Telegram account belongs to a verified customer, this webview is signed in as them; otherwise nothing changes and authenticated stays false.
+ * @summary Sign in inside the Telegram Mini App
+ */
+export const signInWithTelegramBodyInitDataMax = 4096;
+
+
+
+export const SignInWithTelegramBody = zod.object({
+  "init_data": zod.string().min(1).max(signInWithTelegramBodyInitDataMax)
+})
+
+export const signInWithTelegramResponseAddressesItemDomMax = 10;
+
+export const signInWithTelegramResponseAddressesItemXonadonMax = 10;
+
+
+
+export const SignInWithTelegramResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(signInWithTelegramResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(signInWithTelegramResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
  * @summary Sign this browser out
  */
 export const customerLogoutResponseAddressesItemDomMax = 10;

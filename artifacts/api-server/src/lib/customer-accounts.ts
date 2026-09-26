@@ -406,3 +406,35 @@ async function mergeCustomer(tx: Tx, fromId: number, intoId: number) {
   await tx.update(customerSessionsTable).set({ userId: intoId }).where(eq(customerSessionsTable.userId, fromId));
   await tx.delete(usersTable).where(eq(usersTable.id, fromId));
 }
+
+// Inside Telegram the shop runs in the app's own webview, which does not share
+// cookies with the phone's browser. A customer who verified their phone is
+// recognised there by the Telegram account the Mini App vouches for, and this
+// webview is signed in as them. Its own unverified account, if it made one,
+// is folded in, exactly as when verifying on a second device.
+export async function signInByTelegram(req: Request, res: Response, telegramUserId: string) {
+  const [target] = await db
+    .select()
+    .from(usersTable)
+    .where(and(eq(usersTable.telegramId, telegramUserId), isNotNull(usersTable.phoneVerifiedAt)))
+    .limit(1);
+  if (!target) return undefined;
+
+  const signedIn = await resolveCustomer(req, res);
+  if (signedIn?.user.id === target.id) return target;
+  if (signedIn) {
+    await db.transaction(async (tx) => {
+      if (!isVerified(signedIn.user)) await mergeCustomer(tx, signedIn.user.id, target.id);
+      await tx
+        .update(customerSessionsTable)
+        .set({ userId: target.id })
+        .where(eq(customerSessionsTable.tokenHash, hashCustomerToken(signedIn.token)));
+    });
+  } else {
+    const token = createCustomerToken();
+    await db.insert(customerSessionsTable).values({ userId: target.id, tokenHash: hashCustomerToken(token) });
+    setCustomerCookie(res, token);
+  }
+  const [fresh] = await db.select().from(usersTable).where(eq(usersTable.id, target.id)).limit(1);
+  return fresh;
+}

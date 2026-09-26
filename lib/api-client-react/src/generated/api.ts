@@ -55,6 +55,7 @@ import type {
   OrderStatusInput,
   Product,
   TelegramLink,
+  TelegramSignInInput,
   UploadTicket,
   WeeklyLeaderboardEntry
 } from './api.schemas';
@@ -1146,6 +1147,95 @@ export const useVerifyCustomerLogin = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getVerifyCustomerLoginMutationOptions(options));
+    }
+
+export const getSignInWithTelegramUrl = () => {
+
+
+
+
+  return `/api/customer/telegram`
+}
+
+/**
+ * Takes the Mini App's signed initData. If that Telegram account belongs to a verified customer, this webview is signed in as them; otherwise nothing changes and authenticated stays false.
+ * @summary Sign in inside the Telegram Mini App
+ */
+export const signInWithTelegram = async (telegramSignInInput: TelegramSignInInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CustomerProfile>(getSignInWithTelegramUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(telegramSignInInput)
+  }
+);}
+
+
+
+
+
+export const getSignInWithTelegramMutationKey = () => ['signInWithTelegram'] as const;
+
+export const getSignInWithTelegramMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof signInWithTelegram>>, TError,SignInWithTelegramMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof signInWithTelegram>>, TError,SignInWithTelegramMutationVariables, TContext> => {
+
+const mutationKey = getSignInWithTelegramMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof signInWithTelegram>>, SignInWithTelegramMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  signInWithTelegram(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SignInWithTelegramMutationResult = NonNullable<Awaited<ReturnType<typeof signInWithTelegram>>>
+    export type SignInWithTelegramMutationBody = BodyType<TelegramSignInInput>
+    export type SignInWithTelegramMutationError = ErrorType<void>
+    export type SignInWithTelegramMutationVariables = {data: BodyType<TelegramSignInInput>}
+
+    /**
+ * @summary Sign in inside the Telegram Mini App
+ */
+export const useSignInWithTelegram = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof signInWithTelegram>>, TError,SignInWithTelegramMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof signInWithTelegram>>,
+        TError,
+        SignInWithTelegramMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSignInWithTelegramMutationOptions(options));
     }
 
 export const getCustomerLogoutUrl = () => {

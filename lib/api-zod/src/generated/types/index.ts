@@ -59,5 +59,6 @@ export * from './orderStatusInputStatus';
 export * from './product';
 export * from './productUnit';
 export * from './telegramLink';
+export * from './telegramSignInInput';
 export * from './uploadTicket';
 export * from './weeklyLeaderboardEntry';

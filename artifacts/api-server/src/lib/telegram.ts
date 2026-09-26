@@ -234,7 +234,9 @@ export type AdminUpdate =
   // "/start <code>" from a t.me link an admin created on the dashboard. Taken
   // from any chat, because linking is how a new chat becomes known.
   | { kind: "link"; chatId: string; code: string; messageId: number }
-  // A customer opening the bot to verify their phone.
+  // Anyone opening the bot: greet them and offer the shop as a Mini App.
+  | { kind: "welcome"; chatId: string }
+  // A customer who came from the site's "verify" button.
   | { kind: "customer-start"; chatId: string }
   // A shared contact. ownContact is Telegram's own statement that the number
   // belongs to the account that sent it; a forwarded card fails it.
@@ -283,11 +285,10 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
   }
 
   const isAdminChat = recipientChats(linkedChatIds).includes(chatId);
-  // "/start login" from the site's button, or a bare /start from anyone who is
-  // not an admin, is a customer who wants to verify their phone.
-  if (isPrivate && (CUSTOMER_START_PATTERN.test(body) || (!isAdminChat && BARE_START_PATTERN.test(body)))) {
-    return { kind: "customer-start", chatId };
-  }
+  // "/start login" comes from the site's verify button; a bare /start is
+  // somebody opening the bot, admins included, and gets the shop.
+  if (isPrivate && CUSTOMER_START_PATTERN.test(body)) return { kind: "customer-start", chatId };
+  if (isPrivate && BARE_START_PATTERN.test(body)) return { kind: "welcome", chatId };
 
   if (!isAdminChat) return { kind: "ignore" };
 
@@ -360,6 +361,102 @@ export function sendContactRequest(chatId: string) {
       one_time_keyboard: true,
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// The shop as a Mini App
+// ---------------------------------------------------------------------------
+
+export type WelcomeOffer = { name: string; price: number; oldPrice: number | null };
+
+function formatSum(value: number) {
+  return `${Math.round(value).toLocaleString("ru-RU")} so‘m`;
+}
+
+// The greeting a customer gets on /start: the brand banner, what the shop
+// promises, today's biggest discounts from the catalogue, and buttons that
+// open the site inside Telegram. Web-app buttons need no BotFather setup.
+export function welcomeMessage(baseUrl: string, offers: readonly WelcomeOffer[]) {
+  const root = baseUrl.replace(/\/+$/, "");
+  const deals = offers
+    .filter((offer) => offer.oldPrice !== null && offer.oldPrice > offer.price)
+    .slice(0, 3)
+    .map((offer) => {
+      const percent = Math.round((1 - offer.price / offer.oldPrice!) * 100);
+      return `🔥 ${escapeHtml(offer.name)}: <b>${formatSum(offer.price)}</b> <s>${formatSum(offer.oldPrice!)}</s> (−${percent}%)`;
+    });
+  const caption = [
+    "<b>Q express'ga xush kelibsiz!</b> 🛒",
+    "Qorasuvda oziq-ovqat eshigingizgacha.",
+    "",
+    "⚡ <b>15–19 daqiqada</b> yetkazamiz",
+    "🎁 <b>Birinchi yetkazish bepul</b> — raqamingizni tasdiqlang",
+    "💵 Naqd, Click, Payme, Uzcard yoki Humo",
+    ...(deals.length ? ["", "<b>Bugungi chegirmalar:</b>", ...deals] : []),
+    "",
+    "Pastdagi tugmani bosing, do‘kon shu yerning o‘zida ochiladi 👇",
+  ].join("\n");
+  const app = (text: string, path: string) => ({ text, web_app: { url: `${root}${path}` } });
+  return {
+    photo: `${root}/brand/q-express-logo.png`,
+    caption,
+    parse_mode: "HTML",
+    reply_markup: {
+      inline_keyboard: [
+        [app("🛒 Do‘konni ochish", "/")],
+        [app("🔥 Chegirmalar", "/catalog?sort=discount"), app("📦 Buyurtmalarim", "/orders")],
+      ],
+    },
+  };
+}
+
+export async function sendWelcome(chatId: string, baseUrl: string, offers: readonly WelcomeOffer[]) {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  const { sent, error } = await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, ...welcomeMessage(baseUrl, offers) });
+  return error === undefined ? { sent } : { sent, error };
+}
+
+// The button next to the message box in every private chat with the bot opens
+// the shop too. Set on each start, like the webhook; it is idempotent.
+export async function registerMenuButton(baseUrl: string): Promise<TelegramResult> {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  const { sent, error } = await callBotApi(bot.token, "setChatMenuButton", {
+    menu_button: { type: "web_app", text: "Do‘kon", web_app: { url: `${baseUrl.replace(/\/+$/, "")}/` } },
+  });
+  return error === undefined ? { sent } : { sent, error };
+}
+
+// A Mini App receives initData signed with a key derived from the bot token.
+// Checking it proves the Telegram account opening the shop, so a customer who
+// verified their phone once is recognised without a cookie of this webview's.
+// Returns the Telegram user id, or undefined for anything forged or stale.
+const INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
+export function verifyWebAppInitData(initData: string, now = Date.now()): string | undefined {
+  const bot = resolveBotToken();
+  if (!("token" in bot) || !initData) return undefined;
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash");
+  if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return undefined;
+  params.delete("hash");
+  const dataCheckString = [...params.entries()]
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join("\n");
+  const secretKey = createHmac("sha256", "WebAppData").update(bot.token).digest();
+  const expected = createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+  if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(hash, "hex"))) return undefined;
+  const authDate = Number(params.get("auth_date"));
+  if (!Number.isFinite(authDate) || now / 1000 - authDate > INIT_DATA_MAX_AGE_SECONDS || authDate - now / 1000 > 60) {
+    return undefined;
+  }
+  try {
+    const user = JSON.parse(params.get("user") ?? "") as { id?: unknown };
+    return typeof user.id === "number" && Number.isSafeInteger(user.id) ? String(user.id) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function sendLoginCode(chatId: string, code: string) {

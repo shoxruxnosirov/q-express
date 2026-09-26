@@ -11,6 +11,7 @@ import {
 } from '@workspace/api-client-react';
 import { BadgeCheck, LoaderCircle, Send } from 'lucide-react';
 import { apiErrorMessage } from '@/pages/admin/AdminLogin';
+import { openTelegramLink } from '@/lib/telegram-mini-app';
 
 // Verifying the phone through @Q_express_bot. The bot hands out a code only
 // after the customer shares their own number with Telegram's contact button,
@@ -57,7 +58,7 @@ export function VerifyPhone({ phone: initialPhone, title, hint, onVerified }: {
         <li>3. Kodni shu yerga kiriting.</li>
       </ol>
       {link.data ? (
-        <a href={link.data.url} target="_blank" rel="noreferrer" data-testid="link-verify-telegram" className="tap mt-3 flex h-11 items-center justify-center gap-2 rounded-full bg-[#229ED9] text-sm font-extrabold text-white">
+        <a href={link.data.url} target="_blank" rel="noreferrer" onClick={event => { if (openTelegramLink(link.data!.url)) event.preventDefault(); }} data-testid="link-verify-telegram" className="tap mt-3 flex h-11 items-center justify-center gap-2 rounded-full bg-[#229ED9] text-sm font-extrabold text-white">
           <Send size={15} /> Telegram'da ochish
         </a>
       ) : link.isError ? (

@@ -42,6 +42,7 @@ import {
   sendNewOrderNotification,
   sendOperatorReplyNotification,
   sendReplyHint,
+  sendWelcome,
   webhookSecretMatches,
 } from "../lib/telegram";
 import { linkedTelegramChatIds, linkedTelegramRecipients, signedInAdmin } from "../lib/admin-directory";
@@ -1003,6 +1004,12 @@ router.post("/chat/messages", async (req, res, next) => {
   }
 });
 
+// Where the shop is served from, for links the bot sends. Render names it in
+// RENDER_EXTERNAL_URL; PUBLIC_BASE_URL overrides it elsewhere.
+function publicBaseUrl(req: Request) {
+  return process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `https://${req.get("host")}`;
+}
+
 // Telegram calls this for every message an admin sends the bot. A reply to a
 // chat notification becomes an operator message in that thread, exactly as if
 // it had been typed on the dashboard, so the customer's widget and the
@@ -1040,6 +1047,24 @@ router.post("/telegram/webhook", async (req, res, next) => {
         return updated;
       });
       await sendLinkResult(update.chatId, linked?.displayName);
+      return res.json({ ok: true });
+    }
+
+    // Somebody opened the bot: greet them with today's biggest discounts among
+    // products that can actually be bought, and the shop as a Mini App.
+    if (update.kind === "welcome") {
+      const offers = await db
+        .select({ name: productsTable.name, price: productsTable.price, oldPrice: productsTable.oldPrice })
+        .from(productsTable)
+        .where(and(eq(productsTable.active, true), sql`${productsTable.stock} > 0`, sql`${productsTable.oldPrice} > ${productsTable.price}`))
+        .orderBy(desc(sql`(${productsTable.oldPrice} - ${productsTable.price}) / ${productsTable.oldPrice}`))
+        .limit(3);
+      const welcomed = await sendWelcome(
+        update.chatId,
+        publicBaseUrl(req),
+        offers.map((offer) => ({ name: offer.name, price: Number(offer.price), oldPrice: offer.oldPrice === null ? null : Number(offer.oldPrice) })),
+      );
+      if (!welcomed.sent) req.log.warn({ reason: welcomed.error }, "Telegram welcome failed");
       return res.json({ ok: true });
     }
 

@@ -28,6 +28,7 @@ import { cleanAddresses, clearProfile, emptyProfile, forgetAddress, profileField
 import { emptyAddress, formatAddress, isCompleteAddress, parseAddress, type AddressParts } from '@/lib/address';
 import { AddressPicker, AddressSelects, SavedAddressList, type AddressChoice } from '@/components/AddressFields';
 import { VerifyPhone } from '@/components/VerifyPhone';
+import { TelegramSignIn } from '@/components/TelegramSignIn';
 import { formatUzPhone, normalizeUzPhone, samePhone } from '@/lib/phone';
 import { ProductPicker } from '@/components/ProductPicker';
 import { AdminImageField, AdminProductRow, FlagToggle, uploadProductImage } from '@/components/AdminProductRow';
@@ -108,6 +109,7 @@ function Shell({ children }: { children: ReactNode }) {
       <ProductPicker />
       {!isAdmin && <footer className="mt-20 border-t border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)]"><div className="container-wide flex flex-col gap-3 py-8 text-sm text-[hsl(var(--muted-foreground))] sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><img src="/brand/icon.svg" alt="Q express" className="h-6 w-6" /><span className="display text-lg font-extrabold text-[hsl(var(--primary))]">Q <span className="text-[hsl(var(--foreground))]">express</span></span></div><span>Yangi mahsulotlar. Oson buyurtma. Mahallangizda.</span></div></footer>}
       {!isAdmin && <CustomerChat />}
+      {!isAdmin && <TelegramSignIn />}
     </div>
   );
 }
@@ -161,7 +163,10 @@ function Catalog() {
   const params = new URLSearchParams(window.location.search);
   const [search, setSearch] = useState(params.get('search') || '');
   const [category, setCategory] = useState(params.get('category') || '');
-  const [sort, setSort] = useState<'popular' | 'price_asc' | 'price_desc' | 'newest' | 'discount'>('popular');
+  const sortParam = params.get('sort');
+  const [sort, setSort] = useState<'popular' | 'price_asc' | 'price_desc' | 'newest' | 'discount'>(
+    sortParam === 'price_asc' || sortParam === 'price_desc' || sortParam === 'newest' || sortParam === 'discount' ? sortParam : 'popular',
+  );
   const categories = useListCategories({ query: { queryKey: getListCategoriesQueryKey() } });
   const products = useListProducts({ search: search || undefined, category: category || undefined, sort }, { query: { queryKey: getListProductsQueryKey({ search: search || undefined, category: category || undefined, sort }) } });
   return <div className="container-wide py-7 sm:py-10"><div className="animate-rise"><div className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Q express / Katalog</p><h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Barcha mahsulotlar</h1></div><div className="relative w-full sm:w-[300px]"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" size={17} /><input data-testid="input-catalog-search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Mahsulot qidirish..." className="h-12 w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] pl-11 pr-4 text-sm outline-none transition focus:border-[hsl(var(--primary))] focus:ring-4 focus:ring-[hsl(var(--primary)/.1)]" /></div></div><div className="mb-8 space-y-4"><div className="flex items-center gap-2 overflow-x-auto pb-1"><button data-testid="button-category-all" onClick={() => setCategory('')} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold transition ${!category ? 'bg-[hsl(var(--primary))] text-white' : 'border border-[hsl(var(--border))] bg-[hsl(var(--card))] hover:border-[hsl(var(--primary))]'}`}>Barchasi</button>{categories.data?.map(item => <button data-testid={`button-filter-category-${item.id}`} key={item.id} onClick={() => setCategory(item.slug)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold transition ${category === item.slug ? 'bg-[hsl(var(--primary))] text-white' : 'border border-[hsl(var(--border))] bg-[hsl(var(--card))] hover:border-[hsl(var(--primary))]'}`}>{item.name}</button>)}</div><div className="flex items-center justify-between gap-3"><p className="flex items-center gap-2 text-sm text-[hsl(var(--muted-foreground))]"><SlidersHorizontal size={15} /> {products.data?.length || 0} ta mahsulot</p><label className="flex items-center gap-2 text-sm"><span className="hidden text-[hsl(var(--muted-foreground))] sm:inline">Saralash:</span><select data-testid="select-catalog-sort" value={sort} onChange={event => setSort(event.target.value as typeof sort)} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-xs font-bold outline-none"><option value="popular">Mashhurligi</option><option value="newest">Yangilari</option><option value="price_asc">Arzonroq</option><option value="price_desc">Qimmatroq</option><option value="discount">Chegirmalar</option></select></label></div></div>{products.isLoading ? <LoadingGrid /> : products.isError ? <QueryError retry={() => products.refetch()} /> : products.data?.length ? <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">{inStockFirst(products.data).map((product, i) => <ProductCard key={product.id} product={product} index={i} />)}</div> : <EmptyState title="Mos mahsulot topilmadi" text="Qidiruv so‘zini yoki filtrni o‘zgartirib ko‘ring." action="Filtrlarni tozalash" onClick={() => { setSearch(''); setCategory(''); }} />}</div></div>;

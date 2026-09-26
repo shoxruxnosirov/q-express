@@ -402,6 +402,14 @@ export interface CustomerAddressesInput {
   addresses: DeliveryAddress[];
 }
 
+export interface TelegramSignInInput {
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  init_data: string;
+}
+
 export interface CustomerLoginLink {
   url: string;
 }

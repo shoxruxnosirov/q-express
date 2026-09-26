@@ -422,7 +422,7 @@ test("a /start link code is accepted from any chat, anything else from strangers
   const start = (text, chatId = 999) => ({ message: { message_id: 5, chat: { id: chatId }, text } });
   assert.deepEqual(parseAdminUpdate(start(`/start ${code}`)), { kind: "link", chatId: "999", code, messageId: 5 });
   assert.equal(parseAdminUpdate(start(`/start@Q_express_bot ${code}`)).kind, "link");
-  assert.equal(parseAdminUpdate(start("/start")).kind, "customer-start", "a stranger's /start is a customer arriving");
+  assert.equal(parseAdminUpdate(start("/start")).kind, "welcome", "a stranger's /start is a customer arriving");
   assert.equal(parseAdminUpdate(start("/start not-a-code")).kind, "ignore");
   assert.equal(parseAdminUpdate(start(`/start ${code.toUpperCase()}`)).kind, "ignore");
   assert.equal(parseAdminUpdate(start("salom")).kind, "ignore");
@@ -431,13 +431,13 @@ test("a /start link code is accepted from any chat, anything else from strangers
 
 // --- Customer phone verification --------------------------------------------
 
-test("the site's login link and a customer's bare /start both ask for the contact", () => {
+test("the site's login link asks for the contact; a bare /start gets the shop", () => {
   configureInbound();
   const msg = (text, chat = { id: 777, type: "private" }) => ({ message: { message_id: 1, chat, from: { id: 777 }, text } });
   assert.deepEqual(parseAdminUpdate(msg("/start login")), { kind: "customer-start", chatId: "777" });
-  assert.deepEqual(parseAdminUpdate(msg("/start")), { kind: "customer-start", chatId: "777" });
+  assert.deepEqual(parseAdminUpdate(msg("/start")), { kind: "welcome", chatId: "777" });
   assert.equal(parseAdminUpdate(msg("/start login", { id: 5550001, type: "private" })).kind, "customer-start", "admins can verify too");
-  assert.equal(parseAdminUpdate(msg("/start", { id: 5550001, type: "private" })).kind, "hint", "an admin's bare /start stays a hint");
+  assert.equal(parseAdminUpdate(msg("/start", { id: 5550001, type: "private" })).kind, "welcome", "admins get the shop too");
   assert.equal(parseAdminUpdate(msg("/start login", { id: -100, type: "group" })).kind, "ignore", "never in a group");
 });
 
@@ -482,3 +482,4 @@ test("phones in notifications are written for people, not as raw digits", async 
   await sendNewOrderNotification({ ...order, phone: "odd" });
   assert.ok(text.includes("<b>Telefon:</b> odd"), "anything else is shown as stored");
 });
+

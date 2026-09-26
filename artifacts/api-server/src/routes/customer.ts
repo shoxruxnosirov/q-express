@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request } from "express";
 import { desc, eq, sql } from "drizzle-orm";
 import {
   ReplaceCustomerAddressesBody,
+  SignInWithTelegramBody,
   UpdateCustomerProfileBody,
   VerifyCustomerLoginBody,
 } from "@workspace/api-zod";
@@ -16,13 +17,14 @@ import {
   isVerified,
   replaceAddresses,
   resolveCustomer,
+  signInByTelegram,
   signInVerified,
 } from "../lib/customer-accounts";
 import { CHAT_SESSION_COOKIE } from "../lib/chat-session";
 import { CUSTOMER_SESSION_COOKIE } from "../lib/customer-session";
 import { normalizeUzPhone } from "../lib/phone";
 import { createRateLimiter } from "../lib/rate-window";
-import { getBotUsername } from "../lib/telegram";
+import { getBotUsername, verifyWebAppInitData } from "../lib/telegram";
 
 const router: IRouter = Router();
 
@@ -124,6 +126,20 @@ router.post("/customer/login", async (req, res, next) => {
     }
     const user = await signInVerified(req, res, phone, check.telegramUserId);
     return res.json(await customerProfileDto(user));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/customer/telegram", async (req, res, next) => {
+  try {
+    const { init_data } = SignInWithTelegramBody.parse(req.body);
+    const telegramUserId = verifyWebAppInitData(init_data);
+    if (!telegramUserId) return res.status(401).json({ error: "Telegram ma’lumoti tasdiqlanmadi" });
+    const user = await signInByTelegram(req, res, telegramUserId);
+    if (user) return res.json(await customerProfileDto(user));
+    const signedIn = await resolveCustomer(req, res);
+    return res.json(await customerProfileDto(signedIn?.user));
   } catch (error) {
     return next(error);
   }

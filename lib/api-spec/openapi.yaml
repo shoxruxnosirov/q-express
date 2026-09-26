@@ -261,6 +261,30 @@ paths:
           description: Wrong or expired code
         "429":
           description: Too many attempts
+  /customer/telegram:
+    post:
+      operationId: signInWithTelegram
+      tags: [customer]
+      summary: Sign in inside the Telegram Mini App
+      description: >-
+        Takes the Mini App's signed initData. If that Telegram account belongs
+        to a verified customer, this webview is signed in as them; otherwise
+        nothing changes and authenticated stays false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramSignInInput"
+      responses:
+        "200":
+          description: The customer, or authenticated false
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+        "401":
+          description: initData is not genuine or is too old
   /customer/logout:
     post:
       operationId: customerLogout
@@ -1192,6 +1216,14 @@ components:
           maxItems: 5
           items:
             $ref: "#/components/schemas/DeliveryAddress"
+    TelegramSignInInput:
+      type: object
+      required: [init_data]
+      properties:
+        init_data:
+          type: string
+          minLength: 1
+          maxLength: 4096
     CustomerLoginLink:
       type: object
       required: [url]

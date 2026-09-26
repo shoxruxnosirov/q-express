@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { registerWebhook } from "./lib/telegram";
+import { registerMenuButton, registerWebhook } from "./lib/telegram";
 
 const rawPort = process.env["PORT"];
 
@@ -33,6 +33,10 @@ app.listen(port, (err) => {
     registerWebhook(publicUrl).then((result) => {
       if (result.sent) logger.info("Telegram webhook registered");
       else logger.warn({ reason: result.error }, "Telegram webhook not registered");
+    });
+    registerMenuButton(publicUrl).then((result) => {
+      if (result.sent) logger.info("Telegram menu button set");
+      else logger.warn({ reason: result.error }, "Telegram menu button not set");
     });
   }
 });
