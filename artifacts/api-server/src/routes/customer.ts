@@ -8,6 +8,7 @@ import {
 import { db } from "@workspace/db";
 import { customerAddressesTable, ordersTable, usersTable } from "@workspace/db/schema";
 import {
+  AccountLimitError,
   consumeLoginCode,
   customerProfileDto,
   endCustomerSession,
@@ -33,6 +34,7 @@ function clientKey(req: Request) {
 // allows, so rotating phone numbers does not buy unlimited guessing.
 const codeFailures = createRateLimiter<string>({ windowMs: 15 * 60 * 1000, max: 10 });
 
+const TOO_MANY_ACCOUNTS = "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.";
 const ADDRESS_PART = /^[0-9A-Za-z]{1,10}$/;
 
 router.get("/customer/me", async (req, res, next) => {
@@ -76,6 +78,7 @@ router.patch("/customer/me", async (req, res, next) => {
       .returning();
     return res.json(await customerProfileDto(updated));
   } catch (error) {
+    if (error instanceof AccountLimitError) return res.status(429).json({ error: TOO_MANY_ACCOUNTS });
     return next(error);
   }
 });
@@ -91,6 +94,7 @@ router.put("/customer/me/addresses", async (req, res, next) => {
     await replaceAddresses(user.id, cleaned);
     return res.json(await customerProfileDto(user));
   } catch (error) {
+    if (error instanceof AccountLimitError) return res.status(429).json({ error: TOO_MANY_ACCOUNTS });
     return next(error);
   }
 });

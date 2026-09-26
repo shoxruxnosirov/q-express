@@ -17,6 +17,7 @@ import {
   readCustomerToken,
   setCustomerCookie,
 } from "./customer-session";
+import { createRateLimiter } from "./rate-window";
 import { parseOrderAddress, type AddressParts } from "./order-rules";
 
 export type { AddressParts };
@@ -109,12 +110,22 @@ async function adoptLegacyBrowser(tokenHash: string) {
     .limit(1);
   if (!latest) return undefined;
   return db.transaction(async (tx) => {
+    // Checkout fires several requests at once, and each would adopt the same
+    // browser. The lock queues them; the first creates the account and the
+    // rest find it, instead of failing on the unique session hash.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`adopt:${tokenHash}`}))`);
+    const [adopted] = await tx
+      .select({ user: usersTable })
+      .from(customerSessionsTable)
+      .innerJoin(usersTable, eq(customerSessionsTable.userId, usersTable.id))
+      .where(eq(customerSessionsTable.tokenHash, tokenHash))
+      .limit(1);
+    if (adopted) return adopted.user;
+
     const [user] = await tx
       .insert(usersTable)
       .values({ name: latest.customerName, phone: latest.phone, lastSeenAt: new Date() })
       .returning();
-    // Unique on token_hash: if two requests adopt at once, the second insert
-    // fails and its transaction rolls back rather than making two customers.
     await tx.insert(customerSessionsTable).values({ userId: user.id, tokenHash });
     await tx
       .update(ordersTable)
@@ -132,6 +143,23 @@ async function adoptLegacyBrowser(tokenHash: string) {
   });
 }
 
+// Saving a profile needs no order, so without a limit a script could fill the
+// free database with empty accounts. A household needs one; ten an hour per
+// address is plenty for a shared Wi-Fi. Orders are not charged here: an order
+// is its own proof of intent.
+const accountCreation = createRateLimiter<string>({ windowMs: 60 * 60 * 1000, max: 10 });
+
+export class AccountLimitError extends Error {
+  constructor() {
+    super("Too many new customer accounts from this address");
+    this.name = "AccountLimitError";
+  }
+}
+
+function clientKey(req: Request) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
 // The signed-in customer, creating an unverified one with a fresh session when
 // this browser has none yet.
 export async function ensureCustomer(
@@ -141,6 +169,7 @@ export async function ensureCustomer(
 ): Promise<CustomerRow> {
   const signedIn = await resolveCustomer(req, res);
   if (signedIn) return signedIn.user;
+  if (!accountCreation.allow(clientKey(req))) throw new AccountLimitError();
   const token = createCustomerToken();
   const user = await db.transaction(async (tx) => {
     const [created] = await tx

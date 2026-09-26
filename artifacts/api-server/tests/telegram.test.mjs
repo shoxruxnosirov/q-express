@@ -467,3 +467,18 @@ test("the contact button and the code message are well formed", async () => {
   assert.ok(bodies[1].text.includes("012345"));
   assert.equal(bodies[1].reply_markup.remove_keyboard, true);
 });
+
+test("phones in notifications are written for people, not as raw digits", async () => {
+  configureInbound();
+  let text;
+  globalThis.fetch = async (_url, init) => {
+    text = JSON.parse(init.body).text;
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  await sendNewOrderNotification({ ...order, phone: "998901112233" });
+  assert.ok(text.includes("+998 90 111 22 33"), text);
+  await sendChatMessageNotification({ threadId: 1, customerName: "A", phone: "998901112233", body: "x" });
+  assert.ok(text.includes("+998 90 111 22 33"));
+  await sendNewOrderNotification({ ...order, phone: "odd" });
+  assert.ok(text.includes("<b>Telefon:</b> odd"), "anything else is shown as stored");
+});

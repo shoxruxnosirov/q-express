@@ -52,6 +52,13 @@ function escapeHtml(value: string) {
     .replaceAll('"', "&quot;");
 }
 
+// +998 90 123 45 67 for the admins reading it. Kept here rather than imported
+// from ./phone because the tests load this file on its own.
+function formatUzPhone(phone: string) {
+  const match = /^998(\d{2})(\d{3})(\d{2})(\d{2})$/.exec(phone);
+  return match ? `+998 ${match[1]} ${match[2]} ${match[3]} ${match[4]}` : phone;
+}
+
 function formatMoney(value: string | number | null) {
   return `${Number(value ?? 0).toLocaleString("ru-RU")} so'm`;
 }
@@ -395,7 +402,7 @@ export async function sendChatMessageNotification(
     threadHeader("YANGI XABAR", message.threadId),
     "",
     "<b>Mijoz:</b> " + escapeHtml(who),
-    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(phone)] : []),
+    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(formatUzPhone(phone))] : []),
     "",
     escapeHtml(message.body),
     "",
@@ -427,7 +434,7 @@ export async function sendOperatorReplyNotification(
     `<i>${escapeHtml(message.authorName)} ${where} yozdi</i>`,
     "",
     "<b>Kimga:</b> " + escapeHtml(who),
-    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(phone)] : []),
+    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(formatUzPhone(phone))] : []),
     "",
     escapeHtml(message.body),
   ];
@@ -466,7 +473,7 @@ export async function sendNewOrderNotification(
     "",
     `<b>Order:</b> #${escapeHtml(order.orderNumber)}`,
     `<b>Mijoz:</b> ${escapeHtml(order.customerName)}`,
-    `<b>Telefon:</b> ${escapeHtml(order.phone)}`,
+    `<b>Telefon:</b> ${escapeHtml(formatUzPhone(order.phone))}`,
     "",
     "<b>Mahsulotlar:</b>",
     items,
