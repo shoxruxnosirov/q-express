@@ -88,6 +88,9 @@ export const chatMessagesTable = pgTable("chat_messages", {
     .references(() => chatThreadsTable.id, { onDelete: "cascade" }),
   sender: text("sender").notNull(),
   body: text("body").notNull(),
+  // "<chat id>:<message id>" for an operator reply written in Telegram, NULL
+  // otherwise. Unique, so a webhook Telegram retries is stored only once.
+  telegramRef: text("telegram_ref").unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

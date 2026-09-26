@@ -29,7 +29,15 @@ import {
   ordersTable,
   productsTable,
 } from "@workspace/db/schema";
-import { sendChatMessageNotification, sendNewOrderNotification } from "../lib/telegram";
+import {
+  acknowledgeAdminReply,
+  parseAdminReply,
+  sendChatMessageNotification,
+  sendNewOrderNotification,
+  sendOperatorReplyNotification,
+  sendReplyHint,
+  webhookSecretMatches,
+} from "../lib/telegram";
 import {
   createChatToken,
   hashChatToken,
@@ -865,6 +873,56 @@ router.post("/chat/messages", async (req, res, next) => {
   }
 });
 
+// Telegram calls this when the operator writes in the admin chat. A reply to a
+// chat notification becomes an operator message in that thread, exactly as if
+// it had been typed on the dashboard, so the customer's widget and the
+// dashboard both show it on their next poll.
+router.post("/telegram/webhook", async (req, res, next) => {
+  try {
+    if (!webhookSecretMatches(req.get("x-telegram-bot-api-secret-token"))) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const reply = parseAdminReply(req.body);
+    if (reply.kind === "ignore") return res.json({ ok: true });
+    if (reply.kind === "hint") {
+      await sendReplyHint(reply.messageId, "unroutable");
+      return res.json({ ok: true });
+    }
+
+    const [thread] = await db
+      .select({ id: chatThreadsTable.id })
+      .from(chatThreadsTable)
+      .where(eq(chatThreadsTable.id, reply.threadId))
+      .limit(1);
+    if (!thread) {
+      await sendReplyHint(reply.messageId, "missing-thread");
+      return res.json({ ok: true });
+    }
+
+    const [message] = await db
+      .insert(chatMessagesTable)
+      .values({ threadId: thread.id, sender: "operator", body: reply.body, telegramRef: reply.ref })
+      .onConflictDoNothing()
+      .returning();
+    // No row means Telegram re-sent an update already stored. Answer 200 so it
+    // stops retrying, and do not react a second time.
+    if (!message) return res.json({ ok: true });
+
+    await db
+      .update(chatThreadsTable)
+      .set({ lastMessageAt: message.createdAt, operatorReadAt: message.createdAt })
+      .where(eq(chatThreadsTable.id, thread.id));
+
+    const acknowledged = await acknowledgeAdminReply(reply.messageId);
+    if (!acknowledged.sent) {
+      req.log.warn({ reason: acknowledged.error }, "Telegram reply acknowledgement failed");
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/admin/auth", async (req, res, next) => {
   try {
     const { code } = AdminLoginBody.parse(req.body);
@@ -1155,7 +1213,11 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
     const { id } = SendAdminChatMessageParams.parse(req.params);
     const { body } = SendAdminChatMessageBody.parse(req.body);
     const [thread] = await db
-      .select({ id: chatThreadsTable.id })
+      .select({
+        id: chatThreadsTable.id,
+        customerName: chatThreadsTable.customerName,
+        phone: chatThreadsTable.phone,
+      })
       .from(chatThreadsTable)
       .where(eq(chatThreadsTable.id, id))
       .limit(1);
@@ -1169,6 +1231,18 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
       .update(chatThreadsTable)
       .set({ lastMessageAt: message.createdAt, operatorReadAt: message.createdAt })
       .where(eq(chatThreadsTable.id, id));
+
+    // Copied to the admin chat so Telegram holds the whole conversation. Best
+    // effort: the customer already has the reply either way.
+    const copied = await sendOperatorReplyNotification({
+      threadId: thread.id,
+      customerName: thread.customerName,
+      phone: thread.phone,
+      body: message.body,
+    });
+    if (!copied.sent) {
+      req.log.warn({ reason: copied.error }, "Telegram operator reply copy failed");
+    }
     return res.status(201).json(chatMessageDto(message));
   } catch (error) {
     return next(error);

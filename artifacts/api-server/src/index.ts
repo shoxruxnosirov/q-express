@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { registerWebhook } from "./lib/telegram";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,16 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Point the bot at this server so replies written in Telegram reach the
+  // customer. Render supplies RENDER_EXTERNAL_URL to every web service;
+  // PUBLIC_BASE_URL overrides it elsewhere. Unset in development, where
+  // Telegram could not reach this machine anyway.
+  const publicUrl = process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL;
+  if (publicUrl) {
+    registerWebhook(publicUrl).then((result) => {
+      if (result.sent) logger.info("Telegram webhook registered");
+      else logger.warn({ reason: result.error }, "Telegram webhook not registered");
+    });
+  }
 });
