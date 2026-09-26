@@ -22,4 +22,8 @@ export interface Order {
   delivery_fee: number;
   total: number;
   created_at: Date;
+  /** Admin who last changed the status. Admin endpoints only. */
+  status_changed_by?: string | null;
+  /** When the status last changed. Admin endpoints only. */
+  status_changed_at?: Date | null;
 }

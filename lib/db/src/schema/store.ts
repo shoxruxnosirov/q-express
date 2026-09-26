@@ -65,6 +65,12 @@ export const ordersTable = pgTable("orders", {
   deliveryFee: numeric("delivery_fee", { precision: 12, scale: 2 }).notNull(),
   total: numeric("total", { precision: 12, scale: 2 }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // SHA-256 of the secret in the ordering browser's customer cookie. Only that
+  // browser can list or open the order; NULL for orders placed before this
+  // existed, which only the dashboard shows.
+  customerTokenHash: text("customer_token_hash"),
+  statusChangedBy: integer("status_changed_by").references(() => adminsTable.id, { onDelete: "set null" }),
+  statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
 });
 
 // One row per person who can open the operator dashboard. Passwords are scrypt

@@ -42,6 +42,13 @@ import {
 import { linkedTelegramChatIds, linkedTelegramRecipients, signedInAdmin } from "../lib/admin-directory";
 import { telegramLinkHash } from "./admins";
 import {
+  createCustomerToken,
+  hashCustomerToken,
+  readCustomerToken,
+  setCustomerCookie,
+} from "../lib/customer-session";
+import { canChangeStatus, stockToRestore, tashkentDayStart, tashkentWeekStart } from "../lib/order-rules";
+import {
   createChatToken,
   hashChatToken,
   readChatToken,
@@ -191,7 +198,10 @@ let seedPromise: Promise<void> | undefined;
 async function ensureSeedData() {
   if (!seedPromise) {
     seedPromise = (async () => {
-      const existing = await db.select({ id: productsTable.id }).from(productsTable).limit(1);
+      // Keyed on categories, not products: an operator who deletes every
+      // product must get an empty catalog, not a reseed that collides with
+      // the category slugs still there and fails every request after it.
+      const existing = await db.select({ id: categoriesTable.id }).from(categoriesTable).limit(1);
       if (existing.length > 0) return;
 
       const categories = await db.insert(categoriesTable).values(seedCategories).returning();
@@ -282,15 +292,6 @@ function phoneCondition(phone: string) {
   return sql`regexp_replace(${ordersTable.phone}, '[^0-9]', '', 'g') = ${phone}`;
 }
 
-function weekStart(date = new Date()) {
-  const start = new Date(date);
-  const day = start.getUTCDay();
-  const daysFromMonday = day === 0 ? 6 : day - 1;
-  start.setUTCDate(start.getUTCDate() - daysFromMonday);
-  start.setUTCHours(0, 0, 0, 0);
-  return start;
-}
-
 function maskPhone(phone: string) {
   const digits = normalizePhone(phone);
   return digits.length >= 4 ? `•••• ${digits.slice(-4)}` : "Noma’lum";
@@ -303,7 +304,8 @@ function realCustomerName(value: string) {
 }
 
 function weeklyLeaderboard(orders: Array<typeof ordersTable.$inferSelect>) {
-  const start = weekStart();
+  // Monday 00:00 on the shop's clock, not the server's UTC one.
+  const start = tashkentWeekStart();
   const customers = new Map<string, { phone: string; realName?: string; realNameAt?: Date; orderCount: number }>();
   const knownNames = new Map<string, { name: string; createdAt: Date }>();
 
@@ -496,6 +498,22 @@ function orderDto(order: typeof ordersTable.$inferSelect) {
   };
 }
 
+// The dashboard's view adds who last moved the status. Customers never see it.
+function adminOrderDto(order: typeof ordersTable.$inferSelect, changedBy: string | null) {
+  return {
+    ...orderDto(order),
+    status_changed_by: changedBy,
+    status_changed_at: order.statusChangedAt ? order.statusChangedAt.toISOString() : null,
+  };
+}
+
+// Customers own orders through the browser that placed them. A request with no
+// valid cookie owns nothing.
+function customerOrderCondition(req: Request) {
+  const token = readCustomerToken(req);
+  return token ? eq(ordersTable.customerTokenHash, hashCustomerToken(token)) : undefined;
+}
+
 router.get("/categories", async (_req, res, next) => {
   try {
     await ensureSeedData();
@@ -560,7 +578,8 @@ router.get("/products/:id", async (req, res, next) => {
       .select({ product: productsTable, category: categoriesTable.name })
       .from(productsTable)
       .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
-      .where(eq(productsTable.id, id))
+      // A hidden product is gone from the storefront, direct links included.
+      .where(and(eq(productsTable.id, id), eq(productsTable.active, true)))
       .limit(1);
     if (!row) return res.status(404).json({ error: "Product not found" });
     return res.json(productDto(row.product, row.category));
@@ -588,9 +607,11 @@ router.get("/orders/delivery-fee", async (req, res, next) => {
   }
 });
 
-router.get("/orders", async (_req, res, next) => {
+router.get("/orders", async (req, res, next) => {
   try {
-    const orders = await db.select().from(ordersTable).orderBy(desc(ordersTable.createdAt));
+    const owned = customerOrderCondition(req);
+    if (!owned) return res.json([]);
+    const orders = await db.select().from(ordersTable).where(owned).orderBy(desc(ordersTable.createdAt));
     res.json(orders.map(orderDto));
   } catch (error) {
     return next(error);
@@ -600,7 +621,11 @@ router.get("/orders", async (_req, res, next) => {
 router.get("/orders/:id", async (req, res, next) => {
   try {
     const { id } = GetOrderParams.parse(req.params);
-    const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, id)).limit(1);
+    const owned = customerOrderCondition(req);
+    // Somebody else's order answers exactly like a missing one, so order ids
+    // cannot be probed.
+    if (!owned) return res.status(404).json({ error: "Order not found" });
+    const [order] = await db.select().from(ordersTable).where(and(eq(ordersTable.id, id), owned)).limit(1);
     if (!order) return res.status(404).json({ error: "Order not found" });
     return res.json(orderDto(order));
   } catch (error) {
@@ -618,6 +643,9 @@ router.post("/orders", async (req, res, next) => {
       return;
     }
     const phone = normalizePhone(input.phone);
+    // The order belongs to this browser. A returning customer keeps their
+    // secret, a new one gets one, and the cookie is refreshed either way.
+    const customerToken = readCustomerToken(req) ?? createCustomerToken();
     const order = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${phone}))`);
       const [previousOrders] = await tx
@@ -635,6 +663,9 @@ router.post("/orders", async (req, res, next) => {
         .for("update");
       const productById = new Map(products.map((row) => [row.product.id, row]));
       if (products.length !== productIds.length) invalidOrder("Mahsulot topilmadi");
+      // A cart can outlive a product being hidden; the shop no longer sells it.
+      const hidden = products.find((row) => !row.product.active);
+      if (hidden) invalidOrder(`"${hidden.product.name}" hozir sotuvda yo‘q. Uni savatdan olib tashlang.`);
 
       const aggregates = new Map<number, {
         mode: PurchaseMode;
@@ -739,11 +770,20 @@ router.post("/orders", async (req, res, next) => {
       if (subtotalCents + deliveryFeeCents > MAX_MONEY_CENTS) {
         invalidOrder("Buyurtma jami chegaradan tashqari");
       }
-      const orderNumber = `QE-${Date.now().toString().slice(-6)}`;
+      // Numbered from the id sequence, so two orders can never share a number.
+      // The last six digits of the clock, used before, repeated every 16.7
+      // minutes and a repeat failed the order on the unique constraint. Seven
+      // digits so a new number can never equal an old six-digit one.
+      const { rows: [{ id: orderId }] } = await tx.execute<{ id: string }>(
+        sql`select nextval(pg_get_serial_sequence('orders', 'id')) as id`,
+      );
+      const orderNumber = `QE-${String(orderId).padStart(7, "0")}`;
       const [created] = await tx
         .insert(ordersTable)
         .values({
+          id: Number(orderId),
           orderNumber,
+          customerTokenHash: hashCustomerToken(customerToken),
           customerName,
           phone,
           address: input.address,
@@ -763,6 +803,7 @@ router.post("/orders", async (req, res, next) => {
       }
       return created;
     });
+    setCustomerCookie(res, customerToken);
     const notification = await sendNewOrderNotification(order, await linkedTelegramChatIds());
     if (!notification.sent) {
       req.log.error({ error: notification.error, orderId: order.id }, "Telegram order notification failed");
@@ -1269,8 +1310,8 @@ router.get("/admin/dashboard", async (_req, res, next) => {
     await ensureSeedData();
     const orders = await db.select().from(ordersTable);
     const now = Date.now();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
+    // Midnight in Tashkent; the server's own clock is UTC.
+    const todayStart = tashkentDayStart(new Date(now));
     const weekStart = new Date(now - 7 * 24 * 60 * 60 * 1000);
     const monthStart = new Date(now - 30 * 24 * 60 * 60 * 1000);
     const recent = orders.filter((order) => order.createdAt >= todayStart);
@@ -1283,7 +1324,8 @@ router.get("/admin/dashboard", async (_req, res, next) => {
     const [{ count: lowStockCount }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(productsTable)
-      .where(sql`${productsTable.stock} <= 5`);
+      // A hidden product is not for sale, so it is not a restocking signal.
+      .where(and(sql`${productsTable.stock} <= 5`, eq(productsTable.active, true)));
     res.json({
       today_orders: recent.length,
       new_orders: statuses("new"),
@@ -1306,12 +1348,13 @@ router.get("/admin/dashboard", async (_req, res, next) => {
 router.get("/admin/orders", async (req, res, next) => {
   try {
     const query = ListAdminOrdersQueryParams.parse(req.query);
-    const orders = await db
-      .select()
+    const rows = await db
+      .select({ order: ordersTable, changedBy: adminsTable.displayName })
       .from(ordersTable)
+      .leftJoin(adminsTable, eq(ordersTable.statusChangedBy, adminsTable.id))
       .where(query.status ? eq(ordersTable.status, query.status) : undefined)
       .orderBy(desc(ordersTable.createdAt));
-    res.json(orders.map(orderDto));
+    res.json(rows.map(({ order, changedBy }) => adminOrderDto(order, changedBy)));
   } catch (error) {
     return next(error);
   }
@@ -1321,13 +1364,36 @@ router.patch("/admin/orders/:id/status", async (req, res, next) => {
   try {
     const { id } = UpdateAdminOrderStatusParams.parse(req.params);
     const { status } = UpdateAdminOrderStatusBody.parse(req.body);
-    const [order] = await db
-      .update(ordersTable)
-      .set({ status })
-      .where(eq(ordersTable.id, id))
-      .returning();
-    if (!order) return res.status(404).json({ error: "Order not found" });
-    return res.json(orderDto(order));
+    const admin = signedInAdmin(res);
+    const outcome = await db.transaction(async (tx) => {
+      // Locked so two admins pressing at once cannot both cancel the same
+      // order and return its stock twice.
+      const [current] = await tx.select().from(ordersTable).where(eq(ordersTable.id, id)).limit(1).for("update");
+      if (!current) return { kind: "missing" as const };
+      if (!canChangeStatus(current.status, status)) return { kind: "refused" as const, from: current.status };
+
+      if (status === "cancelled") {
+        // What the order took out of stock goes back. A product deleted since
+        // simply has nothing to return to.
+        for (const [productId, quantity] of stockToRestore(current.items)) {
+          await tx
+            .update(productsTable)
+            .set({ stock: sql`${productsTable.stock} + ${quantity}` })
+            .where(eq(productsTable.id, productId));
+        }
+      }
+      const [order] = await tx
+        .update(ordersTable)
+        .set({ status, statusChangedBy: admin.id, statusChangedAt: new Date() })
+        .where(eq(ordersTable.id, id))
+        .returning();
+      return { kind: "updated" as const, order };
+    });
+    if (outcome.kind === "missing") return res.status(404).json({ error: "Order not found" });
+    if (outcome.kind === "refused") {
+      return res.status(409).json({ error: "Buyurtma holatini bunday o‘zgartirib bo‘lmaydi", current_status: outcome.from });
+    }
+    return res.json(adminOrderDto(outcome.order, admin.displayName));
   } catch (error) {
     return next(error);
   }

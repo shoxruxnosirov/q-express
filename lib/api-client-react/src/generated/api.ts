@@ -405,7 +405,8 @@ export const getListOrdersUrl = () => {
 }
 
 /**
- * @summary List the current customer's orders
+ * Only orders created while this browser held the customer cookie. There are no accounts, so nothing else identifies the customer; a browser without the cookie gets an empty list.
+ * @summary List the orders placed from this browser
  */
 export const listOrders = async ( options?: Parameters<typeof customFetch>[1]): Promise<Order[]> => {
 
@@ -452,7 +453,7 @@ export type ListOrdersQueryError = ErrorType<unknown>
 
 
 /**
- * @summary List the current customer's orders
+ * @summary List the orders placed from this browser
  */
 
 export function useListOrders<TData = Awaited<ReturnType<typeof listOrders>>, TError = ErrorType<unknown>>(
@@ -654,7 +655,7 @@ export const getGetOrderUrl = (id: number,) => {
 }
 
 /**
- * @summary Get an order
+ * @summary Get an order placed from this browser
  */
 export const getOrder = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<Order> => {
 
@@ -701,7 +702,7 @@ export type GetOrderQueryError = ErrorType<void>
 
 
 /**
- * @summary Get an order
+ * @summary Get an order placed from this browser
  */
 
 export function useGetOrder<TData = Awaited<ReturnType<typeof getOrder>>, TError = ErrorType<void>>(
@@ -1818,7 +1819,7 @@ return customFetch<Order>(getUpdateAdminOrderStatusUrl(id),
 
 export const getUpdateAdminOrderStatusMutationKey = () => ['updateAdminOrderStatus'] as const;
 
-export const getUpdateAdminOrderStatusMutationOptions = <TError = ErrorType<unknown>,
+export const getUpdateAdminOrderStatusMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminOrderStatus>>, TError,UpdateAdminOrderStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateAdminOrderStatus>>, TError,UpdateAdminOrderStatusMutationVariables, TContext> => {
 
@@ -1847,13 +1848,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateAdminOrderStatusMutationResult = NonNullable<Awaited<ReturnType<typeof updateAdminOrderStatus>>>
     export type UpdateAdminOrderStatusMutationBody = BodyType<OrderStatusInput>
-    export type UpdateAdminOrderStatusMutationError = ErrorType<unknown>
+    export type UpdateAdminOrderStatusMutationError = ErrorType<void>
     export type UpdateAdminOrderStatusMutationVariables = {id: number;data: BodyType<OrderStatusInput>}
 
     /**
  * @summary Update an order status
  */
-export const useUpdateAdminOrderStatus = <TError = ErrorType<unknown>,
+export const useUpdateAdminOrderStatus = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminOrderStatus>>, TError,UpdateAdminOrderStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof updateAdminOrderStatus>>,

@@ -108,6 +108,10 @@ export interface Order {
   delivery_fee: number;
   total: number;
   created_at: string;
+  /** Admin who last changed the status. Admin endpoints only. */
+  status_changed_by?: string | null;
+  /** When the status last changed. Admin endpoints only. */
+  status_changed_at?: string | null;
 }
 
 export type OrderInputItemsItemPurchaseMode = typeof OrderInputItemsItemPurchaseMode[keyof typeof OrderInputItemsItemPurchaseMode];

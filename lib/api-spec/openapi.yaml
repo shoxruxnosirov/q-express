@@ -99,7 +99,11 @@ paths:
     get:
       operationId: listOrders
       tags: [orders]
-      summary: List the current customer's orders
+      summary: List the orders placed from this browser
+      description: >-
+        Only orders created while this browser held the customer cookie. There
+        are no accounts, so nothing else identifies the customer; a browser
+        without the cookie gets an empty list.
       responses:
         "200":
           description: Orders
@@ -151,7 +155,7 @@ paths:
     get:
       operationId: getOrder
       tags: [orders]
-      summary: Get an order
+      summary: Get an order placed from this browser
       parameters:
         - name: id
           in: path
@@ -166,7 +170,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Order"
         "404":
-          description: Order not found
+          description: No such order, or it was placed from another browser
   /admin/auth:
     post:
       operationId: adminLogin
@@ -427,6 +431,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Order"
+        "404":
+          description: Order not found
+        "409":
+          description: That status cannot follow the current one
   /admin/categories:
     post:
       operationId: createAdminCategory
@@ -760,6 +768,15 @@ components:
         created_at:
           type: string
           format: date-time
+        status_changed_by:
+          type: string
+          nullable: true
+          description: Admin who last changed the status. Admin endpoints only.
+        status_changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the status last changed. Admin endpoints only.
     OrderInput:
       type: object
       required: [customer_name, items, address, phone, payment_method]

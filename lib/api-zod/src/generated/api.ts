@@ -88,7 +88,8 @@ export const GetProductResponse = zod.object({
 
 
 /**
- * @summary List the current customer's orders
+ * Only orders created while this browser held the customer cookie. There are no accounts, so nothing else identifies the customer; a browser without the cookie gets an empty list.
+ * @summary List the orders placed from this browser
  */
 export const listOrdersResponseItemsItemQuantityMin = 0.001;
 export const listOrdersResponseItemsItemQuantityMultipleOf = 0.000001;
@@ -119,7 +120,9 @@ export const ListOrdersResponseItem = zod.object({
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
 export const ListOrdersResponse = zod.array(ListOrdersResponseItem)
 
@@ -185,7 +188,9 @@ export const CreateOrderResponse = zod.object({
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
 
 
@@ -208,7 +213,7 @@ export const GetDeliveryFeeEstimateResponse = zod.object({
 
 
 /**
- * @summary Get an order
+ * @summary Get an order placed from this browser
  */
 export const GetOrderParams = zod.object({
   "id": zod.coerce.number().int()
@@ -243,7 +248,9 @@ export const GetOrderResponse = zod.object({
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
 
 
@@ -543,7 +550,9 @@ export const ListAdminOrdersResponseItem = zod.object({
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
 export const ListAdminOrdersResponse = zod.array(ListAdminOrdersResponseItem)
 
@@ -588,7 +597,9 @@ export const UpdateAdminOrderStatusResponse = zod.object({
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
 
 

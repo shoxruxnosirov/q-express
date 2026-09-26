@@ -1,95 +1,50 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
-import { useAdminLogout, getGetAdminDashboardQueryKey, getListAdminOrdersQueryKey, getGetAdminSessionQueryKey, useGetAdminSession } from '@workspace/api-client-react';
+import { ReactNode, useEffect } from 'react';
+import { getGetAdminSessionQueryKey, useGetAdminSession } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { AdminLogin } from './AdminLogin';
 import { PasswordChangeForm } from './AdminProfile';
 
+// Every admin now has their own password and an eight-hour session, so the
+// dashboard trusts a live session instead of signing out on every visit as it
+// did with the one shared code. "Chiqish" still ends it, and the server ends
+// it everywhere when the password changes or the admin is removed.
 export function AdminGate({ children }: { children: ReactNode }) {
-  const [unlocked, setUnlocked] = useState(false);
-  const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading');
-  const logout = useAdminLogout();
   const qc = useQueryClient();
-  const inflight = useRef(false);
-  const mounted = useRef(true);
-
   const session = useGetAdminSession({ query: { queryKey: getGetAdminSessionQueryKey(), retry: false } });
 
-  const resetSession = () => {
-    if (inflight.current) return;
-    inflight.current = true;
-    setStatus('loading');
-    setUnlocked(false);
-
-    logout.mutate(undefined, {
-      onSuccess: () => {
-        qc.removeQueries({ queryKey: getGetAdminDashboardQueryKey() });
-        qc.removeQueries({ queryKey: getListAdminOrdersQueryKey() });
-        qc.removeQueries({ queryKey: getGetAdminSessionQueryKey() });
-        if (mounted.current) setStatus('ready');
-      },
-      onError: (err: any) => {
-        if (err?.response?.status === 401 || err?.status === 401) {
-          qc.removeQueries({ queryKey: getGetAdminDashboardQueryKey() });
-          qc.removeQueries({ queryKey: getListAdminOrdersQueryKey() });
-          qc.removeQueries({ queryKey: getGetAdminSessionQueryKey() });
-          if (mounted.current) setStatus('ready');
-        } else {
-          if (mounted.current) setStatus('error');
-        }
-      },
-      onSettled: () => {
-        inflight.current = false;
-      }
-    });
-  };
-
+  // A page restored from the back/forward cache may hold a session that has
+  // since ended, so ask again.
   useEffect(() => {
-    mounted.current = true;
-    resetSession();
-
     const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) {
-        resetSession();
-      }
+      if (event.persisted) qc.invalidateQueries({ queryKey: getGetAdminSessionQueryKey() });
     };
     window.addEventListener('pageshow', handlePageShow);
-    return () => {
-      mounted.current = false;
-      window.removeEventListener('pageshow', handlePageShow);
-    };
-  }, []);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, [qc]);
 
-  useEffect(() => {
-    if (unlocked && (session.isError || (session.data && !session.data.authenticated))) {
-      setUnlocked(false);
-    }
-  }, [unlocked, session.isError, session.data]);
+  if (session.isLoading) {
+    return <div className="flex min-h-[50vh] items-center justify-center"><LoaderCircle className="animate-spin text-[hsl(var(--primary))]" size={32} /></div>;
+  }
 
-  if (status === 'loading') return <div className="flex min-h-[50vh] items-center justify-center"><LoaderCircle className="animate-spin text-[hsl(var(--primary))]" size={32} /></div>;
+  if (session.isError) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4">
+        <p className="font-bold text-[hsl(var(--destructive))]">Server bilan aloqa yo‘q</p>
+        <button onClick={() => session.refetch()} className="rounded-xl bg-[hsl(var(--primary))] px-4 py-2 font-bold text-white transition hover:opacity-90">Qayta urinish</button>
+      </div>
+    );
+  }
 
-  if (status === 'error') return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4">
-      <p className="font-bold text-[hsl(var(--destructive))]">Sessiyani tozalashda xatolik</p>
-      <button onClick={() => resetSession()} className="rounded-xl bg-[hsl(var(--primary))] px-4 py-2 font-bold text-white transition hover:opacity-90">Qayta urinish</button>
-    </div>
-  );
-
-  if (!unlocked) {
-    return <AdminLogin onSuccess={signedIn => {
-      // The cached session still says "not authenticated" from when the page
-      // opened, and the effect above would read that before any refetch lands
-      // and lock the panel again, so the first correct login seemed to fail.
-      // The server has just answered with the session, so record it before
-      // unlocking.
-      qc.setQueryData(getGetAdminSessionQueryKey(), signedIn);
-      setUnlocked(true);
-    }} />;
+  if (!session.data?.authenticated) {
+    // The server has just answered with the session; putting it in the cache
+    // unlocks the panel at once, with no refetch to wait for or race against.
+    return <AdminLogin onSuccess={signedIn => qc.setQueryData(getGetAdminSessionQueryKey(), signedIn)} />;
   }
 
   // Signed in with a temporary password: the server refuses everything else
   // until it is replaced, so ask for that before showing the panel.
-  if (session.data?.admin?.must_change_password) {
+  if (session.data.admin?.must_change_password) {
     return (
       <div className="container-wide flex min-h-[65vh] items-center justify-center py-10">
         <div className="w-full max-w-md">
