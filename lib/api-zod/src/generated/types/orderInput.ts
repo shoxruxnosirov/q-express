@@ -21,4 +21,6 @@ export interface OrderInput {
   /** @minLength 7 */
   phone: string;
   payment_method: OrderInputPaymentMethod;
+  /** A delivery slot from StoreStatus.slots for an order placed ahead. Omitted or null means as soon as possible, which needs the shop to be open now. */
+  scheduled_for?: Date | null;
 }

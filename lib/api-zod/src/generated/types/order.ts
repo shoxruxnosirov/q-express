@@ -22,6 +22,8 @@ export interface Order {
   delivery_fee: number;
   total: number;
   created_at: Date;
+  /** When a pre-order is to be delivered; null for as soon as possible. */
+  scheduled_for?: Date | null;
   /** Admin who last changed the status. Admin endpoints only. */
   status_changed_by?: string | null;
   /** When the status last changed. Admin endpoints only. */

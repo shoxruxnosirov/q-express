@@ -58,6 +58,8 @@ export * from './orderStatusInput';
 export * from './orderStatusInputStatus';
 export * from './product';
 export * from './productUnit';
+export * from './storeHoursInput';
+export * from './storeStatus';
 export * from './telegramLink';
 export * from './telegramSignInInput';
 export * from './uploadTicket';

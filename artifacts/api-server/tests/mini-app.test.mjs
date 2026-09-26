@@ -78,3 +78,33 @@ test("the welcome carries the banner, the promises, real discounts and Mini App 
   ]);
   assert.ok(!welcomeMessage("https://x.test", []).caption.includes("Bugungi chegirmalar"), "no deals, no heading");
 });
+
+test("the welcome states the opening hours when given", () => {
+  const withHours = welcomeMessage("https://x.test", [], { openTime: "06:00", closeTime: "23:00" });
+  assert.ok(withHours.caption.includes("Ish vaqti: <b>06:00–23:00</b>"));
+  assert.ok(!welcomeMessage("https://x.test", []).caption.includes("Ish vaqti"));
+});
+
+test("a pre-order notification leads with its delivery time", async () => {
+  configure();
+  process.env.TELEGRAM_ADMIN_CHAT_ID = "5550001";
+  const { sendNewOrderNotification } = await import("../src/lib/telegram.ts");
+  let text;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    text = JSON.parse(init.body).text;
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  try {
+    const order = { id: 1, orderNumber: "QE-1", customerName: "A", phone: "998901112233", address: "x", items: [], paymentMethod: "cash", subtotal: 0, deliveryFee: 0, total: 0 };
+    await sendNewOrderNotification({ ...order, scheduledLabel: "28-sentabr, 06:00" });
+    const [first, second] = text.split("\n");
+    assert.equal(first, "<b>YANGI BUYURTMA · OLDINDAN</b>");
+    assert.equal(second, "⏰ <b>Yetkazish vaqti:</b> 28-sentabr, 06:00");
+    await sendNewOrderNotification(order);
+    assert.equal(text.split("\n")[0], "<b>YANGI BUYURTMA</b>", "an order for now looks as before");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.TELEGRAM_ADMIN_CHAT_ID;
+  }
+});

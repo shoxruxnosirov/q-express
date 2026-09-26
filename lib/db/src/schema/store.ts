@@ -112,6 +112,20 @@ export const ordersTable = pgTable("orders", {
   customerTokenHash: text("customer_token_hash"),
   statusChangedBy: integer("status_changed_by").references(() => adminsTable.id, { onDelete: "set null" }),
   statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+  // A pre-order's chosen delivery time; NULL means as soon as possible.
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+});
+
+// The shop's one row of settings. Times are "HH:MM" on the Tashkent clock; a
+// closing time at or before the opening time runs past midnight.
+export const storeSettingsTable = pgTable("store_settings", {
+  id: integer("id").primaryKey().default(1),
+  openTime: text("open_time").notNull().default("06:00"),
+  closeTime: text("close_time").notNull().default("23:00"),
+  // An admin's switch for "no orders at all right now", hours or not.
+  acceptingOrders: boolean("accepting_orders").notNull().default(true),
+  updatedBy: integer("updated_by").references(() => adminsTable.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // One row per person who can open the operator dashboard. Passwords are scrypt

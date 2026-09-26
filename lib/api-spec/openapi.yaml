@@ -780,6 +780,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatMessage"
+  /store/status:
+    get:
+      operationId: getStoreStatus
+      tags: [orders]
+      summary: Whether the shop takes orders now, and the times it can deliver
+      responses:
+        "200":
+          description: Opening hours, open-now, and the bookable delivery slots
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreStatus"
+  /admin/store-hours:
+    put:
+      operationId: updateStoreHours
+      tags: [admin]
+      summary: Set the opening hours, or pause taking orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreHoursInput"
+      responses:
+        "200":
+          description: The new status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreStatus"
+        "400":
+          description: Invalid time
   /leaderboard/weekly:
     get:
       operationId: getWeeklyLeaderboard
@@ -908,6 +940,11 @@ components:
         created_at:
           type: string
           format: date-time
+        scheduled_for:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a pre-order is to be delivered; null for as soon as possible.
         status_changed_by:
           type: string
           nullable: true
@@ -954,6 +991,14 @@ components:
         payment_method:
           type: string
           enum: [cash, click, payme, uzcard, humo]
+        scheduled_for:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            A delivery slot from StoreStatus.slots for an order placed ahead.
+            Omitted or null means as soon as possible, which needs the shop to
+            be open now.
     OrderStatusInput:
       type: object
       required: [status]
@@ -1172,6 +1217,45 @@ components:
           description: >-
             True when this would be the phone's first order but the phone is
             not verified on this browser, so the fee applies until it is.
+    StoreStatus:
+      type: object
+      required: [open_now, accepting_orders, open_time, close_time, next_open_at, slots]
+      properties:
+        open_now:
+          type: boolean
+          description: Open by the hours and not paused, so an order for right now is taken.
+        accepting_orders:
+          type: boolean
+          description: False while an admin has paused all orders.
+        open_time:
+          type: string
+          example: "06:00"
+        close_time:
+          type: string
+          example: "23:00"
+        next_open_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the shop next opens, if it is closed now.
+        slots:
+          type: array
+          description: Delivery times a pre-order may choose, soonest first.
+          items:
+            type: string
+            format: date-time
+    StoreHoursInput:
+      type: object
+      required: [open_time, close_time, accepting_orders]
+      properties:
+        open_time:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        close_time:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        accepting_orders:
+          type: boolean
     DeliveryAddress:
       type: object
       required: [dom, xonadon]

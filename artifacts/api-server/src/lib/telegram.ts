@@ -42,6 +42,9 @@ type TelegramOrder = {
   subtotal: string | number | null;
   deliveryFee: string | number | null;
   total: string | number | null;
+  // "28-sentabr, 06:00" for a pre-order, formatted by the caller on the
+  // Tashkent clock; absent for as soon as possible.
+  scheduledLabel?: string;
 };
 
 function escapeHtml(value: string) {
@@ -376,7 +379,11 @@ function formatSum(value: number) {
 // The greeting a customer gets on /start: the brand banner, what the shop
 // promises, today's biggest discounts from the catalogue, and buttons that
 // open the site inside Telegram. Web-app buttons need no BotFather setup.
-export function welcomeMessage(baseUrl: string, offers: readonly WelcomeOffer[]) {
+export function welcomeMessage(
+  baseUrl: string,
+  offers: readonly WelcomeOffer[],
+  hours?: { openTime: string; closeTime: string },
+) {
   const root = baseUrl.replace(/\/+$/, "");
   const deals = offers
     .filter((offer) => offer.oldPrice !== null && offer.oldPrice > offer.price)
@@ -390,6 +397,7 @@ export function welcomeMessage(baseUrl: string, offers: readonly WelcomeOffer[])
     "Qorasuvda oziq-ovqat eshigingizgacha.",
     "",
     "⚡ <b>15–19 daqiqada</b> yetkazamiz",
+    ...(hours ? [`🕕 Ish vaqti: <b>${escapeHtml(hours.openTime)}–${escapeHtml(hours.closeTime)}</b>, yopiq paytda oldindan buyurtma bering`] : []),
     "🎁 <b>Birinchi yetkazish bepul</b> — raqamingizni tasdiqlang",
     "💵 Naqd, Click, Payme, Uzcard yoki Humo",
     ...(deals.length ? ["", "<b>Bugungi chegirmalar:</b>", ...deals] : []),
@@ -410,10 +418,15 @@ export function welcomeMessage(baseUrl: string, offers: readonly WelcomeOffer[])
   };
 }
 
-export async function sendWelcome(chatId: string, baseUrl: string, offers: readonly WelcomeOffer[]) {
+export async function sendWelcome(
+  chatId: string,
+  baseUrl: string,
+  offers: readonly WelcomeOffer[],
+  hours?: { openTime: string; closeTime: string },
+) {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
-  const { sent, error } = await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, ...welcomeMessage(baseUrl, offers) });
+  const { sent, error } = await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, ...welcomeMessage(baseUrl, offers, hours) });
   return error === undefined ? { sent } : { sent, error };
 }
 
@@ -566,7 +579,8 @@ export async function sendNewOrderNotification(
     : "• Mahsulotlar ro‘yxati mavjud emas";
 
   const text = [
-    "<b>YANGI BUYURTMA</b>",
+    order.scheduledLabel ? "<b>YANGI BUYURTMA · OLDINDAN</b>" : "<b>YANGI BUYURTMA</b>",
+    ...(order.scheduledLabel ? [`⏰ <b>Yetkazish vaqti:</b> ${escapeHtml(order.scheduledLabel)}`] : []),
     "",
     `<b>Order:</b> #${escapeHtml(order.orderNumber)}`,
     `<b>Mijoz:</b> ${escapeHtml(order.customerName)}`,

@@ -12,6 +12,7 @@ import {
   StartChatSessionBody,
   GetDeliveryFeeEstimateQueryParams,
   GetOrderParams,
+  UpdateStoreHoursBody,
   GetProductParams,
   ListAdminOrdersQueryParams,
   ListProductsQueryParams,
@@ -29,8 +30,18 @@ import {
   customerSessionsTable,
   ordersTable,
   productsTable,
+  storeSettingsTable,
   usersTable,
 } from "@workspace/db/schema";
+import {
+  deliverySlots,
+  formatTashkent,
+  isOpenNow,
+  isValidTime,
+  nextOpenAt,
+  scheduleProblem,
+  type StoreHours,
+} from "../lib/store-hours";
 import {
   acknowledgeAdminReply,
   parseAdminUpdate,
@@ -539,6 +550,28 @@ function orderDto(order: typeof ordersTable.$inferSelect) {
     delivery_fee: money(order.deliveryFee)!,
     total: money(order.total)!,
     created_at: order.createdAt,
+    scheduled_for: order.scheduledFor ? order.scheduledFor.toISOString() : null,
+  };
+}
+
+async function loadStoreHours(): Promise<StoreHours> {
+  const [row] = await db.select().from(storeSettingsTable).where(eq(storeSettingsTable.id, 1)).limit(1);
+  // The migration inserts the row; the defaults only cover a database that
+  // has not run it yet.
+  return row
+    ? { openTime: row.openTime, closeTime: row.closeTime, acceptingOrders: row.acceptingOrders }
+    : { openTime: "06:00", closeTime: "23:00", acceptingOrders: true };
+}
+
+function storeStatusDto(hours: StoreHours, now = new Date()) {
+  const next = nextOpenAt(hours, now);
+  return {
+    open_now: isOpenNow(hours, now),
+    accepting_orders: hours.acceptingOrders,
+    open_time: hours.openTime,
+    close_time: hours.closeTime,
+    next_open_at: hours.acceptingOrders && next ? next.toISOString() : null,
+    slots: deliverySlots(hours, now).map((slot) => slot.toISOString()),
   };
 }
 
@@ -705,6 +738,26 @@ router.post("/orders", async (req, res, next) => {
       res.status(400).json({ error: "Telefon raqam noto‘g‘ri. Masalan: +998 90 123 45 67" });
       return;
     }
+    // Right now only while open; ahead of time only for a slot inside the
+    // hours. Checked before anything is written or reserved.
+    const hours = await loadStoreHours();
+    const scheduledFor = input.scheduled_for ? new Date(input.scheduled_for) : null;
+    if (!hours.acceptingOrders) {
+      res.status(409).json({ error: "Hozir buyurtma qabul qilinmayapti. Birozdan keyin urinib ko‘ring." });
+      return;
+    }
+    if (scheduledFor) {
+      const problem = scheduleProblem(scheduledFor, hours);
+      if (problem) {
+        res.status(409).json({ error: problem });
+        return;
+      }
+    } else if (!isOpenNow(hours)) {
+      res.status(409).json({
+        error: `Do‘kon hozir yopiq. Ish vaqti ${hours.openTime}–${hours.closeTime}. Yetkazish vaqtini tanlab, oldindan buyurtma bering.`,
+      });
+      return;
+    }
     // The order belongs to a customer account. A browser without one gets an
     // unverified account inside the same transaction, so a rejected order
     // never leaves an empty account behind.
@@ -864,6 +917,7 @@ router.post("/orders", async (req, res, next) => {
           id: Number(orderId),
           orderNumber,
           userId,
+          scheduledFor,
           customerName,
           phone,
           address: input.address,
@@ -885,7 +939,10 @@ router.post("/orders", async (req, res, next) => {
     });
     if (newToken) setCustomerCookie(res, newToken);
     if (order.userId) await rememberOrderAddress(order.userId, order.address);
-    const notification = await sendNewOrderNotification(order, await linkedTelegramChatIds());
+    const notification = await sendNewOrderNotification(
+      { ...order, scheduledLabel: order.scheduledFor ? formatTashkent(order.scheduledFor) : undefined },
+      await linkedTelegramChatIds(),
+    );
     if (!notification.sent) {
       req.log.error({ error: notification.error, orderId: order.id }, "Telegram order notification failed");
     }
@@ -894,6 +951,39 @@ router.post("/orders", async (req, res, next) => {
     if (error instanceof OrderValidationError) {
       return res.status(400).json({ error: error.message });
     }
+    return next(error);
+  }
+});
+
+router.get("/store/status", async (_req, res, next) => {
+  try {
+    return res.json(storeStatusDto(await loadStoreHours()));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Behind the /admin guard. Any admin may change the hours or pause orders:
+// the person on shift is the one who knows the shop cannot deliver.
+router.put("/admin/store-hours", async (req, res, next) => {
+  try {
+    const input = UpdateStoreHoursBody.parse(req.body);
+    if (!isValidTime(input.open_time) || !isValidTime(input.close_time)) {
+      return res.status(400).json({ error: "Vaqt SS:DD ko‘rinishida bo‘lsin, masalan 06:00" });
+    }
+    const values = {
+      openTime: input.open_time,
+      closeTime: input.close_time,
+      acceptingOrders: input.accepting_orders,
+      updatedBy: signedInAdmin(res).id,
+      updatedAt: new Date(),
+    };
+    await db
+      .insert(storeSettingsTable)
+      .values({ id: 1, ...values })
+      .onConflictDoUpdate({ target: storeSettingsTable.id, set: values });
+    return res.json(storeStatusDto(await loadStoreHours()));
+  } catch (error) {
     return next(error);
   }
 });
@@ -1063,6 +1153,7 @@ router.post("/telegram/webhook", async (req, res, next) => {
         update.chatId,
         publicBaseUrl(req),
         offers.map((offer) => ({ name: offer.name, price: Number(offer.price), oldPrice: offer.oldPrice === null ? null : Number(offer.oldPrice) })),
+        await loadStoreHours(),
       );
       if (!welcomed.sent) req.log.warn({ reason: welcomed.error }, "Telegram welcome failed");
       return res.json({ ok: true });

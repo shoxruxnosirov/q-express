@@ -54,6 +54,8 @@ import type {
   OrderInput,
   OrderStatusInput,
   Product,
+  StoreHoursInput,
+  StoreStatus,
   TelegramLink,
   TelegramSignInInput,
   UploadTicket,
@@ -3516,6 +3518,171 @@ export const useSendAdminChatMessage = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getSendAdminChatMessageMutationOptions(options));
+    }
+
+export const getGetStoreStatusUrl = () => {
+
+
+
+
+  return `/api/store/status`
+}
+
+/**
+ * @summary Whether the shop takes orders now, and the times it can deliver
+ */
+export const getStoreStatus = async ( options?: Parameters<typeof customFetch>[1]): Promise<StoreStatus> => {
+
+  return customFetch<StoreStatus>(getGetStoreStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStoreStatusQueryKey = () => {
+    return [
+    `/api/store/status`
+    ] as const;
+    }
+
+
+export const getGetStoreStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStoreStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStoreStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStoreStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStoreStatus>>> = ({ signal }) => getStoreStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStoreStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStoreStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getStoreStatus>>>
+export type GetStoreStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Whether the shop takes orders now, and the times it can deliver
+ */
+
+export function useGetStoreStatus<TData = Awaited<ReturnType<typeof getStoreStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStoreStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStoreStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateStoreHoursUrl = () => {
+
+
+
+
+  return `/api/admin/store-hours`
+}
+
+/**
+ * @summary Set the opening hours, or pause taking orders
+ */
+export const updateStoreHours = async (storeHoursInput: StoreHoursInput, options?: Parameters<typeof customFetch>[1]): Promise<StoreStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<StoreStatus>(getUpdateStoreHoursUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(storeHoursInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateStoreHoursMutationKey = () => ['updateStoreHours'] as const;
+
+export const getUpdateStoreHoursMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStoreHours>>, TError,UpdateStoreHoursMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateStoreHours>>, TError,UpdateStoreHoursMutationVariables, TContext> => {
+
+const mutationKey = getUpdateStoreHoursMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateStoreHours>>, UpdateStoreHoursMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateStoreHours(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateStoreHoursMutationResult = NonNullable<Awaited<ReturnType<typeof updateStoreHours>>>
+    export type UpdateStoreHoursMutationBody = BodyType<StoreHoursInput>
+    export type UpdateStoreHoursMutationError = ErrorType<void>
+    export type UpdateStoreHoursMutationVariables = {data: BodyType<StoreHoursInput>}
+
+    /**
+ * @summary Set the opening hours, or pause taking orders
+ */
+export const useUpdateStoreHours = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStoreHours>>, TError,UpdateStoreHoursMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateStoreHours>>,
+        TError,
+        UpdateStoreHoursMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateStoreHoursMutationOptions(options));
     }
 
 export const getGetWeeklyLeaderboardUrl = () => {

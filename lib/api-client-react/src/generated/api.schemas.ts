@@ -108,6 +108,8 @@ export interface Order {
   delivery_fee: number;
   total: number;
   created_at: string;
+  /** When a pre-order is to be delivered; null for as soon as possible. */
+  scheduled_for?: string | null;
   /** Admin who last changed the status. Admin endpoints only. */
   status_changed_by?: string | null;
   /** When the status last changed. Admin endpoints only. */
@@ -155,6 +157,8 @@ export interface OrderInput {
   /** @minLength 7 */
   phone: string;
   payment_method: OrderInputPaymentMethod;
+  /** A delivery slot from StoreStatus.slots for an order placed ahead. Omitted or null means as soon as possible, which needs the shop to be open now. */
+  scheduled_for?: string | null;
 }
 
 export type OrderStatusInputStatus = typeof OrderStatusInputStatus[keyof typeof OrderStatusInputStatus];
@@ -373,6 +377,27 @@ export interface DeliveryFeeEstimate {
   is_first_order: boolean;
   /** True when this would be the phone's first order but the phone is not verified on this browser, so the fee applies until it is. */
   verification_required: boolean;
+}
+
+export interface StoreStatus {
+  /** Open by the hours and not paused, so an order for right now is taken. */
+  open_now: boolean;
+  /** False while an admin has paused all orders. */
+  accepting_orders: boolean;
+  open_time: string;
+  close_time: string;
+  /** When the shop next opens, if it is closed now. */
+  next_open_at: string | null;
+  /** Delivery times a pre-order may choose, soonest first. */
+  slots: string[];
+}
+
+export interface StoreHoursInput {
+  /** @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$ */
+  open_time: string;
+  /** @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$ */
+  close_time: string;
+  accepting_orders: boolean;
 }
 
 export interface DeliveryAddress {

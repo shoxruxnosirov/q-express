@@ -121,6 +121,7 @@ export const ListOrdersResponseItem = zod.object({
   "delivery_fee": zod.number(),
   "total": zod.number(),
   "created_at": zod.coerce.date(),
+  "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
   "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
@@ -156,7 +157,8 @@ export const CreateOrderBody = zod.object({
 })).min(1),
   "address": zod.string().min(createOrderBodyAddressMin),
   "phone": zod.string().min(createOrderBodyPhoneMin),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo'])
+  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "scheduled_for": zod.coerce.date().nullish().describe('A delivery slot from StoreStatus.slots for an order placed ahead. Omitted or null means as soon as possible, which needs the shop to be open now.')
 })
 
 export const createOrderResponseItemsItemQuantityMin = 0.001;
@@ -189,6 +191,7 @@ export const CreateOrderResponse = zod.object({
   "delivery_fee": zod.number(),
   "total": zod.number(),
   "created_at": zod.coerce.date(),
+  "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
   "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
@@ -250,6 +253,7 @@ export const GetOrderResponse = zod.object({
   "delivery_fee": zod.number(),
   "total": zod.number(),
   "created_at": zod.coerce.date(),
+  "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
   "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
@@ -759,6 +763,7 @@ export const ListAdminOrdersResponseItem = zod.object({
   "delivery_fee": zod.number(),
   "total": zod.number(),
   "created_at": zod.coerce.date(),
+  "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
   "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
@@ -806,6 +811,7 @@ export const UpdateAdminOrderStatusResponse = zod.object({
   "delivery_fee": zod.number(),
   "total": zod.number(),
   "created_at": zod.coerce.date(),
+  "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
   "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
 })
@@ -1108,6 +1114,42 @@ export const SendAdminChatMessageResponse = zod.object({
   "body": zod.string(),
   "created_at": zod.coerce.date(),
   "admin_name": zod.string().nullish().describe('Who wrote an operator message. Only present on the admin transcript, never shown to customers.')
+})
+
+
+/**
+ * @summary Whether the shop takes orders now, and the times it can deliver
+ */
+export const GetStoreStatusResponse = zod.object({
+  "open_now": zod.boolean().describe('Open by the hours and not paused, so an order for right now is taken.'),
+  "accepting_orders": zod.boolean().describe('False while an admin has paused all orders.'),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "next_open_at": zod.coerce.date().nullable().describe('When the shop next opens, if it is closed now.'),
+  "slots": zod.array(zod.coerce.date()).describe('Delivery times a pre-order may choose, soonest first.')
+})
+
+
+/**
+ * @summary Set the opening hours, or pause taking orders
+ */
+export const updateStoreHoursBodyOpenTimeRegExp = new RegExp('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+export const updateStoreHoursBodyCloseTimeRegExp = new RegExp('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+
+
+export const UpdateStoreHoursBody = zod.object({
+  "open_time": zod.string().regex(updateStoreHoursBodyOpenTimeRegExp),
+  "close_time": zod.string().regex(updateStoreHoursBodyCloseTimeRegExp),
+  "accepting_orders": zod.boolean()
+})
+
+export const UpdateStoreHoursResponse = zod.object({
+  "open_now": zod.boolean().describe('Open by the hours and not paused, so an order for right now is taken.'),
+  "accepting_orders": zod.boolean().describe('False while an admin has paused all orders.'),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "next_open_at": zod.coerce.date().nullable().describe('When the shop next opens, if it is closed now.'),
+  "slots": zod.array(zod.coerce.date()).describe('Delivery times a pre-order may choose, soonest first.')
 })
 
 
