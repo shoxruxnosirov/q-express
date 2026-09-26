@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, ImagePlus, LoaderCircle, Pencil, ShoppingBasket, Sparkles, Star, Trash2, X } from 'lucide-react';
+import { Eye, EyeOff, ImagePlus, LoaderCircle, PackageX, Pencil, ShoppingBasket, Sparkles, Star, Trash2, X } from 'lucide-react';
 import {
   createAdminUploadTicket,
   useDeleteAdminProduct,
@@ -151,18 +151,38 @@ export function AdminProductRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-  const [draft, setDraft] = useState({
-    category_id: String(product.category_id),
-    name: product.name,
-    description: product.description,
-    price: String(product.price),
-    old_price: product.old_price == null ? '' : String(product.old_price),
-    unit: product.unit as Unit,
-    stock: String(product.stock),
-    is_popular: product.is_popular,
-    is_new: product.is_new,
-    active: product.active,
+  const draftFrom = (current: AdminProduct) => ({
+    category_id: String(current.category_id),
+    name: current.name,
+    description: current.description,
+    price: String(current.price),
+    old_price: current.old_price == null ? '' : String(current.old_price),
+    unit: current.unit as Unit,
+    stock: String(current.stock),
+    is_popular: current.is_popular,
+    is_new: current.is_new,
+    active: current.active,
   });
+  const [draft, setDraft] = useState(() => draftFrom(product));
+  // The form is refilled from the product each time it opens. Otherwise a
+  // quick "Tugab qoldi", or an order that sold some, would leave the form
+  // holding the old stock, and saving it would quietly put that stock back.
+  const openEditor = () => {
+    setDraft(draftFrom(product));
+    setOpen(true);
+  };
+  const soldOut = product.stock <= 0;
+
+  const markSoldOut = () => {
+    if (!window.confirm(`"${product.name}" tugab qoldimi? Qoldiq 0 bo‘ladi va mijozlarga "Tugagan" deb ko‘rinadi.`)) return;
+    updateProduct.mutate(
+      { id: product.id, data: { stock: 0 } },
+      {
+        onSuccess: () => onDone(`"${product.name}" tugagan deb belgilandi.`),
+        onError: () => onError('Qoldiqni o‘zgartirib bo‘lmadi.'),
+      },
+    );
+  };
 
   const busy = uploading || updateProduct.isPending || deleteProduct.isPending;
 
@@ -250,6 +270,11 @@ export function AdminProductRow({
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-sm font-bold">
               {product.name}
+              {soldOut && (
+                <span data-testid={`badge-sold-out-${product.id}`} className="shrink-0 rounded-full bg-[#fdecea] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#8c1d18]">
+                  Tugagan
+                </span>
+              )}
               {!product.active && (
                 <span className="shrink-0 rounded-full bg-[hsl(var(--muted-foreground)/.18)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide">
                   Yashirin
@@ -264,11 +289,32 @@ export function AdminProductRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {soldOut ? (
+            <button
+              type="button"
+              data-testid={`button-restock-product-${product.id}`}
+              onClick={openEditor}
+              className="tap rounded-lg border border-[hsl(var(--primary)/.4)] px-2.5 py-2 text-[10px] font-bold text-[hsl(var(--primary))]"
+            >
+              Qoldiq kiritish
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label={`${product.name} tugab qoldi`}
+              data-testid={`button-sold-out-product-${product.id}`}
+              disabled={busy}
+              onClick={markSoldOut}
+              className="tap flex items-center gap-1 rounded-lg border border-[hsl(var(--border))] px-2.5 py-2 text-[10px] font-bold text-[#8c1d18] transition hover:border-[#b3261e] disabled:opacity-50"
+            >
+              <PackageX size={13} /> Tugab qoldi
+            </button>
+          )}
           <button
             type="button"
             aria-label={`${product.name} mahsulotini tahrirlash`}
             data-testid={`button-edit-product-${product.id}`}
-            onClick={() => (open ? close() : setOpen(true))}
+            onClick={() => (open ? close() : openEditor())}
             className="tap rounded-lg border border-[hsl(var(--border))] p-2 transition hover:border-[hsl(var(--primary))] hover:text-[hsl(var(--primary))]"
           >
             {open ? <X size={14} /> : <Pencil size={14} />}
