@@ -12,4 +12,6 @@ export interface ChatMessage {
   sender: ChatMessageSender;
   body: string;
   created_at: Date;
+  /** Who wrote an operator message. Only present on the admin transcript, never shown to customers. */
+  admin_name?: string | null;
 }

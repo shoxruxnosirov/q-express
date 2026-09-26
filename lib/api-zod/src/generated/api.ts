@@ -248,17 +248,207 @@ export const GetOrderResponse = zod.object({
 
 
 /**
- * @summary Sign in to the operator dashboard
+ * @summary Sign in with a username and password
  */
+export const adminLoginBodyUsernameMax = 64;
+
+export const adminLoginBodyPasswordMax = 128;
 
 
 
 export const AdminLoginBody = zod.object({
-  "code": zod.string().min(1)
+  "username": zod.string().min(1).max(adminLoginBodyUsernameMax),
+  "password": zod.string().min(1).max(adminLoginBodyPasswordMax)
 })
 
 export const AdminLoginResponse = zod.object({
-  "authenticated": zod.boolean()
+  "authenticated": zod.boolean(),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+}).optional()
+})
+
+
+/**
+ * Only for a super admin created by migration without a password. Proving the deployment's ADMIN_ACCESS_CODE is what authorises it.
+ * @summary Set a seeded super admin's first password
+ */
+export const adminSetupBodyUsernameMax = 64;
+
+export const adminSetupBodyAccessCodeMax = 256;
+
+export const adminSetupBodyNewPasswordMin = 8;
+export const adminSetupBodyNewPasswordMax = 128;
+
+
+
+export const AdminSetupBody = zod.object({
+  "username": zod.string().min(1).max(adminSetupBodyUsernameMax),
+  "access_code": zod.string().min(1).max(adminSetupBodyAccessCodeMax),
+  "new_password": zod.string().min(adminSetupBodyNewPasswordMin).max(adminSetupBodyNewPasswordMax)
+})
+
+export const AdminSetupResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+}).optional()
+})
+
+
+/**
+ * @summary Change the signed-in admin's password
+ */
+export const changeOwnAdminPasswordBodyCurrentPasswordMax = 128;
+
+export const changeOwnAdminPasswordBodyNewPasswordMin = 8;
+export const changeOwnAdminPasswordBodyNewPasswordMax = 128;
+
+
+
+export const ChangeOwnAdminPasswordBody = zod.object({
+  "current_password": zod.string().min(1).max(changeOwnAdminPasswordBodyCurrentPasswordMax),
+  "new_password": zod.string().min(changeOwnAdminPasswordBodyNewPasswordMin).max(changeOwnAdminPasswordBodyNewPasswordMax)
+})
+
+export const ChangeOwnAdminPasswordResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+}).optional()
+})
+
+
+/**
+ * @summary Create a one-time link that connects this admin's Telegram
+ */
+export const CreateTelegramLinkResponse = zod.object({
+  "url": zod.string(),
+  "expires_at": zod.coerce.date()
+})
+
+
+/**
+ * @summary Stop Telegram notifications for this admin
+ */
+export const UnlinkTelegramResponse = zod.object({
+  "authenticated": zod.boolean(),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+}).optional()
+})
+
+
+/**
+ * @summary List every admin account (super admins only)
+ */
+export const ListAdminsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+})
+export const ListAdminsResponse = zod.array(ListAdminsResponseItem)
+
+
+/**
+ * @summary Create an admin with a temporary password (super admins only)
+ */
+export const createAdminBodyUsernameRegExp = new RegExp('^[a-z0-9_.-]{3,32}$');
+export const createAdminBodyDisplayNameMin = 2;
+export const createAdminBodyDisplayNameMax = 60;
+
+export const createAdminBodyTemporaryPasswordMin = 8;
+export const createAdminBodyTemporaryPasswordMax = 128;
+
+
+
+export const CreateAdminBody = zod.object({
+  "username": zod.string().regex(createAdminBodyUsernameRegExp),
+  "display_name": zod.string().min(createAdminBodyDisplayNameMin).max(createAdminBodyDisplayNameMax),
+  "role": zod.enum(['super_admin', 'admin']),
+  "temporary_password": zod.string().min(createAdminBodyTemporaryPasswordMin).max(createAdminBodyTemporaryPasswordMax)
+})
+
+export const CreateAdminResponse = zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+})
+
+
+/**
+ * @summary Delete an admin (super admins only; never the last super admin)
+ */
+export const DeleteAdminParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteAdminResponse = zod.void()
+
+
+/**
+ * @summary Give an admin a new temporary password (super admins only)
+ */
+export const ResetAdminPasswordParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const resetAdminPasswordBodyTemporaryPasswordMin = 8;
+export const resetAdminPasswordBodyTemporaryPasswordMax = 128;
+
+
+
+export const ResetAdminPasswordBody = zod.object({
+  "temporary_password": zod.string().min(resetAdminPasswordBodyTemporaryPasswordMin).max(resetAdminPasswordBodyTemporaryPasswordMax)
+})
+
+export const ResetAdminPasswordResponse = zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
 })
 
 
@@ -266,7 +456,17 @@ export const AdminLoginResponse = zod.object({
  * @summary Check the operator session
  */
 export const GetAdminSessionResponse = zod.object({
-  "authenticated": zod.boolean()
+  "authenticated": zod.boolean(),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+}).optional()
 })
 
 
@@ -274,7 +474,17 @@ export const GetAdminSessionResponse = zod.object({
  * @summary Sign out of the operator dashboard
  */
 export const AdminLogoutResponse = zod.object({
-  "authenticated": zod.boolean()
+  "authenticated": zod.boolean(),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+}).optional()
 })
 
 
@@ -599,7 +809,8 @@ export const GetChatTranscriptResponse = zod.object({
   "id": zod.number().int(),
   "sender": zod.enum(['customer', 'operator']),
   "body": zod.string(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "admin_name": zod.string().nullish().describe('Who wrote an operator message. Only present on the admin transcript, never shown to customers.')
 }))
 })
 
@@ -619,7 +830,8 @@ export const SendChatMessageResponse = zod.object({
   "id": zod.number().int(),
   "sender": zod.enum(['customer', 'operator']),
   "body": zod.string(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "admin_name": zod.string().nullish().describe('Who wrote an operator message. Only present on the admin transcript, never shown to customers.')
 })
 
 
@@ -650,7 +862,8 @@ export const GetAdminChatTranscriptResponse = zod.object({
   "id": zod.number().int(),
   "sender": zod.enum(['customer', 'operator']),
   "body": zod.string(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "admin_name": zod.string().nullish().describe('Who wrote an operator message. Only present on the admin transcript, never shown to customers.')
 }))
 })
 
@@ -674,7 +887,8 @@ export const SendAdminChatMessageResponse = zod.object({
   "id": zod.number().int(),
   "sender": zod.enum(['customer', 'operator']),
   "body": zod.string(),
-  "created_at": zod.coerce.date()
+  "created_at": zod.coerce.date(),
+  "admin_name": zod.string().nullish().describe('Who wrote an operator message. Only present on the admin transcript, never shown to customers.')
 })
 
 

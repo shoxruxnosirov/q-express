@@ -67,6 +67,28 @@ export const ordersTable = pgTable("orders", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// One row per person who can open the operator dashboard. Passwords are scrypt
+// hashes; a NULL hash is a super admin seeded by migration who has not yet set
+// one (the repository is public, so no password or hash is ever committed).
+export const adminsTable = pgTable("admins", {
+  id: serial("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  // 'super_admin' manages admins; 'admin' runs the shop.
+  role: text("role").notNull().default("admin"),
+  passwordHash: text("password_hash"),
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
+  // Part of every session cookie. Bumping it signs the admin out everywhere,
+  // which is what a password change, a reset or a deletion needs.
+  sessionVersion: integer("session_version").notNull().default(0),
+  // Where this admin's Telegram notifications go, once they have linked it.
+  telegramChatId: text("telegram_chat_id").unique(),
+  // SHA-256 of the one-time code in a pending t.me link, and when it lapses.
+  telegramLinkHash: text("telegram_link_hash").unique(),
+  telegramLinkExpiresAt: timestamp("telegram_link_expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // A chat thread belongs to whoever holds its secret, not to a phone number,
 // because the shop has no accounts and a phone number is not a credential.
 // Only the hash of that secret is stored.
@@ -91,6 +113,9 @@ export const chatMessagesTable = pgTable("chat_messages", {
   // "<chat id>:<message id>" for an operator reply written in Telegram, NULL
   // otherwise. Unique, so a webhook Telegram retries is stored only once.
   telegramRef: text("telegram_ref").unique(),
+  // Which admin wrote an operator message. NULL for customer messages, for
+  // replies from the owner's Telegram chat, and after the admin is deleted.
+  adminId: integer("admin_id").references(() => adminsTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

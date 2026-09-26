@@ -161,6 +161,7 @@ export function AdminChat() {
                             : 'text-[#d9e5ce]'
                         }`}
                       >
+                        {message.sender === 'operator' && message.admin_name ? `${message.admin_name} · ` : ''}
                         {time(message.created_at)}
                       </p>
                     </div>

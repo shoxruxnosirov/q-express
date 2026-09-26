@@ -1,7 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
 import {
-  AdminLoginBody,
   CreateOrderBody,
   CreateAdminCategoryBody,
   CreateAdminProductBody,
@@ -23,6 +22,7 @@ import {
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import {
+  adminsTable,
   categoriesTable,
   chatMessagesTable,
   chatThreadsTable,
@@ -31,13 +31,16 @@ import {
 } from "@workspace/db/schema";
 import {
   acknowledgeAdminReply,
-  parseAdminReply,
+  parseAdminUpdate,
   sendChatMessageNotification,
+  sendLinkResult,
   sendNewOrderNotification,
   sendOperatorReplyNotification,
   sendReplyHint,
   webhookSecretMatches,
 } from "../lib/telegram";
+import { linkedTelegramChatIds, linkedTelegramRecipients, signedInAdmin } from "../lib/admin-directory";
+import { telegramLinkHash } from "./admins";
 import {
   createChatToken,
   hashChatToken,
@@ -58,13 +61,6 @@ import {
   quantityTotalCents,
   requireWholeUnitQuantity,
 } from "../lib/quantity";
-import {
-  ADMIN_SESSION_COOKIE,
-  ADMIN_SESSION_MAX_AGE,
-  adminCodesMatch,
-  createAdminSession,
-  hasAdminSession,
-} from "../lib/admin-auth";
 
 const router: IRouter = Router();
 const DELIVERY_FEE_CENTS = 4590 * 100;
@@ -72,10 +68,6 @@ const THOUSANDTH_SCALE = 1_000;
 // numeric(12,2) is used by prices and order totals.
 const MAX_MONEY_CENTS = 999_999_999_999;
 const WEEKLY_PRIZE = "Maxsus sovg‘a";
-const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
-const ADMIN_LOGIN_BLOCK_MS = 15 * 60 * 1000;
-const adminLoginAttempts = new Map<string, { count: number; windowStartedAt: number; blockedUntil: number }>();
 
 // Everything limited per caller is keyed by this. Behind Render the socket
 // address is always their proxy, so app.ts trusts exactly one hop and req.ip
@@ -459,6 +451,21 @@ async function chatTranscript(threadId: number) {
   return { thread_id: threadId, messages: messages.map(chatMessageDto) };
 }
 
+// The operators' view also says which admin wrote each reply. The customer's
+// transcript above never carries names.
+async function adminChatTranscript(threadId: number) {
+  const rows = await db
+    .select({ message: chatMessagesTable, adminName: adminsTable.displayName })
+    .from(chatMessagesTable)
+    .leftJoin(adminsTable, eq(chatMessagesTable.adminId, adminsTable.id))
+    .where(eq(chatMessagesTable.threadId, threadId))
+    .orderBy(asc(chatMessagesTable.id));
+  return {
+    thread_id: threadId,
+    messages: rows.map(({ message, adminName }) => ({ ...chatMessageDto(message), admin_name: adminName })),
+  };
+}
+
 function categoryDto(
   category: Pick<typeof categoriesTable.$inferSelect, "id" | "name" | "slug" | "icon">,
   productCount = 0,
@@ -756,7 +763,7 @@ router.post("/orders", async (req, res, next) => {
       }
       return created;
     });
-    const notification = await sendNewOrderNotification(order);
+    const notification = await sendNewOrderNotification(order, await linkedTelegramChatIds());
     if (!notification.sent) {
       req.log.error({ error: notification.error, orderId: order.id }, "Telegram order notification failed");
     }
@@ -858,12 +865,15 @@ router.post("/chat/messages", async (req, res, next) => {
 
     // Best effort, exactly like the order notification: the message is stored
     // either way, and a Telegram outage must not lose what the customer wrote.
-    const notified = await sendChatMessageNotification({
-      threadId: thread.id,
-      customerName: thread.customerName,
-      phone: thread.phone,
-      body: message.body,
-    });
+    const notified = await sendChatMessageNotification(
+      {
+        threadId: thread.id,
+        customerName: thread.customerName,
+        phone: thread.phone,
+        body: message.body,
+      },
+      await linkedTelegramChatIds(),
+    );
     if (!notified.sent) {
       req.log.warn({ reason: notified.error }, "Telegram chat notification failed");
     }
@@ -873,39 +883,76 @@ router.post("/chat/messages", async (req, res, next) => {
   }
 });
 
-// Telegram calls this when the operator writes in the admin chat. A reply to a
+// Telegram calls this for every message an admin sends the bot. A reply to a
 // chat notification becomes an operator message in that thread, exactly as if
 // it had been typed on the dashboard, so the customer's widget and the
-// dashboard both show it on their next poll.
+// dashboard both show it on their next poll, and the other admins get a copy.
+// "/start <code>" from a dashboard link connects that chat to an admin.
 router.post("/telegram/webhook", async (req, res, next) => {
   try {
     if (!webhookSecretMatches(req.get("x-telegram-bot-api-secret-token"))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    const reply = parseAdminReply(req.body);
-    if (reply.kind === "ignore") return res.json({ ok: true });
-    if (reply.kind === "hint") {
-      await sendReplyHint(reply.messageId, "unroutable");
+    const recipients = await linkedTelegramRecipients();
+    const update = parseAdminUpdate(req.body, recipients.map((recipient) => recipient.chatId));
+    if (update.kind === "ignore") return res.json({ ok: true });
+
+    if (update.kind === "link") {
+      const linked = await db.transaction(async (tx) => {
+        const [admin] = await tx
+          .select()
+          .from(adminsTable)
+          .where(eq(adminsTable.telegramLinkHash, telegramLinkHash(update.code)))
+          .limit(1)
+          .for("update");
+        if (!admin || !admin.telegramLinkExpiresAt || admin.telegramLinkExpiresAt < new Date()) return undefined;
+        // One chat belongs to one admin: a chat moving to a new account stops
+        // notifying the old one.
+        await tx
+          .update(adminsTable)
+          .set({ telegramChatId: null })
+          .where(eq(adminsTable.telegramChatId, update.chatId));
+        const [updated] = await tx
+          .update(adminsTable)
+          .set({ telegramChatId: update.chatId, telegramLinkHash: null, telegramLinkExpiresAt: null })
+          .where(eq(adminsTable.id, admin.id))
+          .returning();
+        return updated;
+      });
+      await sendLinkResult(update.chatId, linked?.displayName);
+      return res.json({ ok: true });
+    }
+
+    if (update.kind === "hint") {
+      await sendReplyHint(update.chatId, update.messageId, "unroutable");
       return res.json({ ok: true });
     }
 
     const [thread] = await db
-      .select({ id: chatThreadsTable.id })
+      .select()
       .from(chatThreadsTable)
-      .where(eq(chatThreadsTable.id, reply.threadId))
+      .where(eq(chatThreadsTable.id, update.threadId))
       .limit(1);
     if (!thread) {
-      await sendReplyHint(reply.messageId, "missing-thread");
+      await sendReplyHint(update.chatId, update.messageId, "missing-thread");
       return res.json({ ok: true });
     }
 
+    // The owner's chat from TELEGRAM_ADMIN_CHAT_ID may belong to no admin row.
+    const author = recipients.find((recipient) => recipient.chatId === update.chatId);
     const [message] = await db
       .insert(chatMessagesTable)
-      .values({ threadId: thread.id, sender: "operator", body: reply.body, telegramRef: reply.ref })
+      .values({
+        threadId: thread.id,
+        sender: "operator",
+        body: update.body,
+        telegramRef: update.ref,
+        adminId: author?.adminId ?? null,
+      })
       .onConflictDoNothing()
       .returning();
     // No row means Telegram re-sent an update already stored. Answer 200 so it
-    // stops retrying, and do not react a second time.
+    // stops retrying, and do not react or copy a second time.
     if (!message) return res.json({ ok: true });
 
     await db
@@ -913,65 +960,27 @@ router.post("/telegram/webhook", async (req, res, next) => {
       .set({ lastMessageAt: message.createdAt, operatorReadAt: message.createdAt })
       .where(eq(chatThreadsTable.id, thread.id));
 
-    const acknowledged = await acknowledgeAdminReply(reply.messageId);
+    const acknowledged = await acknowledgeAdminReply(update.chatId, update.messageId);
     if (!acknowledged.sent) {
       req.log.warn({ reason: acknowledged.error }, "Telegram reply acknowledgement failed");
     }
+    const copied = await sendOperatorReplyNotification(
+      {
+        threadId: thread.id,
+        customerName: thread.customerName,
+        phone: thread.phone,
+        body: message.body,
+        authorName: author?.displayName ?? "Asosiy chat",
+        via: "telegram",
+      },
+      recipients.map((recipient) => recipient.chatId),
+      update.chatId,
+    );
+    if (!copied.sent) req.log.warn({ reason: copied.error }, "Telegram reply copy failed");
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
   }
-});
-
-router.post("/admin/auth", async (req, res, next) => {
-  try {
-    const { code } = AdminLoginBody.parse(req.body);
-    const expectedCode = process.env.ADMIN_ACCESS_CODE;
-    if (!expectedCode) throw new Error("ADMIN_ACCESS_CODE is not configured");
-    const key = clientKey(req);
-    const now = Date.now();
-    const previous = adminLoginAttempts.get(key);
-    const attempt = previous && now - previous.windowStartedAt < ADMIN_LOGIN_WINDOW_MS
-      ? previous
-      : { count: 0, windowStartedAt: now, blockedUntil: 0 };
-    if (attempt.blockedUntil > now) {
-      return res.status(429).json({ error: "Too many attempts. Try again later." });
-    }
-    if (!adminCodesMatch(code, expectedCode)) {
-      attempt.count += 1;
-      if (attempt.count >= ADMIN_LOGIN_MAX_ATTEMPTS) attempt.blockedUntil = now + ADMIN_LOGIN_BLOCK_MS;
-      adminLoginAttempts.set(key, attempt);
-      return res.status(401).json({ error: "Invalid operator code" });
-    }
-    adminLoginAttempts.delete(key);
-
-    res.cookie(ADMIN_SESSION_COOKIE, createAdminSession(), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: ADMIN_SESSION_MAX_AGE,
-      path: "/",
-    });
-    return res.json({ authenticated: true });
-  } catch (error) {
-    return next(error);
-  }
-});
-
-router.get("/admin/session", (req, res) => {
-  res.json({ authenticated: hasAdminSession(req) });
-});
-
-router.post("/admin/logout", (req, res) => {
-  res.clearCookie(ADMIN_SESSION_COOKIE, { httpOnly: true, sameSite: "lax", path: "/" });
-  res.json({ authenticated: false });
-});
-
-router.use("/admin", (req, res, next) => {
-  if (!hasAdminSession(req)) {
-    return res.status(401).json({ error: "Operator authentication required" });
-  }
-  return next();
 });
 
 router.post("/admin/categories", async (req, res, next) => {
@@ -1202,7 +1211,7 @@ router.get("/admin/chats/:id/messages", async (req, res, next) => {
       .update(chatThreadsTable)
       .set({ operatorReadAt: new Date() })
       .where(eq(chatThreadsTable.id, id));
-    return res.json(await chatTranscript(id));
+    return res.json(await adminChatTranscript(id));
   } catch (error) {
     return next(error);
   }
@@ -1212,6 +1221,7 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
   try {
     const { id } = SendAdminChatMessageParams.parse(req.params);
     const { body } = SendAdminChatMessageBody.parse(req.body);
+    const admin = signedInAdmin(res);
     const [thread] = await db
       .select({
         id: chatThreadsTable.id,
@@ -1225,25 +1235,30 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
 
     const [message] = await db
       .insert(chatMessagesTable)
-      .values({ threadId: id, sender: "operator", body: body.trim() })
+      .values({ threadId: id, sender: "operator", body: body.trim(), adminId: admin.id })
       .returning();
     await db
       .update(chatThreadsTable)
       .set({ lastMessageAt: message.createdAt, operatorReadAt: message.createdAt })
       .where(eq(chatThreadsTable.id, id));
 
-    // Copied to the admin chat so Telegram holds the whole conversation. Best
-    // effort: the customer already has the reply either way.
-    const copied = await sendOperatorReplyNotification({
-      threadId: thread.id,
-      customerName: thread.customerName,
-      phone: thread.phone,
-      body: message.body,
-    });
+    // Copied to every admin chat so Telegram holds the whole conversation.
+    // Best effort: the customer already has the reply either way.
+    const copied = await sendOperatorReplyNotification(
+      {
+        threadId: thread.id,
+        customerName: thread.customerName,
+        phone: thread.phone,
+        body: message.body,
+        authorName: admin.displayName,
+        via: "panel",
+      },
+      await linkedTelegramChatIds(),
+    );
     if (!copied.sent) {
       req.log.warn({ reason: copied.error }, "Telegram operator reply copy failed");
     }
-    return res.status(201).json(chatMessageDto(message));
+    return res.status(201).json({ ...chatMessageDto(message), admin_name: admin.displayName });
   } catch (error) {
     return next(error);
   }

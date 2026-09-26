@@ -3,6 +3,7 @@ import { useAdminLogout, getGetAdminDashboardQueryKey, getListAdminOrdersQueryKe
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { AdminLogin } from './AdminLogin';
+import { PasswordChangeForm } from './AdminProfile';
 
 export function AdminGate({ children }: { children: ReactNode }) {
   const [unlocked, setUnlocked] = useState(false);
@@ -66,7 +67,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
   }, [unlocked, session.isError, session.data]);
 
   if (status === 'loading') return <div className="flex min-h-[50vh] items-center justify-center"><LoaderCircle className="animate-spin text-[hsl(var(--primary))]" size={32} /></div>;
-  
+
   if (status === 'error') return (
     <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4">
       <p className="font-bold text-[hsl(var(--destructive))]">Sessiyani tozalashda xatolik</p>
@@ -75,15 +76,31 @@ export function AdminGate({ children }: { children: ReactNode }) {
   );
 
   if (!unlocked) {
-    return <AdminLogin onSuccess={() => {
+    return <AdminLogin onSuccess={signedIn => {
       // The cached session still says "not authenticated" from when the page
       // opened, and the effect above would read that before any refetch lands
-      // and lock the panel again, so the first correct code seemed to fail.
-      // The server has just set the cookie, so record that before unlocking.
-      qc.setQueryData(getGetAdminSessionQueryKey(), { authenticated: true });
+      // and lock the panel again, so the first correct login seemed to fail.
+      // The server has just answered with the session, so record it before
+      // unlocking.
+      qc.setQueryData(getGetAdminSessionQueryKey(), signedIn);
       setUnlocked(true);
     }} />;
   }
-  
+
+  // Signed in with a temporary password: the server refuses everything else
+  // until it is replaced, so ask for that before showing the panel.
+  if (session.data?.admin?.must_change_password) {
+    return (
+      <div className="container-wide flex min-h-[65vh] items-center justify-center py-10">
+        <div className="w-full max-w-md">
+          <p className="mb-4 rounded-2xl bg-[#fff6dc] p-4 text-sm font-semibold text-[#7a4f07]">
+            Salom, {session.data.admin.display_name}! Siz vaqtinchalik parol bilan kirdingiz. Davom etish uchun o‘zingizga yangi parol tanlang.
+          </p>
+          <PasswordChangeForm title="Yangi parol tanlang" />
+        </div>
+      </div>
+    );
+  }
+
   return <>{children}</>;
 }

@@ -5,7 +5,7 @@ import {
   ArrowLeft, ArrowRight, BadgeCheck, Banknote, BarChart3, Bike, Boxes, Check, ChevronDown,
   ChevronRight, Clock3, CreditCard, Gift, Headphones, Heart, Home as HomeIcon, Info, LayoutDashboard,
   ListFilter, LoaderCircle, MapPin, Menu, MessageCircle, Minus, Package, Phone, Plus, RefreshCw, Search,
-  ShoppingBag, ShoppingBasket, SlidersHorizontal, Sparkles, Star, Store, Tag, Trophy, Truck,
+  ShieldCheck, ShoppingBag, ShoppingBasket, SlidersHorizontal, Sparkles, Star, Store, Tag, Trophy, Truck,
   UserRound, WalletCards, X, Zap,
 } from 'lucide-react';
 import {
@@ -28,7 +28,8 @@ import { AdminImageField, AdminProductRow, FlagToggle, uploadProductImage } from
 import { CustomerChat } from '@/components/CustomerChat';
 import { AdminChat } from '@/pages/admin/AdminChat';
 import { AdminGate } from '@/pages/admin/AdminGate';
-import { AdminLogin } from '@/pages/admin/AdminLogin';
+import { AdminAccounts } from '@/pages/admin/AdminAccounts';
+import { AdminProfile } from '@/pages/admin/AdminProfile';
 
 const queryClient = new QueryClient();
 const money = (value: number) => `${Math.round(value).toLocaleString('ru-RU')} so'm`;
@@ -44,12 +45,17 @@ function Shell({ children }: { children: ReactNode }) {
   const logout = useAdminLogout();
   const qc = useQueryClient();
   const isAdmin = location.startsWith('/admin');
+  // Shares the gate's cached session, so it knows the role without another call.
+  const adminSession = useGetAdminSession({ query: { queryKey: getGetAdminSessionQueryKey(), enabled: isAdmin, retry: false } });
+  const isSuperAdmin = adminSession.data?.admin?.role === 'super_admin';
   const signOut = () => logout.mutate(undefined, { onSuccess: () => { qc.removeQueries({ queryKey: getGetAdminDashboardQueryKey() }); qc.removeQueries({ queryKey: getListAdminOrdersQueryKey() }); qc.invalidateQueries({ queryKey: getGetAdminSessionQueryKey() }); } });
   const nav = isAdmin ? [
     { href: '/admin', label: 'Umumiy ko‘rinish', icon: LayoutDashboard },
     { href: '/admin/orders', label: 'Buyurtmalar', icon: Package },
     { href: '/admin/catalog', label: 'Mahsulotlar', icon: Boxes },
     { href: '/admin/chat', label: 'Suhbatlar', icon: MessageCircle },
+    ...(isSuperAdmin ? [{ href: '/admin/admins', label: 'Adminlar', icon: ShieldCheck }] : []),
+    { href: '/admin/profile', label: 'Profilim', icon: UserRound },
   ] : [
     { href: '/', label: 'Bosh sahifa', icon: HomeIcon },
     { href: '/catalog', label: 'Katalog', icon: ShoppingBag },
@@ -393,6 +399,8 @@ function Router() {
             <Route path="/admin/orders" component={AdminOrders} />
             <Route path="/admin/catalog" component={AdminCatalogManager} />
             <Route path="/admin/chat" component={AdminChat} />
+            <Route path="/admin/admins" component={AdminAccounts} />
+            <Route path="/admin/profile" component={AdminProfile} />
             <Route component={NotFound} />
           </Switch>
         </AdminGate>

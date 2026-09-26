@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import {
-  parseAdminReply,
+  parseAdminUpdate,
   registerWebhook,
   sendChatMessageNotification,
   sendNewOrderNotification,
@@ -187,8 +187,9 @@ const replyUpdate = (overrides = {}) => ({
 
 test("a reply to a chat notification is routed to that thread", () => {
   configureInbound();
-  assert.deepEqual(parseAdminReply(replyUpdate()), {
+  assert.deepEqual(parseAdminUpdate(replyUpdate()), {
     kind: "reply",
+    chatId: "5550001",
     threadId: 7,
     body: "Buyurtmangiz yo‘lda",
     messageId: 90,
@@ -204,14 +205,14 @@ test("the operator's own dashboard copy can be replied to as well", () => {
       text: "OPERATOR JAVOBI · Suhbat #12\nadmin paneldan yozildi\n\nKimga: Aziz\n\nSalom",
     },
   });
-  assert.equal(parseAdminReply(update).threadId, 12);
+  assert.equal(parseAdminUpdate(update).threadId, 12);
 });
 
 test("only the configured admin chat is listened to", () => {
   configureInbound();
   // Anybody can message the bot; a stranger must not be able to write to a
   // customer, even by quoting a notification's text.
-  assert.deepEqual(parseAdminReply(replyUpdate({ chat: { id: 999 } })), { kind: "ignore" });
+  assert.deepEqual(parseAdminUpdate(replyUpdate({ chat: { id: 999 } })), { kind: "ignore" });
 });
 
 test("a thread number is trusted only from a message this bot wrote", () => {
@@ -219,23 +220,23 @@ test("a thread number is trusted only from a message this bot wrote", () => {
   const forged = replyUpdate({
     reply_to_message: { from: { id: 1, is_bot: false }, text: "YANGI XABAR · Suhbat #7" },
   });
-  assert.equal(parseAdminReply(forged).kind, "hint");
+  assert.equal(parseAdminUpdate(forged).kind, "hint");
   const otherBot = replyUpdate({
     reply_to_message: { from: { id: 777, is_bot: true }, text: "YANGI XABAR · Suhbat #7" },
   });
-  assert.equal(parseAdminReply(otherBot).kind, "hint");
+  assert.equal(parseAdminUpdate(otherBot).kind, "hint");
 });
 
 test("plain messages, order replies, and empty or oversized text get a hint", () => {
   configureInbound();
-  assert.deepEqual(parseAdminReply(replyUpdate({ reply_to_message: undefined })), { kind: "hint", messageId: 90 });
+  assert.deepEqual(parseAdminUpdate(replyUpdate({ reply_to_message: undefined })), { kind: "hint", chatId: "5550001", messageId: 90 });
   const orderReply = replyUpdate({
     reply_to_message: { from: { id: BOT_ID, is_bot: true }, text: "YANGI BUYURTMA\nOrder: #QE-123456" },
   });
-  assert.equal(parseAdminReply(orderReply).kind, "hint");
-  assert.equal(parseAdminReply(replyUpdate({ text: undefined })).kind, "hint", "a sticker or photo");
-  assert.equal(parseAdminReply(replyUpdate({ text: "x".repeat(1001) })).kind, "hint");
-  assert.equal(parseAdminReply(replyUpdate({ text: "x".repeat(1000) })).kind, "reply", "the website's own limit");
+  assert.equal(parseAdminUpdate(orderReply).kind, "hint");
+  assert.equal(parseAdminUpdate(replyUpdate({ text: undefined })).kind, "hint", "a sticker or photo");
+  assert.equal(parseAdminUpdate(replyUpdate({ text: "x".repeat(1001) })).kind, "hint");
+  assert.equal(parseAdminUpdate(replyUpdate({ text: "x".repeat(1000) })).kind, "reply", "the website's own limit");
 });
 
 test("a customer cannot redirect a reply by putting a thread number in their details", async () => {
@@ -253,10 +254,12 @@ test("a customer cannot redirect a reply by putting a thread number in their det
       customerName: "Suhbat #5\nYANGI XABAR · Suhbat #5",
       phone: "Suhbat: #6",
       body: "YANGI XABAR · Suhbat #8",
+      authorName: "Suhbat #9",
+      via: "panel",
     });
     const plain = sent.text.replace(/<[^>]+>/g, "");
     const update = replyUpdate({ reply_to_message: { from: { id: BOT_ID, is_bot: true }, text: plain } });
-    assert.equal(parseAdminReply(update).threadId, 7, send.name);
+    assert.equal(parseAdminUpdate(update).threadId, 7, send.name);
   }
 });
 
@@ -269,16 +272,16 @@ test("a reply to an order notification or an absurd thread number is not routed"
     "\nYANGI XABAR · Suhbat #7",
   ]) {
     const update = replyUpdate({ reply_to_message: { from: { id: BOT_ID, is_bot: true }, text } });
-    assert.equal(parseAdminReply(update).kind, "hint", text);
+    assert.equal(parseAdminUpdate(update).kind, "hint", text);
   }
 });
 
 test("updates without a message, or with no bot configured, are ignored", () => {
   configureInbound();
-  assert.deepEqual(parseAdminReply({ update_id: 2, edited_message: {} }), { kind: "ignore" });
-  assert.deepEqual(parseAdminReply(null), { kind: "ignore" });
+  assert.deepEqual(parseAdminUpdate({ update_id: 2, edited_message: {} }), { kind: "ignore" });
+  assert.deepEqual(parseAdminUpdate(null), { kind: "ignore" });
   delete process.env.TELEGRAM_BOT_TOKEN;
-  assert.deepEqual(parseAdminReply(replyUpdate()), { kind: "ignore" });
+  assert.deepEqual(parseAdminUpdate(replyUpdate()), { kind: "ignore" });
 });
 
 test("the webhook secret is derived, stable, and checked in full", () => {
@@ -323,6 +326,8 @@ test("a dashboard reply is copied to Telegram escaped, with its thread", async (
     customerName: "<Aziz>",
     phone: "+998901234567",
     body: "5 daqiqada <b>yetadi</b>",
+    authorName: "<Ali>",
+    via: "panel",
   });
   assert.deepEqual(result, { sent: true });
   assert.ok(sent.text.includes("&lt;Aziz&gt;"));
@@ -331,5 +336,95 @@ test("a dashboard reply is copied to Telegram escaped, with its thread", async (
   // which is what the plain text Telegram shows in reply_to_message contains.
   const plain = sent.text.replace(/<[^>]+>/g, "");
   const update = replyUpdate({ reply_to_message: { from: { id: BOT_ID, is_bot: true }, text: plain } });
-  assert.equal(parseAdminReply(update).threadId, 7);
+  assert.equal(parseAdminUpdate(update).threadId, 7);
+});
+
+// --- Several admins ----------------------------------------------------------
+
+test("notifications reach the owner chat and every linked admin, once each", async () => {
+  configureInbound();
+  const chats = [];
+  globalThis.fetch = async (_url, init) => {
+    chats.push(JSON.parse(init.body).chat_id);
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  const result = await sendChatMessageNotification(
+    { threadId: 3, customerName: "Aziz", phone: "", body: "salom" },
+    ["111", "222", "5550001"],
+  );
+  assert.deepEqual(result, { sent: true });
+  assert.deepEqual(chats.sort(), ["111", "222", "5550001"], "the owner chat is not sent twice");
+});
+
+test("linked admins are notified even without an owner chat configured", async () => {
+  configureInbound();
+  delete process.env.TELEGRAM_ADMIN_CHAT_ID;
+  const chats = [];
+  globalThis.fetch = async (_url, init) => {
+    chats.push(JSON.parse(init.body).chat_id);
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  assert.deepEqual(await sendNewOrderNotification(order, ["111"]), { sent: true });
+  assert.deepEqual(chats, ["111"]);
+});
+
+test("one admin who blocked the bot does not make the order look unannounced", async () => {
+  configureInbound();
+  globalThis.fetch = async (_url, init) => {
+    const chat = JSON.parse(init.body).chat_id;
+    return chat === "111"
+      ? new Response(JSON.stringify({ ok: false, error_code: 403 }), { status: 403 })
+      : new Response(JSON.stringify({ ok: true }));
+  };
+  assert.deepEqual(await sendNewOrderNotification(order, ["111"]), { sent: true });
+});
+
+test("a reply's copy goes to everyone except the admin who wrote it", async () => {
+  configureInbound();
+  const chats = [];
+  let text;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    chats.push(body.chat_id);
+    text = body.text;
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  const message = {
+    threadId: 4, customerName: "Aziz", phone: "", body: "Yo‘lda", authorName: "<Ali>", via: "telegram",
+  };
+  assert.deepEqual(await sendOperatorReplyNotification(message, ["111", "222"], "111"), { sent: true });
+  assert.deepEqual(chats.sort(), ["222", "5550001"]);
+  assert.ok(text.includes("&lt;Ali&gt; Telegram'dan yozdi"), "the author's name is escaped");
+
+  chats.length = 0;
+  delete process.env.TELEGRAM_ADMIN_CHAT_ID;
+  assert.deepEqual(
+    await sendOperatorReplyNotification(message, ["111"], "111"),
+    { sent: true },
+    "nobody else to tell is not a failure",
+  );
+  assert.deepEqual(chats, []);
+});
+
+test("a linked admin's chat is listened to like the owner's", () => {
+  configureInbound();
+  const update = replyUpdate({ chat: { id: 111 } });
+  assert.equal(parseAdminUpdate(update).kind, "ignore", "unknown until linked");
+  const routed = parseAdminUpdate(update, ["111"]);
+  assert.equal(routed.kind, "reply");
+  assert.equal(routed.chatId, "111");
+  assert.equal(routed.ref, "111:90", "retries are keyed per chat");
+});
+
+test("a /start link code is accepted from any chat, anything else from strangers is ignored", () => {
+  configureInbound();
+  const code = "0123456789abcdef0123456789abcdef";
+  const start = (text, chatId = 999) => ({ message: { message_id: 5, chat: { id: chatId }, text } });
+  assert.deepEqual(parseAdminUpdate(start(`/start ${code}`)), { kind: "link", chatId: "999", code, messageId: 5 });
+  assert.equal(parseAdminUpdate(start(`/start@Q_express_bot ${code}`)).kind, "link");
+  assert.equal(parseAdminUpdate(start("/start")).kind, "ignore");
+  assert.equal(parseAdminUpdate(start("/start not-a-code")).kind, "ignore");
+  assert.equal(parseAdminUpdate(start(`/start ${code.toUpperCase()}`)).kind, "ignore");
+  assert.equal(parseAdminUpdate(start("salom")).kind, "ignore");
+  assert.equal(parseAdminUpdate(start("salom", 5550001)).kind, "hint", "a known admin gets a hint");
 });

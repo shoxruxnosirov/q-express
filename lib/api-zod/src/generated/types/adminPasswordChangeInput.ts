@@ -6,15 +6,15 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AdminLoginInput {
-  /**
-     * @minLength 1
-     * @maxLength 64
-     */
-  username: string;
+export interface AdminPasswordChangeInput {
   /**
      * @minLength 1
      * @maxLength 128
      */
-  password: string;
+  current_password: string;
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  new_password: string;
 }

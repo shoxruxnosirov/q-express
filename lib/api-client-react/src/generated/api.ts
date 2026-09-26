@@ -20,14 +20,19 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminAccount,
   AdminCategoryInput,
   AdminChatThread,
+  AdminCreateInput,
   AdminDashboard,
   AdminLoginInput,
+  AdminPasswordChangeInput,
+  AdminPasswordResetInput,
   AdminProduct,
   AdminProductInput,
   AdminProductUpdateInput,
   AdminSession,
+  AdminSetupInput,
   Category,
   ChatMessage,
   ChatMessageInput,
@@ -43,6 +48,7 @@ import type {
   OrderInput,
   OrderStatusInput,
   Product,
+  TelegramLink,
   UploadTicket,
   WeeklyLeaderboardEntry
 } from './api.schemas';
@@ -725,7 +731,7 @@ export const getAdminLoginUrl = () => {
 }
 
 /**
- * @summary Sign in to the operator dashboard
+ * @summary Sign in with a username and password
  */
 export const adminLogin = async (adminLoginInput: AdminLoginInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminSession> => {
 
@@ -791,7 +797,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AdminLoginMutationVariables = {data: BodyType<AdminLoginInput>}
 
     /**
- * @summary Sign in to the operator dashboard
+ * @summary Sign in with a username and password
  */
 export const useAdminLogin = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof adminLogin>>, TError,AdminLoginMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -802,6 +808,659 @@ export const useAdminLogin = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getAdminLoginMutationOptions(options));
+    }
+
+export const getAdminSetupUrl = () => {
+
+
+
+
+  return `/api/admin/setup`
+}
+
+/**
+ * Only for a super admin created by migration without a password. Proving the deployment's ADMIN_ACCESS_CODE is what authorises it.
+ * @summary Set a seeded super admin's first password
+ */
+export const adminSetup = async (adminSetupInput: AdminSetupInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminSession> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AdminSession>(getAdminSetupUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(adminSetupInput)
+  }
+);}
+
+
+
+
+
+export const getAdminSetupMutationKey = () => ['adminSetup'] as const;
+
+export const getAdminSetupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof adminSetup>>, TError,AdminSetupMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof adminSetup>>, TError,AdminSetupMutationVariables, TContext> => {
+
+const mutationKey = getAdminSetupMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof adminSetup>>, AdminSetupMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  adminSetup(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AdminSetupMutationResult = NonNullable<Awaited<ReturnType<typeof adminSetup>>>
+    export type AdminSetupMutationBody = BodyType<AdminSetupInput>
+    export type AdminSetupMutationError = ErrorType<void>
+    export type AdminSetupMutationVariables = {data: BodyType<AdminSetupInput>}
+
+    /**
+ * @summary Set a seeded super admin's first password
+ */
+export const useAdminSetup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof adminSetup>>, TError,AdminSetupMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof adminSetup>>,
+        TError,
+        AdminSetupMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAdminSetupMutationOptions(options));
+    }
+
+export const getChangeOwnAdminPasswordUrl = () => {
+
+
+
+
+  return `/api/admin/me/password`
+}
+
+/**
+ * @summary Change the signed-in admin's password
+ */
+export const changeOwnAdminPassword = async (adminPasswordChangeInput: AdminPasswordChangeInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminSession> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AdminSession>(getChangeOwnAdminPasswordUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(adminPasswordChangeInput)
+  }
+);}
+
+
+
+
+
+export const getChangeOwnAdminPasswordMutationKey = () => ['changeOwnAdminPassword'] as const;
+
+export const getChangeOwnAdminPasswordMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeOwnAdminPassword>>, TError,ChangeOwnAdminPasswordMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeOwnAdminPassword>>, TError,ChangeOwnAdminPasswordMutationVariables, TContext> => {
+
+const mutationKey = getChangeOwnAdminPasswordMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeOwnAdminPassword>>, ChangeOwnAdminPasswordMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  changeOwnAdminPassword(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeOwnAdminPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof changeOwnAdminPassword>>>
+    export type ChangeOwnAdminPasswordMutationBody = BodyType<AdminPasswordChangeInput>
+    export type ChangeOwnAdminPasswordMutationError = ErrorType<void>
+    export type ChangeOwnAdminPasswordMutationVariables = {data: BodyType<AdminPasswordChangeInput>}
+
+    /**
+ * @summary Change the signed-in admin's password
+ */
+export const useChangeOwnAdminPassword = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeOwnAdminPassword>>, TError,ChangeOwnAdminPasswordMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof changeOwnAdminPassword>>,
+        TError,
+        ChangeOwnAdminPasswordMutationVariables,
+        TContext
+      > => {
+      return useMutation(getChangeOwnAdminPasswordMutationOptions(options));
+    }
+
+export const getCreateTelegramLinkUrl = () => {
+
+
+
+
+  return `/api/admin/me/telegram`
+}
+
+/**
+ * @summary Create a one-time link that connects this admin's Telegram
+ */
+export const createTelegramLink = async ( options?: Parameters<typeof customFetch>[1]): Promise<TelegramLink> => {
+
+  return customFetch<TelegramLink>(getCreateTelegramLinkUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCreateTelegramLinkMutationKey = () => ['createTelegramLink'] as const;
+
+export const getCreateTelegramLinkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTelegramLink>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createTelegramLink>>, TError,void, TContext> => {
+
+const mutationKey = getCreateTelegramLinkMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createTelegramLink>>, void> = () => {
+
+
+          return  createTelegramLink(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateTelegramLinkMutationResult = NonNullable<Awaited<ReturnType<typeof createTelegramLink>>>
+
+    export type CreateTelegramLinkMutationError = ErrorType<void>
+
+
+    /**
+ * @summary Create a one-time link that connects this admin's Telegram
+ */
+export const useCreateTelegramLink = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTelegramLink>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createTelegramLink>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCreateTelegramLinkMutationOptions(options));
+    }
+
+export const getUnlinkTelegramUrl = () => {
+
+
+
+
+  return `/api/admin/me/telegram`
+}
+
+/**
+ * @summary Stop Telegram notifications for this admin
+ */
+export const unlinkTelegram = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminSession> => {
+
+  return customFetch<AdminSession>(getUnlinkTelegramUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getUnlinkTelegramMutationKey = () => ['unlinkTelegram'] as const;
+
+export const getUnlinkTelegramMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkTelegram>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unlinkTelegram>>, TError,void, TContext> => {
+
+const mutationKey = getUnlinkTelegramMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unlinkTelegram>>, void> = () => {
+
+
+          return  unlinkTelegram(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnlinkTelegramMutationResult = NonNullable<Awaited<ReturnType<typeof unlinkTelegram>>>
+
+    export type UnlinkTelegramMutationError = ErrorType<unknown>
+
+
+    /**
+ * @summary Stop Telegram notifications for this admin
+ */
+export const useUnlinkTelegram = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkTelegram>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unlinkTelegram>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getUnlinkTelegramMutationOptions(options));
+    }
+
+export const getListAdminsUrl = () => {
+
+
+
+
+  return `/api/admin/admins`
+}
+
+/**
+ * @summary List every admin account (super admins only)
+ */
+export const listAdmins = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminAccount[]> => {
+
+  return customFetch<AdminAccount[]>(getListAdminsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminsQueryKey = () => {
+    return [
+    `/api/admin/admins`
+    ] as const;
+    }
+
+
+export const getListAdminsQueryOptions = <TData = Awaited<ReturnType<typeof listAdmins>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdmins>>> = ({ signal }) => listAdmins({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdmins>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdmins>>>
+export type ListAdminsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List every admin account (super admins only)
+ */
+
+export function useListAdmins<TData = Awaited<ReturnType<typeof listAdmins>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAdminUrl = () => {
+
+
+
+
+  return `/api/admin/admins`
+}
+
+/**
+ * @summary Create an admin with a temporary password (super admins only)
+ */
+export const createAdmin = async (adminCreateInput: AdminCreateInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AdminAccount>(getCreateAdminUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(adminCreateInput)
+  }
+);}
+
+
+
+
+
+export const getCreateAdminMutationKey = () => ['createAdmin'] as const;
+
+export const getCreateAdminMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdmin>>, TError,CreateAdminMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAdmin>>, TError,CreateAdminMutationVariables, TContext> => {
+
+const mutationKey = getCreateAdminMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAdmin>>, CreateAdminMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAdmin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAdminMutationResult = NonNullable<Awaited<ReturnType<typeof createAdmin>>>
+    export type CreateAdminMutationBody = BodyType<AdminCreateInput>
+    export type CreateAdminMutationError = ErrorType<void>
+    export type CreateAdminMutationVariables = {data: BodyType<AdminCreateInput>}
+
+    /**
+ * @summary Create an admin with a temporary password (super admins only)
+ */
+export const useCreateAdmin = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdmin>>, TError,CreateAdminMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAdmin>>,
+        TError,
+        CreateAdminMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateAdminMutationOptions(options));
+    }
+
+export const getDeleteAdminUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/admins/${id}`
+}
+
+/**
+ * @summary Delete an admin (super admins only; never the last super admin)
+ */
+export const deleteAdmin = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAdminUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAdminMutationKey = () => ['deleteAdmin'] as const;
+
+export const getDeleteAdminMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdmin>>, TError,DeleteAdminMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAdmin>>, TError,DeleteAdminMutationVariables, TContext> => {
+
+const mutationKey = getDeleteAdminMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdmin>>, DeleteAdminMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAdmin(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAdminMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdmin>>>
+
+    export type DeleteAdminMutationError = ErrorType<void>
+    export type DeleteAdminMutationVariables = {id: number}
+
+    /**
+ * @summary Delete an admin (super admins only; never the last super admin)
+ */
+export const useDeleteAdmin = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdmin>>, TError,DeleteAdminMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAdmin>>,
+        TError,
+        DeleteAdminMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteAdminMutationOptions(options));
+    }
+
+export const getResetAdminPasswordUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/admins/${id}/password`
+}
+
+/**
+ * @summary Give an admin a new temporary password (super admins only)
+ */
+export const resetAdminPassword = async (id: number,
+    adminPasswordResetInput: AdminPasswordResetInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AdminAccount>(getResetAdminPasswordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(adminPasswordResetInput)
+  }
+);}
+
+
+
+
+
+export const getResetAdminPasswordMutationKey = () => ['resetAdminPassword'] as const;
+
+export const getResetAdminPasswordMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetAdminPassword>>, TError,ResetAdminPasswordMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetAdminPassword>>, TError,ResetAdminPasswordMutationVariables, TContext> => {
+
+const mutationKey = getResetAdminPasswordMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetAdminPassword>>, ResetAdminPasswordMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  resetAdminPassword(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetAdminPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof resetAdminPassword>>>
+    export type ResetAdminPasswordMutationBody = BodyType<AdminPasswordResetInput>
+    export type ResetAdminPasswordMutationError = ErrorType<void>
+    export type ResetAdminPasswordMutationVariables = {id: number;data: BodyType<AdminPasswordResetInput>}
+
+    /**
+ * @summary Give an admin a new temporary password (super admins only)
+ */
+export const useResetAdminPassword = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetAdminPassword>>, TError,ResetAdminPasswordMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resetAdminPassword>>,
+        TError,
+        ResetAdminPasswordMutationVariables,
+        TContext
+      > => {
+      return useMutation(getResetAdminPasswordMutationOptions(options));
     }
 
 export const getGetAdminSessionUrl = () => {

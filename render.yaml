@@ -36,8 +36,9 @@ services:
       # certificate hostname does not verify.
       - key: DATABASE_URL
         sync: false
-      # Operator login code for /admin, entered once when the blueprint is
-      # applied.
+      # No longer a login by itself: admins sign in with their own username
+      # and password. It only authorises a super admin seeded by migration
+      # (shoxrux, bahrom) to choose their first password, once.
       - key: ADMIN_ACCESS_CODE
         sync: false
       - key: SESSION_SECRET

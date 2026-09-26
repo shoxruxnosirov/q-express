@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { after, before, test } from "node:test";
+import { hashPassword } from "../src/lib/admin-auth.ts";
 
 // This suite is deliberately separate from the fast unit suite. It uses only
 // the provisioned development database and never logs connection details.
@@ -17,6 +18,9 @@ const adminCode = "integration-only-admin-code";
 let pool;
 let server;
 let categoryId;
+let adminId;
+const adminUsername = `integration-${process.pid}`;
+const adminPassword = "integration-only-password";
 let duplicateProductId;
 let concurrentProductId;
 const createdOrderIds = [];
@@ -72,12 +76,18 @@ before(async () => {
      returning id`,
     [categoryId, `Duplicate fixture ${suffix}`, `Concurrent fixture ${suffix}`],
   );
+  const admin = await query(
+    "insert into admins (username, display_name, role, password_hash) values ($1, 'Integration', 'admin', $2) returning id",
+    [adminUsername, await hashPassword(adminPassword)],
+  );
+  adminId = admin.rows[0].id;
   duplicateProductId = products.rows[0].id;
   concurrentProductId = products.rows[1].id;
 
   const stub = resolve(repoRoot, "artifacts/api-server/tests/telegram-stub.mjs");
   const entry = resolve(repoRoot, "artifacts/api-server/dist/index.mjs");
-  server = spawn(process.execPath, ["--import", stub, entry], {
+  // --import takes a URL; a bare Windows path such as D:... is read as scheme "d:".
+  server = spawn(process.execPath, ["--import", pathToFileURL(stub).href, entry], {
     env: {
       ...process.env,
       PORT: String(port),
@@ -103,13 +113,14 @@ after(async () => {
     await query("delete from products where id = any($1::int[])", [productIds]);
   }
   if (categoryId != null) await query("delete from categories where id = $1", [categoryId]);
+  if (adminId != null) await query("delete from admins where id = $1", [adminId]);
   await pool.end();
 });
 
 test("HTTP admin auth login/logout works in an isolated child process", { skip: !shouldRun }, async () => {
   const login = await http("/api/admin/auth", {
     method: "POST",
-    body: JSON.stringify({ code: adminCode }),
+    body: JSON.stringify({ username: adminUsername, password: adminPassword }),
   });
   assert.equal(login.status, 200);
   assert.deepEqual((await login.json()).authenticated, true);

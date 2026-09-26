@@ -171,7 +171,7 @@ paths:
     post:
       operationId: adminLogin
       tags: [admin]
-      summary: Sign in to the operator dashboard
+      summary: Sign in with a username and password
       requestBody:
         required: true
         content:
@@ -186,7 +186,166 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdminSession"
         "401":
-          description: Invalid operator code
+          description: Wrong username or password
+        "409":
+          description: This super admin has not set a password yet; use /admin/setup
+        "429":
+          description: Too many attempts
+  /admin/setup:
+    post:
+      operationId: adminSetup
+      tags: [admin]
+      summary: Set a seeded super admin's first password
+      description: >-
+        Only for a super admin created by migration without a password. Proving
+        the deployment's ADMIN_ACCESS_CODE is what authorises it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSetupInput"
+      responses:
+        "200":
+          description: Password set and signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+        "401":
+          description: Wrong access code, or no such account awaiting setup
+        "429":
+          description: Too many attempts
+  /admin/me/password:
+    post:
+      operationId: changeOwnAdminPassword
+      tags: [admin]
+      summary: Change the signed-in admin's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPasswordChangeInput"
+      responses:
+        "200":
+          description: Password changed; other sessions are signed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+        "400":
+          description: Current password wrong or new password too weak
+  /admin/me/telegram:
+    post:
+      operationId: createTelegramLink
+      tags: [admin]
+      summary: Create a one-time link that connects this admin's Telegram
+      responses:
+        "201":
+          description: Open the link in Telegram and press Start
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelegramLink"
+        "503":
+          description: The Telegram bot is not configured
+    delete:
+      operationId: unlinkTelegram
+      tags: [admin]
+      summary: Stop Telegram notifications for this admin
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+  /admin/admins:
+    get:
+      operationId: listAdmins
+      tags: [admin]
+      summary: List every admin account (super admins only)
+      responses:
+        "200":
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminAccount"
+        "403":
+          description: Not a super admin
+    post:
+      operationId: createAdmin
+      tags: [admin]
+      summary: Create an admin with a temporary password (super admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCreateInput"
+      responses:
+        "201":
+          description: Created; they must change the password on first sign-in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAccount"
+        "403":
+          description: Not a super admin
+        "409":
+          description: Username taken
+  /admin/admins/{id}:
+    delete:
+      operationId: deleteAdmin
+      tags: [admin]
+      summary: Delete an admin (super admins only; never the last super admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted and signed out everywhere
+        "403":
+          description: Not a super admin
+        "404":
+          description: No such admin
+        "409":
+          description: That is the last super admin
+  /admin/admins/{id}/password:
+    post:
+      operationId: resetAdminPassword
+      tags: [admin]
+      summary: Give an admin a new temporary password (super admins only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPasswordResetInput"
+      responses:
+        "200":
+          description: Reset; they must change it on next sign-in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAccount"
+        "403":
+          description: Not a super admin
+        "404":
+          description: No such admin
   /admin/session:
     get:
       operationId: getAdminSession
@@ -647,17 +806,109 @@ components:
           enum: [new, preparing, courier, delivered, cancelled]
     AdminLoginInput:
       type: object
-      required: [code]
+      required: [username, password]
       properties:
-        code:
+        username:
           type: string
           minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    AdminSetupInput:
+      type: object
+      required: [username, access_code, new_password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        access_code:
+          type: string
+          minLength: 1
+          maxLength: 256
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+    AdminPasswordChangeInput:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          minLength: 1
+          maxLength: 128
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+    AdminPasswordResetInput:
+      type: object
+      required: [temporary_password]
+      properties:
+        temporary_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+    AdminCreateInput:
+      type: object
+      required: [username, display_name, role, temporary_password]
+      properties:
+        username:
+          type: string
+          pattern: "^[a-z0-9_.-]{3,32}$"
+        display_name:
+          type: string
+          minLength: 2
+          maxLength: 60
+        role:
+          type: string
+          enum: [super_admin, admin]
+        temporary_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+    AdminAccount:
+      type: object
+      required: [id, username, display_name, role, must_change_password, has_password, telegram_linked, created_at]
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          enum: [super_admin, admin]
+        must_change_password:
+          type: boolean
+        has_password:
+          type: boolean
+        telegram_linked:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
     AdminSession:
       type: object
       required: [authenticated]
       properties:
         authenticated:
           type: boolean
+        admin:
+          $ref: "#/components/schemas/AdminAccount"
+    TelegramLink:
+      type: object
+      required: [url, expires_at]
+      properties:
+        url:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
     AdminCategoryInput:
       type: object
       required: [name, slug, icon]
@@ -866,6 +1117,12 @@ components:
         created_at:
           type: string
           format: date-time
+        admin_name:
+          type: string
+          nullable: true
+          description: >-
+            Who wrote an operator message. Only present on the admin
+            transcript, never shown to customers.
     ChatSession:
       type: object
       required: [thread_id, customer_name, phone]

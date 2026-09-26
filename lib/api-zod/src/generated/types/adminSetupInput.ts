@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AdminLoginInput {
+export interface AdminSetupInput {
   /**
      * @minLength 1
      * @maxLength 64
@@ -14,7 +14,12 @@ export interface AdminLoginInput {
   username: string;
   /**
      * @minLength 1
+     * @maxLength 256
+     */
+  access_code: string;
+  /**
+     * @minLength 8
      * @maxLength 128
      */
-  password: string;
+  new_password: string;
 }

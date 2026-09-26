@@ -169,12 +169,108 @@ export interface OrderStatusInput {
 }
 
 export interface AdminLoginInput {
-  /** @minLength 1 */
-  code: string;
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  username: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  password: string;
+}
+
+export interface AdminSetupInput {
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  username: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  access_code: string;
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  new_password: string;
+}
+
+export interface AdminPasswordChangeInput {
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  current_password: string;
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  new_password: string;
+}
+
+export interface AdminPasswordResetInput {
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  temporary_password: string;
+}
+
+export type AdminCreateInputRole = typeof AdminCreateInputRole[keyof typeof AdminCreateInputRole];
+
+
+export const AdminCreateInputRole = {
+  super_admin: 'super_admin',
+  admin: 'admin',
+} as const;
+
+export interface AdminCreateInput {
+  /** @pattern ^[a-z0-9_.-]{3,32}$ */
+  username: string;
+  /**
+     * @minLength 2
+     * @maxLength 60
+     */
+  display_name: string;
+  role: AdminCreateInputRole;
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  temporary_password: string;
+}
+
+export type AdminAccountRole = typeof AdminAccountRole[keyof typeof AdminAccountRole];
+
+
+export const AdminAccountRole = {
+  super_admin: 'super_admin',
+  admin: 'admin',
+} as const;
+
+export interface AdminAccount {
+  id: number;
+  username: string;
+  display_name: string;
+  role: AdminAccountRole;
+  must_change_password: boolean;
+  has_password: boolean;
+  telegram_linked: boolean;
+  created_at: string;
 }
 
 export interface AdminSession {
   authenticated: boolean;
+  admin?: AdminAccount;
+}
+
+export interface TelegramLink {
+  url: string;
+  expires_at: string;
 }
 
 export interface AdminCategoryInput {
@@ -348,6 +444,8 @@ export interface ChatMessage {
   sender: ChatMessageSender;
   body: string;
   created_at: string;
+  /** Who wrote an operator message. Only present on the admin transcript, never shown to customers. */
+  admin_name?: string | null;
 }
 
 export interface ChatSession {
