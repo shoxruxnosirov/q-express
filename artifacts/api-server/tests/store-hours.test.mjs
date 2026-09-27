@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   deliverySlots,
+  earliestAcceptedAt,
   formatTashkent,
   isOpenNow,
   nextOpenAt,
@@ -78,6 +79,18 @@ test("a slot listed a few minutes ago is still honoured when the button is press
   const [first] = deliverySlots(HOURS, listedAt);
   assert.equal(first.getTime(), tk("2026-09-27T13:00:00").getTime());
   assert.equal(scheduleProblem(first, HOURS, tk("2026-09-27T12:45:00")), undefined, "15 minutes ahead is still fine");
+});
+
+test("the earliest accepted time the storefront is told is exactly the server's boundary", () => {
+  const now = tk("2026-09-27T12:31:00");
+  const earliest = earliestAcceptedAt(now);
+  assert.equal(earliest.getTime(), tk("2026-09-27T12:41:00").getTime());
+  // A slot dropped from the list (the list starts at 13:30 by now) is still
+  // accepted, which is why the storefront keeps it selected.
+  assert.equal(deliverySlots(HOURS, now)[0].getTime(), tk("2026-09-27T13:30:00").getTime());
+  assert.equal(scheduleProblem(tk("2026-09-27T13:00:00"), HOURS, now), undefined);
+  // One grid step before the boundary is refused.
+  assert.match(scheduleProblem(tk("2026-09-27T12:30:00"), HOURS, now), /o‘tib ketdi/);
 });
 
 test("notification dates read naturally on the Tashkent clock", () => {

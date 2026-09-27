@@ -89,13 +89,21 @@ export function deliverySlots(hours: StoreHours, now = new Date()) {
   return slots;
 }
 
+// The earliest delivery time an order placed now is still accepted for. The
+// storefront is told this, so a slot the customer picked a few minutes ago
+// stays selected for as long as it would still be taken, instead of the
+// customer's choice silently moving to a later one.
+export function earliestAcceptedAt(now = new Date()) {
+  return new Date(now.getTime() + SUBMIT_GRACE_MINUTES * MINUTE_MS);
+}
+
 // Why a chosen delivery time cannot be accepted, in Uzbek, or undefined when
 // it can. The same rules as the slot list, so any listed slot passes.
 export function scheduleProblem(when: Date, hours: StoreHours, now = new Date()) {
   if (!Number.isFinite(when.getTime())) return "Yetkazish vaqti noto‘g‘ri";
   if (!hours.acceptingOrders) return "Hozir buyurtma qabul qilinmayapti";
   if (!onGrid(when)) return "Yetkazish vaqtini ro‘yxatdan tanlang";
-  if (when.getTime() < now.getTime() + SUBMIT_GRACE_MINUTES * MINUTE_MS) {
+  if (when.getTime() < earliestAcceptedAt(now).getTime()) {
     return "Bu vaqt o‘tib ketdi, boshqa vaqtni tanlang";
   }
   if (when.getTime() >= horizonEnd(now).getTime()) return "Faqat 3 kun oldinga buyurtma berish mumkin";

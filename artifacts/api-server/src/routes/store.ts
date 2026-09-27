@@ -35,6 +35,7 @@ import {
 } from "@workspace/db/schema";
 import {
   deliverySlots,
+  earliestAcceptedAt,
   formatTashkent,
   isOpenNow,
   isValidTime,
@@ -572,6 +573,7 @@ function storeStatusDto(hours: StoreHours, now = new Date()) {
     close_time: hours.closeTime,
     next_open_at: hours.acceptingOrders && next ? next.toISOString() : null,
     slots: deliverySlots(hours, now).map((slot) => slot.toISOString()),
+    earliest_accepted_at: earliestAcceptedAt(now).toISOString(),
   };
 }
 

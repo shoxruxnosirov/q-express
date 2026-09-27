@@ -41,7 +41,8 @@ test("forged, re-signed, stale or malformed initData is refused", () => {
   const good = signInitData(fields, TOKEN);
   assert.equal(verifyWebAppInitData(good.replace("5001", "5002"), NOW * 1000), undefined, "changing the user breaks the signature");
   assert.equal(verifyWebAppInitData(signInitData(fields, "999:other-bot"), NOW * 1000), undefined, "another bot's signature");
-  assert.equal(verifyWebAppInitData(good, (NOW + 25 * 3600) * 1000), undefined, "older than a day");
+  assert.equal(verifyWebAppInitData(good, (NOW + 59 * 60) * 1000), "5001", "still fine within the hour");
+  assert.equal(verifyWebAppInitData(good, (NOW + 61 * 60) * 1000), undefined, "older than an hour");
   assert.equal(verifyWebAppInitData(good, (NOW - 3600) * 1000), undefined, "from the future");
   assert.equal(verifyWebAppInitData("", NOW * 1000), undefined);
   assert.equal(verifyWebAppInitData("user=%7B%7D&hash=zz", NOW * 1000), undefined);

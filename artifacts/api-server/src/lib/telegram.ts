@@ -445,7 +445,11 @@ export async function registerMenuButton(baseUrl: string): Promise<TelegramResul
 // Checking it proves the Telegram account opening the shop, so a customer who
 // verified their phone once is recognised without a cookie of this webview's.
 // Returns the Telegram user id, or undefined for anything forged or stale.
-const INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
+// An hour, not a day: the data rides in the page's URL, so a copied link would
+// otherwise sign its holder in as the customer for a whole day. Telegram
+// issues fresh data every time the Mini App opens, and after the first
+// sign-in the webview's own cookie carries the session.
+const INIT_DATA_MAX_AGE_SECONDS = 60 * 60;
 export function verifyWebAppInitData(initData: string, now = Date.now()): string | undefined {
   const bot = resolveBotToken();
   if (!("token" in bot) || !initData) return undefined;

@@ -1,7 +1,7 @@
 import { Link } from 'wouter';
 import { Moon } from 'lucide-react';
 import { getGetStoreStatusQueryKey, useGetStoreStatus } from '@workspace/api-client-react';
-import { deliveryLabel } from '@/lib/tashkent-time';
+import { clockTime, dayLabel } from '@/lib/tashkent-time';
 
 // A strip under the header while the shop is shut, so nobody fills a cart
 // expecting a delivery in fifteen minutes.
@@ -15,7 +15,7 @@ export function StoreClosedBanner() {
         <Moon size={15} className="shrink-0" />
         {data.accepting_orders ? (
           <span>
-            Hozir yopiqmiz{data.next_open_at ? `, ${deliveryLabel(new Date(data.next_open_at)).toLowerCase()} ochilamiz` : ''}. Ish vaqti {data.open_time}–{data.close_time}.{' '}
+            Hozir yopiqmiz.{data.next_open_at ? ` ${dayLabel(new Date(data.next_open_at))} soat ${clockTime(new Date(data.next_open_at))} da ochilamiz.` : ''} Ish vaqti {data.open_time}–{data.close_time}.{' '}
             <Link href="/catalog" className="underline underline-offset-2">Oldindan buyurtma bering</Link>
           </span>
         ) : (

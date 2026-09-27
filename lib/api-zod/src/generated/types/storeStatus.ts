@@ -15,6 +15,8 @@ export interface StoreStatus {
   close_time: string;
   /** When the shop next opens, if it is closed now. */
   next_open_at: Date | null;
+  /** The earliest delivery time an order placed now is still accepted for. A slot chosen earlier stays valid until then, even after it has dropped off the slot list. */
+  earliest_accepted_at: Date;
   /** Delivery times a pre-order may choose, soonest first. */
   slots: Date[];
 }

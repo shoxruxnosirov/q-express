@@ -20,15 +20,17 @@ export function StoreHoursCard() {
     setCloseTime(status.data.close_time);
   }, [status.data?.open_time, status.data?.close_time]);
 
-  const save = (acceptingOrders: boolean, text: string) => {
-    update.mutate({ data: { open_time: openTime, close_time: closeTime, accepting_orders: acceptingOrders } }, {
+  // The hours come from the form; the pause switch keeps the saved hours, so
+  // pressing it never also saves times still being edited.
+  const save = (hours: { open: string; close: string }, acceptingOrders: boolean, text: string) => {
+    update.mutate({ data: { open_time: hours.open, close_time: hours.close, accepting_orders: acceptingOrders } }, {
       onSuccess: next => { qc.setQueryData(getGetStoreStatusQueryKey(), next); setMessage({ text }); },
       onError: err => setMessage({ text: apiErrorMessage(err, 'Saqlab bo‘lmadi.'), error: true }),
     });
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    save(status.data?.accepting_orders ?? true, 'Ish vaqti saqlandi.');
+    save({ open: openTime, close: closeTime }, status.data?.accepting_orders ?? true, 'Ish vaqti saqlandi.');
   };
 
   const data = status.data;
@@ -47,7 +49,7 @@ export function StoreHoursCard() {
             </span>
           )}
         </div>
-        <button type="button" data-testid="button-toggle-orders" disabled={update.isPending || !data} onClick={() => save(!accepting, accepting ? 'Buyurtma qabul qilish to‘xtatildi.' : 'Buyurtma qabul qilish qayta yoqildi.')} className={`rounded-full px-4 py-2 text-xs font-bold disabled:opacity-50 ${accepting ? 'border border-[#e6b2a8] text-[#9d493e]' : 'bg-[hsl(var(--primary))] text-white'}`}>
+        <button type="button" data-testid="button-toggle-orders" disabled={update.isPending || !data} onClick={() => data && save({ open: data.open_time, close: data.close_time }, !accepting, accepting ? 'Buyurtma qabul qilish to‘xtatildi.' : 'Buyurtma qabul qilish qayta yoqildi.')} className={`rounded-full px-4 py-2 text-xs font-bold disabled:opacity-50 ${accepting ? 'border border-[#e6b2a8] text-[#9d493e]' : 'bg-[hsl(var(--primary))] text-white'}`}>
           {accepting ? 'Buyurtmalarni to‘xtatish' : 'Buyurtmalarni yoqish'}
         </button>
       </div>
@@ -58,6 +60,11 @@ export function StoreHoursCard() {
           {update.isPending && <LoaderCircle size={14} className="animate-spin" />} Saqlash
         </button>
       </div>
+      {openTime === closeTime && (
+        <p data-testid="text-hours-all-day" className="mt-2 rounded-xl bg-[#fff6dc] p-2.5 text-xs font-semibold text-[#7a4f07]">
+          Ochilish va yopilish bir xil: do‘kon <b>kun bo‘yi ochiq</b> bo‘ladi. Butunlay yopish uchun «Buyurtmalarni to‘xtatish» tugmasidan foydalaning.
+        </p>
+      )}
       <p className="mt-2 text-[11px] text-[hsl(var(--muted-foreground))]">
         Ish vaqtidan tashqarida mijozlar faqat oldindan buyurtma bera oladi, yetkazish vaqti ish vaqti ichidan tanlanadi. Yopilish ochilishdan oldin bo‘lsa (masalan 18:00–02:00), ish vaqti yarim tundan o‘tadi.
       </p>

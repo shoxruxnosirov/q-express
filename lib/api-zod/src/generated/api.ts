@@ -1126,6 +1126,7 @@ export const GetStoreStatusResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "next_open_at": zod.coerce.date().nullable().describe('When the shop next opens, if it is closed now.'),
+  "earliest_accepted_at": zod.coerce.date().describe('The earliest delivery time an order placed now is still accepted for. A slot chosen earlier stays valid until then, even after it has dropped off the slot list.'),
   "slots": zod.array(zod.coerce.date()).describe('Delivery times a pre-order may choose, soonest first.')
 })
 
@@ -1149,6 +1150,7 @@ export const UpdateStoreHoursResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "next_open_at": zod.coerce.date().nullable().describe('When the shop next opens, if it is closed now.'),
+  "earliest_accepted_at": zod.coerce.date().describe('The earliest delivery time an order placed now is still accepted for. A slot chosen earlier stays valid until then, even after it has dropped off the slot list.'),
   "slots": zod.array(zod.coerce.date()).describe('Delivery times a pre-order may choose, soonest first.')
 })
 

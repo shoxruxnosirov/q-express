@@ -1,34 +1,59 @@
-import { useEffect, useMemo } from 'react';
-import { CalendarClock, Check, Zap } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarClock, Check, Info, RefreshCw, Zap } from 'lucide-react';
 import type { StoreStatus } from '@workspace/api-client-react';
 import { clockTime, deliveryLabel, groupSlotsByDay } from '@/lib/tashkent-time';
+import { offeredSlots, reconcileChoice, stillAccepted as acceptedBy, type DeliveryChoice } from '@/lib/delivery-choice';
 
-export type DeliveryChoice = { mode: 'now' | 'later'; slot: string };
+export type { DeliveryChoice };
 
 // "Hozir" while the shop is open; otherwise, or by choice, a pre-order for a
 // slot inside the opening hours. The server checks the same rules.
-export function DeliveryTime({ status, value, onChange }: {
+export function DeliveryTime({ status, failed, onRetry, value, onChange }: {
   status: StoreStatus | undefined;
+  failed: boolean;
+  onRetry: () => void;
   value: DeliveryChoice;
   onChange: (choice: DeliveryChoice) => void;
 }) {
-  const days = useMemo(() => groupSlotsByDay(status?.slots ?? []), [status?.slots]);
   const openNow = Boolean(status?.open_now);
+  // Set when the chosen time ran out and another was picked, so the change
+  // is said out loud rather than made silently. Cleared by any choice.
+  const [notice, setNotice] = useState('');
+  // Whether the shop was open at the previous refresh, to tell "it closed
+  // while you were here" from "it was already closed".
+  const wasOpen = useRef(false);
+  const choose = (choice: DeliveryChoice) => { setNotice(''); onChange(choice); };
 
-  // Closed now: only pre-orders are possible, so switch to them. A chosen slot
-  // that is no longer offered (time moved on) falls back to the first one.
+  // A chosen time stays put while the server would still take it, even after
+  // the minute-by-minute refresh drops it from the list (lib/delivery-choice).
+  const stillAccepted = (slot: string) => Boolean(status && acceptedBy(status, slot));
+  const offered = useMemo(() => (status ? offeredSlots(status, value) : []), [status, value]);
+  const days = useMemo(() => groupSlotsByDay(offered), [offered]);
+
   useEffect(() => {
     if (!status) return;
-    const offered = status.slots.includes(value.slot);
-    const firstSlot = status.slots[0] ?? '';
-    let next = value;
-    if (!openNow && value.mode === 'now') next = { mode: 'later', slot: offered ? value.slot : firstSlot };
-    else if (value.mode === 'later' && !offered) next = { mode: 'later', slot: firstSlot };
+    const { next, change } = reconcileChoice(status, value, wasOpen.current);
+    wasOpen.current = status.open_now;
+    if (change?.reason === 'closed') {
+      setNotice(`Do‘kon yopildi. Buyurtmangiz ${deliveryLabel(new Date(next.slot))} ga oldindan buyurtma sifatida beriladi, kerak bo‘lsa vaqtni o‘zgartiring.`);
+    } else if (change?.reason === 'expired') {
+      setNotice(`Tanlangan vaqt (${deliveryLabel(new Date(change.from))}) o‘tib ketdi. ${deliveryLabel(new Date(next.slot))} tanlandi, kerak bo‘lsa o‘zgartiring.`);
+    }
     // Only a real change is reported, or an empty slot list would loop.
     if (next.mode !== value.mode || next.slot !== value.slot) onChange(next);
-  }, [status, openNow, value, onChange]);
+  }, [status, value, onChange]);
 
-  if (!status) return <div className="mt-3 skeleton h-24 rounded-xl" />;
+  if (!status) {
+    if (failed) {
+      return (
+        <div data-testid="text-status-failed" className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#fdf0ed] p-3 text-sm font-semibold text-[#9d493e]">
+          <span>Yetkazish vaqtlarini yuklab bo‘lmadi.</span>
+          <button type="button" onClick={onRetry} className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-bold"><RefreshCw size={13} /> Qayta urinish</button>
+        </div>
+      );
+    }
+    return <div className="mt-3 skeleton h-24 rounded-xl" />;
+  }
   if (!status.accepting_orders) {
     return <p data-testid="text-orders-paused" className="mt-3 rounded-xl bg-[#fdf0ed] p-3 text-sm font-semibold text-[#9d493e]">Hozir buyurtma qabul qilinmayapti. Birozdan keyin qayta urinib ko‘ring.</p>;
   }
@@ -46,10 +71,10 @@ export function DeliveryTime({ status, value, onChange }: {
         </p>
       )}
       <div className="flex flex-col gap-2 sm:flex-row">
-        <button type="button" data-testid="button-deliver-now" disabled={!openNow} onClick={() => onChange({ ...value, mode: 'now' })} className={option(value.mode === 'now', !openNow)}>
+        <button type="button" data-testid="button-deliver-now" disabled={!openNow} onClick={() => choose({ ...value, mode: 'now' })} className={option(value.mode === 'now', !openNow)}>
           <Zap size={16} className="shrink-0" /><span className="flex-1">Hozir<span className="block text-[11px] font-semibold opacity-80">15–19 daqiqada</span></span>{value.mode === 'now' && <Check size={16} />}
         </button>
-        <button type="button" data-testid="button-deliver-later" disabled={days.length === 0} onClick={() => onChange({ mode: 'later', slot: value.slot || days[0]?.slots[0] || '' })} className={option(value.mode === 'later', days.length === 0)}>
+        <button type="button" data-testid="button-deliver-later" disabled={days.length === 0} onClick={() => choose({ mode: 'later', slot: stillAccepted(value.slot) ? value.slot : days[0]?.slots[0] ?? '' })} className={option(value.mode === 'later', days.length === 0)}>
           <CalendarClock size={16} className="shrink-0" /><span className="flex-1">Oldindan buyurtma<span className="block text-[11px] font-semibold opacity-80">{value.mode === 'later' && value.slot ? deliveryLabel(new Date(value.slot)) : 'Kun va vaqtni tanlang'}</span></span>{value.mode === 'later' && <Check size={16} />}
         </button>
       </div>
@@ -57,17 +82,22 @@ export function DeliveryTime({ status, value, onChange }: {
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Kun</span>
-            <select data-testid="select-delivery-day" value={selectedDay.key} onChange={event => { const day = days.find(d => d.key === Number(event.target.value)); if (day) onChange({ mode: 'later', slot: day.slots[0] }); }} className={selectClass}>
+            <select data-testid="select-delivery-day" value={selectedDay.key} onChange={event => { const day = days.find(d => d.key === Number(event.target.value)); if (day) choose({ mode: 'later', slot: day.slots[0] }); }} className={selectClass}>
               {days.map(day => <option key={day.key} value={day.key}>{day.label}</option>)}
             </select>
           </label>
           <label className="block">
             <span className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Vaqt</span>
-            <select data-testid="select-delivery-time" value={value.slot} onChange={event => onChange({ mode: 'later', slot: event.target.value })} className={selectClass}>
+            <select data-testid="select-delivery-time" value={value.slot} onChange={event => choose({ mode: 'later', slot: event.target.value })} className={selectClass}>
               {selectedDay.slots.map(slot => <option key={slot} value={slot}>{clockTime(new Date(slot))}</option>)}
             </select>
           </label>
         </div>
+      )}
+      {notice && (
+        <p data-testid="text-slot-moved" role="status" className="flex items-start gap-2 rounded-xl bg-[#fff6dc] p-3 text-xs font-semibold text-[#7a4f07]">
+          <Info size={14} className="mt-0.5 shrink-0" />{notice}
+        </p>
       )}
     </div>
   );

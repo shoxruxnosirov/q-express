@@ -6,7 +6,7 @@ import {
   getListOrdersQueryKey,
   useSignInWithTelegram,
 } from '@workspace/api-client-react';
-import { miniApp, startMiniApp } from '@/lib/telegram-mini-app';
+import { isMiniApp, startMiniApp, telegramInitData } from '@/lib/telegram-mini-app';
 
 // Opened as a Mini App, the shop hands Telegram's signed initData to the
 // server once. A customer who verified their phone earlier is then signed in
@@ -17,11 +17,10 @@ export function TelegramSignIn() {
   const attempted = useRef(false);
 
   useEffect(() => {
-    const app = miniApp();
-    if (!app || attempted.current) return;
+    if (!isMiniApp() || attempted.current) return;
     attempted.current = true;
     startMiniApp();
-    signIn.mutate({ data: { init_data: app.initData } }, {
+    signIn.mutate({ data: { init_data: telegramInitData() } }, {
       onSuccess: profile => {
         qc.setQueryData(getGetCustomerProfileQueryKey(), profile);
         if (profile.authenticated) {

@@ -7,7 +7,7 @@
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
-    "test": "node --test tests/address.test.mjs tests/profile.test.mjs tests/stock-rules.test.mjs tests/phone.test.mjs tests/tashkent-time.test.mjs",
+    "test": "node --test tests/address.test.mjs tests/profile.test.mjs tests/stock-rules.test.mjs tests/phone.test.mjs tests/tashkent-time.test.mjs tests/delivery-choice.test.mjs tests/telegram-mini-app.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

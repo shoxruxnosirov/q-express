@@ -1219,7 +1219,7 @@ components:
             not verified on this browser, so the fee applies until it is.
     StoreStatus:
       type: object
-      required: [open_now, accepting_orders, open_time, close_time, next_open_at, slots]
+      required: [open_now, accepting_orders, open_time, close_time, next_open_at, slots, earliest_accepted_at]
       properties:
         open_now:
           type: boolean
@@ -1238,6 +1238,13 @@ components:
           format: date-time
           nullable: true
           description: When the shop next opens, if it is closed now.
+        earliest_accepted_at:
+          type: string
+          format: date-time
+          description: >-
+            The earliest delivery time an order placed now is still accepted
+            for. A slot chosen earlier stays valid until then, even after it
+            has dropped off the slot list.
         slots:
           type: array
           description: Delivery times a pre-order may choose, soonest first.
