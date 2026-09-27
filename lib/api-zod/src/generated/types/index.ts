@@ -33,6 +33,7 @@ export * from './chatSession';
 export * from './chatSessionInput';
 export * from './chatTranscript';
 export * from './customerAddressesInput';
+export * from './customerBlockInput';
 export * from './customerLoginInput';
 export * from './customerLoginLink';
 export * from './customerProfile';

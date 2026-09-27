@@ -8,6 +8,8 @@
 
 export interface AdminChatThread {
   id: number;
+  /** The customer is blocked and cannot read replies. */
+  customer_blocked: boolean;
   customer_name: string;
   phone: string;
   last_message: string;

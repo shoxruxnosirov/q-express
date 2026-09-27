@@ -9,6 +9,11 @@ import type { DeliveryAddress } from './deliveryAddress';
 
 export interface AdminCustomer {
   id: number;
+  blocked: boolean;
+  blocked_at: Date | null;
+  /** The admin who blocked them. */
+  blocked_by: string | null;
+  block_reason: string | null;
   name: string;
   phone: string;
   phone_verified: boolean;

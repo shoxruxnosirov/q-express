@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   CreateOrderBody,
   CreateAdminCategoryBody,
@@ -8,6 +8,7 @@ import {
   GetAdminChatTranscriptParams,
   SendAdminChatMessageBody,
   SendAdminChatMessageParams,
+  DeleteAdminChatParams,
   SendChatMessageBody,
   StartChatSessionBody,
   GetDeliveryFeeEstimateQueryParams,
@@ -53,6 +54,9 @@ import {
   sendLoginCode,
   sendNewOrderNotification,
   sendOperatorReplyNotification,
+  isAdminChat,
+  sendCustomerNotice,
+  sendCustomerReply,
   sendReplyHint,
   sendWelcome,
   webhookSecretMatches,
@@ -65,8 +69,14 @@ import {
   setCustomerCookie,
 } from "../lib/customer-session";
 import {
+  BLOCKED_MESSAGE,
+  hasOrdered,
+  isBlocked,
   isVerified,
   issueLoginCode,
+  phoneIsBlocked,
+  verifiedPhoneIsBlocked,
+  telegramIsBlocked,
   rememberOrderAddress,
   resolveCustomer,
   type SignedInCustomer,
@@ -465,6 +475,22 @@ async function loadThreadByToken(token: string | undefined) {
 // is adopted by the account, unless it already belongs to someone else (a
 // shared phone that switched accounts), which is then not shown at all.
 async function resolveThread(req: Request, res: Response) {
+  const found = await findThread(req, res);
+  // A blocked customer can neither read nor write: checked on the signed-in
+  // account and on the thread's owner, so a leftover chat cookie does not
+  // reopen the conversation after signing out.
+  let blocked = Boolean(found.customer && isBlocked(found.customer.user));
+  if (!blocked && found.thread?.userId && found.thread.userId !== found.customer?.user.id) {
+    blocked = await threadOwnerBlocked(found.thread.userId);
+  }
+  // The chat opens with the customer's first order.
+  const closed = !found.customer || !(await hasOrdered(found.customer.user.id));
+  return { ...found, blocked, closed };
+}
+
+const CHAT_CLOSED_MESSAGE = "Suhbat birinchi buyurtmangizdan keyin ochiladi.";
+
+async function findThread(req: Request, res: Response) {
   const customer = await resolveCustomer(req, res);
   const token = readChatToken(req);
   const cookieThread = await loadThreadByToken(token);
@@ -478,16 +504,96 @@ async function resolveThread(req: Request, res: Response) {
       .limit(1);
     if (own) return { thread: own, customer };
     if (cookieThread && cookieThread.userId === null) {
-      const [adopted] = await db
-        .update(chatThreadsTable)
-        .set({ userId: customer.user.id })
-        .where(eq(chatThreadsTable.id, cookieThread.id))
-        .returning();
+      // Under the same lock as customerThread, so a bot message opening a
+      // thread at this moment cannot leave the customer with two.
+      const adopted = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-thread:${customer.user.id}`}))`);
+        const [mine] = await tx
+          .select()
+          .from(chatThreadsTable)
+          .where(eq(chatThreadsTable.userId, customer.user.id))
+          .orderBy(desc(chatThreadsTable.lastMessageAt))
+          .limit(1);
+        if (mine) return mine;
+        const [taken] = await tx
+          .update(chatThreadsTable)
+          .set({ userId: customer.user.id })
+          .where(and(eq(chatThreadsTable.id, cookieThread.id), isNull(chatThreadsTable.userId)))
+          .returning();
+        return taken;
+      });
       return { thread: adopted, customer };
     }
     if (cookieThread && cookieThread.userId !== customer.user.id) return { thread: undefined, customer };
   }
   return { thread: cookieThread, customer };
+}
+
+// A customer has one conversation. Finding it, and opening it when there is
+// none, happen under a per-customer lock: Telegram delivers webhook updates in
+// parallel, and two messages arriving together must not open two threads.
+async function customerThread(
+  user: { id: number; name: string; phone: string | null },
+  details: { name?: string; phone?: string } = {},
+  // Only the site hands the token to the browser; a thread opened from the
+  // bot is reached through the account, so nobody needs its token.
+  tokenHash = hashChatToken(createChatToken()),
+) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-thread:${user.id}`}))`);
+    const [own] = await tx
+      .select()
+      .from(chatThreadsTable)
+      .where(eq(chatThreadsTable.userId, user.id))
+      .orderBy(desc(chatThreadsTable.lastMessageAt))
+      .limit(1);
+    if (own) return { thread: own, created: false };
+    const [thread] = await tx
+      .insert(chatThreadsTable)
+      .values({
+        tokenHash,
+        customerName: details.name || user.name || "",
+        phone: details.phone || user.phone || "",
+        userId: user.id,
+      })
+      .returning();
+    return { thread, created: true };
+  });
+}
+
+// A six-digit message is almost certainly the bot's sign-in code, typed into
+// the chat instead of the sign-in form. Stored, it would reach every admin,
+// who could then sign in as the customer; it is refused instead.
+function looksLikeLoginCode(body: string) {
+  return /^\d{6}$/.test(body.replace(/\s/g, ""));
+}
+const LOGIN_CODE_IN_CHAT_MESSAGE = "Kirish kodini chatga yozmang: u saytdagi kod maydoniga kiritiladi. Kodni hech kimga bermang.";
+
+// An admin's reply also goes to the customer's own Telegram when they have
+// one on file: verified through the bot, so they have written to it and it
+// may write back. Not to a blocked customer, and not when that Telegram
+// account is itself an admin chat, where it would read as an admin message.
+// Best effort: the reply is stored for the site either way.
+async function deliverReplyToCustomerTelegram(
+  req: Request,
+  userId: number | null,
+  body: string,
+  linkedChatIds: readonly string[],
+) {
+  if (userId === null) return;
+  const [owner] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  if (!owner?.telegramId || !owner.phoneVerifiedAt || owner.blockedAt) return;
+  if (isAdminChat(owner.telegramId, linkedChatIds)) return;
+  const sent = await sendCustomerReply(owner.telegramId, body, publicBaseUrl(req));
+  if (!sent.sent) req.log.warn({ reason: sent.error }, "Telegram reply to customer failed");
+}
+
+// Whether the customer a conversation belongs to is blocked. They cannot read
+// replies, so neither the dashboard nor Telegram should send them any.
+async function threadOwnerBlocked(userId: number | null) {
+  if (userId === null) return false;
+  const [owner] = await db.select({ blockedAt: usersTable.blockedAt }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  return Boolean(owner?.blockedAt);
 }
 
 // The session cookie is rolling: every request that presents a usable token
@@ -595,6 +701,9 @@ function firstOrderFree(previousOrders: number, customer: SignedInCustomer | und
 
 // Bot codes per Telegram account, so a script cannot make the bot spam codes.
 const loginCodeLimiter = createRateLimiter<string>({ windowMs: 60 * 60 * 1000, max: 5 });
+// Anybody can write to the bot. Someone who may not chat is told why a few
+// times, then ignored, so a flood costs one lookup per message and no replies.
+const customerNoticeLimiter = createRateLimiter<string>({ windowMs: 10 * 60 * 1000, max: 3 });
 
 router.get("/categories", async (_req, res, next) => {
   try {
@@ -764,6 +873,12 @@ router.post("/orders", async (req, res, next) => {
     // unverified account inside the same transaction, so a rejected order
     // never leaves an empty account behind.
     const customer = await resolveCustomer(req, res);
+    // A blocked customer is refused whether they come back on the same
+    // browser or on a fresh one with the same number.
+    if ((customer && isBlocked(customer.user)) || (await phoneIsBlocked(phone))) {
+      res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+      return;
+    }
     const newToken = customer ? undefined : createCustomerToken();
     const order = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${phone}))`);
@@ -993,7 +1108,25 @@ router.put("/admin/store-hours", async (req, res, next) => {
 router.get("/leaderboard/weekly", async (_req, res, next) => {
   try {
     const orders = await db.select().from(ordersTable);
-    res.json(weeklyLeaderboard(orders));
+    // A blocked customer is off the leaderboard, under every number they are
+    // known by, so prank orders can neither rank nor win the weekly prize.
+    // A number a verified, unblocked customer owns is theirs, whatever a
+    // blocked account typed (the same rule as phoneIsBlocked).
+    const { rows: blocked } = await db.execute<{ id: number; phone: string | null }>(sql`
+      select b.id, case when exists (
+          select 1 from users v where v.phone = b.phone and v.phone_verified_at is not null and v.blocked_at is null)
+        then null else b.phone end as phone
+      from (
+        select u.id, u.phone from users u where u.blocked_at is not null
+        union
+        select u.id, o.phone from users u join orders o on o.user_id = u.id where u.blocked_at is not null
+      ) b`);
+    const blockedIds = new Set(blocked.map((row) => row.id));
+    const blockedPhones = new Set(blocked.map((row) => row.phone).filter((phone): phone is string => Boolean(phone)));
+    const eligible = orders.filter(
+      (order) => !(order.userId !== null && blockedIds.has(order.userId)) && !blockedPhones.has(order.phone),
+    );
+    res.json(weeklyLeaderboard(eligible));
   } catch (error) {
     return next(error);
   }
@@ -1007,7 +1140,9 @@ router.post("/chat/session", async (req, res, next) => {
     const name = input.name?.trim() ?? "";
     const phone = input.phone?.trim() ?? "";
 
-    const { thread: existing, customer } = await resolveThread(req, res);
+    const { thread: existing, customer, blocked, closed } = await resolveThread(req, res);
+    if (blocked) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    if (closed || !customer) return res.status(403).json({ error: CHAT_CLOSED_MESSAGE, chat_closed: true });
     if (existing) {
       // The customer may have filled in their profile since the thread was
       // opened, so newly supplied details replace blanks without wiping what
@@ -1028,16 +1163,8 @@ router.post("/chat/session", async (req, res, next) => {
     }
 
     const token = createChatToken();
-    const [thread] = await db
-      .insert(chatThreadsTable)
-      .values({
-        tokenHash: hashChatToken(token),
-        customerName: name || customer?.user.name || "",
-        phone: phone || customer?.user.phone || "",
-        userId: customer?.user.id ?? null,
-      })
-      .returning();
-    setChatCookie(res, token);
+    const { thread, created } = await customerThread(customer.user, { name, phone }, hashChatToken(token));
+    if (created) setChatCookie(res, token);
     return res.json({ thread_id: thread.id, customer_name: thread.customerName, phone: thread.phone });
   } catch (error) {
     return next(error);
@@ -1046,7 +1173,9 @@ router.post("/chat/session", async (req, res, next) => {
 
 router.get("/chat/messages", async (req, res, next) => {
   try {
-    const { thread } = await resolveThread(req, res);
+    const { thread, blocked, closed } = await resolveThread(req, res);
+    if (blocked) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    if (closed) return res.status(403).json({ error: CHAT_CLOSED_MESSAGE, chat_closed: true });
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
     await db
       .update(chatThreadsTable)
@@ -1061,8 +1190,11 @@ router.get("/chat/messages", async (req, res, next) => {
 router.post("/chat/messages", async (req, res, next) => {
   try {
     const { body } = SendChatMessageBody.parse(req.body);
-    const { thread } = await resolveThread(req, res);
+    const { thread, blocked, closed } = await resolveThread(req, res);
+    if (blocked) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    if (closed) return res.status(403).json({ error: CHAT_CLOSED_MESSAGE, chat_closed: true });
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    if (looksLikeLoginCode(body)) return res.status(400).json({ error: LOGIN_CODE_IN_CHAT_MESSAGE });
     if (!chatMessageLimiter.allow(thread.id)) {
       return res.status(429).json({ error: "Juda ko‘p xabar yuborildi. Biroz kuting." });
     }
@@ -1178,6 +1310,10 @@ router.post("/telegram/webhook", async (req, res, next) => {
         await sendContactRejected(update.chatId, "not-uzbek");
         return res.json({ ok: true });
       }
+      if ((await verifiedPhoneIsBlocked(phone)) || (await telegramIsBlocked(update.telegramUserId))) {
+        await sendContactRejected(update.chatId, "blocked");
+        return res.json({ ok: true });
+      }
       if (!loginCodeLimiter.allow(update.telegramUserId)) {
         await sendContactRejected(update.chatId, "too-many");
         return res.json({ ok: true });
@@ -1192,6 +1328,65 @@ router.post("/telegram/webhook", async (req, res, next) => {
       return res.json({ ok: true });
     }
 
+    // A customer writing to the bot: stored in their conversation exactly as a
+    // message from the site, under the same rules (a verified phone, so we
+    // know who they are; at least one order; not blocked; the same limit).
+    if (update.kind === "customer-unsupported") {
+      if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "unsupported", publicBaseUrl(req));
+      return res.json({ ok: true });
+    }
+    if (update.kind === "customer-message") {
+      const baseUrl = publicBaseUrl(req);
+      const [customer] = await db
+        .select()
+        .from(usersTable)
+        .where(and(eq(usersTable.telegramId, update.telegramUserId), isNotNull(usersTable.phoneVerifiedAt)))
+        .limit(1);
+      if (!customer) {
+        if (customerNoticeLimiter.allow(update.chatId)) {
+          await sendCustomerNotice(update.chatId, (await telegramIsBlocked(update.telegramUserId)) ? "blocked" : "not-verified", baseUrl);
+        }
+        return res.json({ ok: true });
+      }
+      if (isBlocked(customer)) {
+        if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "blocked", baseUrl);
+        return res.json({ ok: true });
+      }
+      if (!(await hasOrdered(customer.id))) {
+        if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "no-order", baseUrl);
+        return res.json({ ok: true });
+      }
+      if (looksLikeLoginCode(update.body)) {
+        await sendCustomerNotice(update.chatId, "code", baseUrl);
+        return res.json({ ok: true });
+      }
+      const { thread } = await customerThread(customer);
+      if (!chatMessageLimiter.allow(thread.id)) {
+        if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "too-many", baseUrl);
+        return res.json({ ok: true });
+      }
+      const [message] = await db
+        .insert(chatMessagesTable)
+        .values({ threadId: thread.id, sender: "customer", body: update.body, telegramRef: update.ref })
+        .onConflictDoNothing()
+        .returning();
+      // Telegram re-sent an update already stored.
+      if (!message) return res.json({ ok: true });
+      await db
+        .update(chatThreadsTable)
+        .set({ lastMessageAt: message.createdAt, customerReadAt: message.createdAt })
+        .where(eq(chatThreadsTable.id, thread.id));
+
+      const acknowledged = await acknowledgeAdminReply(update.chatId, update.messageId);
+      if (!acknowledged.sent) req.log.warn({ reason: acknowledged.error }, "Telegram customer message acknowledgement failed");
+      const notified = await sendChatMessageNotification(
+        { threadId: thread.id, customerName: thread.customerName, phone: thread.phone, body: message.body },
+        recipients.map((recipient) => recipient.chatId),
+      );
+      if (!notified.sent) req.log.warn({ reason: notified.error }, "Telegram chat notification failed");
+      return res.json({ ok: true });
+    }
+
     const [thread] = await db
       .select()
       .from(chatThreadsTable)
@@ -1199,6 +1394,10 @@ router.post("/telegram/webhook", async (req, res, next) => {
       .limit(1);
     if (!thread) {
       await sendReplyHint(update.chatId, update.messageId, "missing-thread");
+      return res.json({ ok: true });
+    }
+    if (await threadOwnerBlocked(thread.userId)) {
+      await sendReplyHint(update.chatId, update.messageId, "customer-blocked");
       return res.json({ ok: true });
     }
 
@@ -1241,6 +1440,7 @@ router.post("/telegram/webhook", async (req, res, next) => {
       update.chatId,
     );
     if (!copied.sent) req.log.warn({ reason: copied.error }, "Telegram reply copy failed");
+    await deliverReplyToCustomerTelegram(req, thread.userId, message.body, recipients.map((recipient) => recipient.chatId));
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -1435,6 +1635,7 @@ router.get("/admin/chats", async (_req, res, next) => {
           where m.thread_id = ${chatThreadsTable.id}
           order by m.id desc limit 1
         )`,
+        customerBlocked: sql<boolean>`coalesce((select u.blocked_at is not null from users u where u.id = ${chatThreadsTable.userId}), false)`,
         unreadCount: sql<number>`(
           select count(*) from chat_messages m
           where m.thread_id = ${chatThreadsTable.id}
@@ -1454,6 +1655,7 @@ router.get("/admin/chats", async (_req, res, next) => {
         last_message: row.lastMessage ?? "",
         last_message_at: row.lastMessageAt.toISOString(),
         unread_count: Number(row.unreadCount),
+        customer_blocked: Boolean(row.customerBlocked),
       })),
     );
   } catch (error) {
@@ -1481,6 +1683,21 @@ router.get("/admin/chats/:id/messages", async (req, res, next) => {
   }
 });
 
+// Deleting a conversation removes every message in it (ON DELETE CASCADE).
+// The customer's next message opens a fresh one; a reply to the deleted one,
+// from here or from Telegram, finds nothing.
+router.delete("/admin/chats/:id", async (req, res, next) => {
+  try {
+    const { id } = DeleteAdminChatParams.parse(req.params);
+    const deleted = await db.delete(chatThreadsTable).where(eq(chatThreadsTable.id, id)).returning({ id: chatThreadsTable.id });
+    if (deleted.length === 0) return res.status(404).json({ error: "Suhbat topilmadi" });
+    req.log.info({ threadId: id, adminId: signedInAdmin(res).id }, "Chat deleted");
+    return res.status(204).end();
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/admin/chats/:id/messages", async (req, res, next) => {
   try {
     const { id } = SendAdminChatMessageParams.parse(req.params);
@@ -1491,11 +1708,15 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
         id: chatThreadsTable.id,
         customerName: chatThreadsTable.customerName,
         phone: chatThreadsTable.phone,
+        userId: chatThreadsTable.userId,
       })
       .from(chatThreadsTable)
       .where(eq(chatThreadsTable.id, id))
       .limit(1);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    if (await threadOwnerBlocked(thread.userId)) {
+      return res.status(409).json({ error: "Mijoz bloklangan va javoblarni o‘qiy olmaydi" });
+    }
 
     const [message] = await db
       .insert(chatMessagesTable)
@@ -1522,6 +1743,7 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
     if (!copied.sent) {
       req.log.warn({ reason: copied.error }, "Telegram operator reply copy failed");
     }
+    await deliverReplyToCustomerTelegram(req, thread.userId, message.body, await linkedTelegramChatIds());
     return res.status(201).json({ ...chatMessageDto(message), admin_name: admin.displayName });
   } catch (error) {
     return next(error);
@@ -1538,9 +1760,13 @@ router.get("/admin/dashboard", async (_req, res, next) => {
     const weekStart = new Date(now - 7 * 24 * 60 * 60 * 1000);
     const monthStart = new Date(now - 30 * 24 * 60 * 60 * 1000);
     const recent = orders.filter((order) => order.createdAt >= todayStart);
+    // Revenue is money actually earned: only delivered orders, counted on the
+    // day they were delivered. Delivered is the last status, so the time of
+    // the last status change is the delivery time; orders delivered before
+    // that was recorded fall back to when they were placed.
     const sumSince = (from: Date) =>
       orders
-        .filter((order) => order.createdAt >= from && order.status !== "cancelled")
+        .filter((order) => order.status === "delivered" && (order.statusChangedAt ?? order.createdAt) >= from)
         .reduce((sum, order) => sum + money(order.total)!, 0);
     const statuses = (status: string) => orders.filter((order) => order.status === status).length;
     const [{ count: productCount }] = await db.select({ count: sql<number>`count(*)` }).from(productsTable);

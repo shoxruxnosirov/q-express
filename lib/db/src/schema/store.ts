@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   boolean,
   integer,
   jsonb,
@@ -55,6 +56,11 @@ export const usersTable = pgTable("users", {
   // first delivery. Unique among verified customers (partial index).
   phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  // Set by an admin. A blocked customer cannot order, chat, change their
+  // profile or sign in; the block also follows their phone and Telegram id.
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: integer("blocked_by").references((): AnyPgColumn => adminsTable.id, { onDelete: "set null" }),
+  blockReason: text("block_reason"),
 });
 
 // One row per signed-in browser. The cookie holds a random secret and only its
@@ -114,6 +120,9 @@ export const ordersTable = pgTable("orders", {
   statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
   // A pre-order's chosen delivery time; NULL means as soon as possible.
   scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+  // When the admins were reminded that a pre-order is due; set once, so a
+  // reminder is never sent twice.
+  reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
 });
 
 // The shop's one row of settings. Times are "HH:MM" on the Tashkent clock; a

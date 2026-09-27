@@ -41,6 +41,7 @@ import type {
   ChatSessionInput,
   ChatTranscript,
   CustomerAddressesInput,
+  CustomerBlockInput,
   CustomerLoginInput,
   CustomerLoginLink,
   CustomerProfile,
@@ -1390,6 +1391,170 @@ export function useListAdminCustomers<TData = Awaited<ReturnType<typeof listAdmi
 
 
 
+
+export const getBlockCustomerUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/customers/${id}/block`
+}
+
+/**
+ * The block follows the customer's phone number and Telegram account too, so clearing cookies or switching devices does not lift it.
+ * @summary Block a customer from ordering, chatting and signing in (super admins only)
+ */
+export const blockCustomer = async (id: number,
+    customerBlockInput: CustomerBlockInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminCustomer> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AdminCustomer>(getBlockCustomerUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(customerBlockInput)
+  }
+);}
+
+
+
+
+
+export const getBlockCustomerMutationKey = () => ['blockCustomer'] as const;
+
+export const getBlockCustomerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof blockCustomer>>, TError,BlockCustomerMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof blockCustomer>>, TError,BlockCustomerMutationVariables, TContext> => {
+
+const mutationKey = getBlockCustomerMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof blockCustomer>>, BlockCustomerMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  blockCustomer(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BlockCustomerMutationResult = NonNullable<Awaited<ReturnType<typeof blockCustomer>>>
+    export type BlockCustomerMutationBody = BodyType<CustomerBlockInput>
+    export type BlockCustomerMutationError = ErrorType<void>
+    export type BlockCustomerMutationVariables = {id: number;data: BodyType<CustomerBlockInput>}
+
+    /**
+ * @summary Block a customer from ordering, chatting and signing in (super admins only)
+ */
+export const useBlockCustomer = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof blockCustomer>>, TError,BlockCustomerMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof blockCustomer>>,
+        TError,
+        BlockCustomerMutationVariables,
+        TContext
+      > => {
+      return useMutation(getBlockCustomerMutationOptions(options));
+    }
+
+export const getUnblockCustomerUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/customers/${id}/block`
+}
+
+/**
+ * @summary Lift a customer's block (super admins only)
+ */
+export const unblockCustomer = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<AdminCustomer> => {
+
+  return customFetch<AdminCustomer>(getUnblockCustomerUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getUnblockCustomerMutationKey = () => ['unblockCustomer'] as const;
+
+export const getUnblockCustomerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unblockCustomer>>, TError,UnblockCustomerMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unblockCustomer>>, TError,UnblockCustomerMutationVariables, TContext> => {
+
+const mutationKey = getUnblockCustomerMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unblockCustomer>>, UnblockCustomerMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  unblockCustomer(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnblockCustomerMutationResult = NonNullable<Awaited<ReturnType<typeof unblockCustomer>>>
+
+    export type UnblockCustomerMutationError = ErrorType<void>
+    export type UnblockCustomerMutationVariables = {id: number}
+
+    /**
+ * @summary Lift a customer's block (super admins only)
+ */
+export const useUnblockCustomer = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unblockCustomer>>, TError,UnblockCustomerMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unblockCustomer>>,
+        TError,
+        UnblockCustomerMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUnblockCustomerMutationOptions(options));
+    }
 
 export const getAdminLoginUrl = () => {
 
@@ -3353,6 +3518,81 @@ export function useListAdminChats<TData = Awaited<ReturnType<typeof listAdminCha
 
 
 
+
+export const getDeleteAdminChatUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/chats/${id}`
+}
+
+/**
+ * The customer's next message starts a fresh, empty conversation. A later reply to the deleted one, from the dashboard or Telegram, is answered "not found".
+ * @summary Delete a conversation and every message in it
+ */
+export const deleteAdminChat = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAdminChatUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAdminChatMutationKey = () => ['deleteAdminChat'] as const;
+
+export const getDeleteAdminChatMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminChat>>, TError,DeleteAdminChatMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminChat>>, TError,DeleteAdminChatMutationVariables, TContext> => {
+
+const mutationKey = getDeleteAdminChatMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdminChat>>, DeleteAdminChatMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAdminChat(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAdminChatMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdminChat>>>
+
+    export type DeleteAdminChatMutationError = ErrorType<void>
+    export type DeleteAdminChatMutationVariables = {id: number}
+
+    /**
+ * @summary Delete a conversation and every message in it
+ */
+export const useDeleteAdminChat = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminChat>>, TError,DeleteAdminChatMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAdminChat>>,
+        TError,
+        DeleteAdminChatMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteAdminChatMutationOptions(options));
+    }
 
 export const getGetAdminChatTranscriptUrl = (id: number,) => {
 

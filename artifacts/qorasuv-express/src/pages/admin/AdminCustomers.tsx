@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react';
-import { getListAdminCustomersQueryKey, useListAdminCustomers } from '@workspace/api-client-react';
-import { BadgeCheck, MapPin, Search, UserRound } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  getGetAdminSessionQueryKey,
+  getListAdminCustomersQueryKey,
+  useGetAdminSession,
+  useBlockCustomer,
+  useListAdminCustomers,
+  useUnblockCustomer,
+  type AdminCustomer,
+} from '@workspace/api-client-react';
+import { Ban, BadgeCheck, MapPin, Search, UserRound } from 'lucide-react';
+import { apiErrorMessage } from './AdminLogin';
 import { formatAddress } from '@/lib/address';
 import { formatUzPhone } from '@/lib/phone';
 
@@ -14,19 +24,52 @@ const date = (value: string) =>
 export function AdminCustomers() {
   const customers = useListAdminCustomers({ query: { queryKey: getListAdminCustomersQueryKey() } });
   const [search, setSearch] = useState('');
-  const [onlyVerified, setOnlyVerified] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'verified' | 'blocked'>('all');
+  const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const qc = useQueryClient();
+  // Only a super admin may block or unblock; everyone sees who is blocked.
+  const session = useGetAdminSession({ query: { queryKey: getGetAdminSessionQueryKey() } });
+  const canBlock = session.data?.admin?.role === 'super_admin';
+  const block = useBlockCustomer();
+  const unblock = useUnblockCustomer();
+  // Replaces the one row in the cached list, so the page need not refetch all.
+  const put = (updated: AdminCustomer) =>
+    qc.setQueryData<AdminCustomer[]>(getListAdminCustomersQueryKey(), list => list?.map(item => (item.id === updated.id ? updated : item)));
+  const blockCustomer = (customer: AdminCustomer) => {
+    const reason = window.prompt(`${customer.name || 'Mijoz'} bloklansinmi? U buyurtma bera olmaydi, yoza olmaydi va Telegram orqali kira olmaydi. Blok telefon raqamiga ham qo‘yiladi.
+
+Sabab (ixtiyoriy):`, '');
+    if (reason === null) return;
+    if (reason.trim().length > 200) {
+      setMessage({ text: 'Sabab 200 belgidan oshmasin. Qisqaroq yozib, qaytadan bloklang.', error: true });
+      return;
+    }
+    block.mutate({ id: customer.id, data: { reason: reason.trim() } }, {
+      onSuccess: updated => { put(updated); setMessage({ text: `${updated.name || 'Mijoz'} bloklandi.` }); },
+      onError: err => setMessage({ text: apiErrorMessage(err, 'Bloklab bo‘lmadi.'), error: true }),
+    });
+  };
+  const unblockCustomer = (customer: AdminCustomer) => {
+    if (!window.confirm(`${customer.name || 'Mijoz'} blokdan chiqarilsinmi?`)) return;
+    unblock.mutate({ id: customer.id }, {
+      onSuccess: updated => { put(updated); setMessage({ text: `${updated.name || 'Mijoz'} blokdan chiqarildi.` }); },
+      onError: err => setMessage({ text: apiErrorMessage(err, 'Blokdan chiqarib bo‘lmadi.'), error: true }),
+    });
+  };
 
   const shown = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const digits = needle.replace(/\D/g, '');
     return (customers.data ?? []).filter(customer => {
-      if (onlyVerified && !customer.phone_verified) return false;
+      if (filter === 'verified' && !customer.phone_verified) return false;
+      if (filter === 'blocked' && !customer.blocked) return false;
       if (!needle) return true;
       return customer.name.toLowerCase().includes(needle) || (digits.length >= 3 && customer.phone.includes(digits));
     });
-  }, [customers.data, search, onlyVerified]);
+  }, [customers.data, search, filter]);
 
   const verifiedCount = (customers.data ?? []).filter(customer => customer.phone_verified).length;
+  const blockedCount = (customers.data ?? []).filter(customer => customer.blocked).length;
 
   return (
     <div className="container-wide py-7 sm:py-10">
@@ -34,7 +77,7 @@ export function AdminCustomers() {
         <p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Operator workspace / Mijozlar</p>
         <h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Mijozlar</h1>
         <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
-          Jami {customers.data?.length ?? 0} ta, shundan {verifiedCount} tasi Telegram orqali tasdiqlangan.
+          Jami {customers.data?.length ?? 0} ta, shundan {verifiedCount} tasi Telegram orqali tasdiqlangan{blockedCount ? `, ${blockedCount} tasi bloklangan` : ''}.
         </p>
       </div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -42,11 +85,13 @@ export function AdminCustomers() {
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" size={16} />
           <input data-testid="input-customer-search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Ism yoki telefon bo‘yicha qidirish" className="h-11 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] pl-11 pr-4 text-sm outline-none focus:border-[hsl(var(--primary))]" />
         </div>
-        <label className="flex items-center gap-2 text-sm font-semibold">
-          <input type="checkbox" checked={onlyVerified} onChange={event => setOnlyVerified(event.target.checked)} className="h-4 w-4 accent-[hsl(var(--primary))]" />
-          Faqat tasdiqlanganlar
-        </label>
+        <select data-testid="select-customer-filter" value={filter} onChange={event => setFilter(event.target.value as typeof filter)} className="h-11 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 text-sm font-semibold">
+          <option value="all">Hammasi</option>
+          <option value="verified">Faqat tasdiqlanganlar</option>
+          <option value="blocked">Faqat bloklanganlar</option>
+        </select>
       </div>
+      {message && <p role="status" className={`mb-3 rounded-xl p-3 text-sm font-semibold ${message.error ? 'bg-[#fdf0ed] text-[#9d493e]' : 'bg-[#e8efdc] text-[hsl(var(--primary))]'}`}>{message.text}</p>}
       {customers.isLoading ? (
         <div className="space-y-2">{[1, 2, 3].map(i => <div key={i} className="skeleton h-24 rounded-2xl" />)}</div>
       ) : shown.length === 0 ? (
@@ -54,7 +99,7 @@ export function AdminCustomers() {
       ) : (
         <div className="grid gap-2 md:grid-cols-2">
           {shown.map(customer => (
-            <div key={customer.id} data-testid={`row-customer-${customer.id}`} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+            <div key={customer.id} data-testid={`row-customer-${customer.id}`} className={`rounded-2xl border p-4 ${customer.blocked ? 'border-[#e6b2a8] bg-[#fdf6f4]' : 'border-[hsl(var(--border))] bg-[hsl(var(--card))]'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#e8efdc] text-[hsl(var(--primary))]"><UserRound size={17} /></span>
@@ -63,6 +108,7 @@ export function AdminCustomers() {
                     <p className="mt-0.5 flex items-center gap-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                       {customer.phone ? formatUzPhone(customer.phone) : 'Telefon yo‘q'}
                       {customer.phone_verified && <span className="inline-flex items-center gap-1 rounded-full bg-[#e8efdc] px-1.5 py-0.5 text-[9px] font-bold text-[hsl(var(--primary))]"><BadgeCheck size={10} /> tasdiqlangan</span>}
+                      {customer.blocked && <span data-testid={`badge-blocked-${customer.id}`} className="inline-flex items-center gap-1 rounded-full bg-[#fdecea] px-1.5 py-0.5 text-[9px] font-bold text-[#8c1d18]"><Ban size={10} /> bloklangan</span>}
                     </p>
                   </div>
                 </div>
@@ -72,9 +118,21 @@ export function AdminCustomers() {
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[hsl(var(--muted-foreground))]">
-                <span>Jami: <b className="text-[hsl(var(--foreground))]">{money(customer.total_spent)}</b></span>
+                <span>Yetkazilgan: <b className="text-[hsl(var(--foreground))]">{money(customer.total_spent)}</b></span>
                 <span>Oxirgi buyurtma: {customer.last_order_at ? date(customer.last_order_at) : '—'}</span>
               </div>
+              {customer.blocked && (
+                <p className="mt-2 text-xs text-[#8c1d18]">
+                  Bloklangan{customer.blocked_by ? `: ${customer.blocked_by}` : ''}{customer.blocked_at ? `, ${date(customer.blocked_at)}` : ''}{customer.block_reason ? `. Sabab: ${customer.block_reason}` : ''}
+                </p>
+              )}
+              {canBlock && <div className="mt-3 flex justify-end">
+                {customer.blocked ? (
+                  <button type="button" data-testid={`button-unblock-${customer.id}`} onClick={() => unblockCustomer(customer)} disabled={unblock.isPending} className="rounded-full border border-[hsl(var(--primary)/.4)] px-3 py-1.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-50">Blokdan chiqarish</button>
+                ) : (
+                  <button type="button" data-testid={`button-block-${customer.id}`} onClick={() => blockCustomer(customer)} disabled={block.isPending} className="inline-flex items-center gap-1.5 rounded-full border border-[#e6b2a8] px-3 py-1.5 text-xs font-bold text-[#9d493e] disabled:opacity-50"><Ban size={12} /> Bloklash</button>
+                )}
+              </div>}
               {customer.addresses.length > 0 && (
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                   <MapPin size={13} className="mt-0.5 shrink-0 text-[hsl(var(--primary))]" />

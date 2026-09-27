@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startPreorderReminders } from "./lib/preorder-reminders";
 import { registerMenuButton, registerWebhook } from "./lib/telegram";
 
 const rawPort = process.env["PORT"];
@@ -23,6 +24,9 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Every minute: remind the admins 15 minutes before a pre-order is due.
+  startPreorderReminders();
 
   // Point the bot at this server so replies written in Telegram reach the
   // customer. Render supplies RENDER_EXTERNAL_URL to every web service;

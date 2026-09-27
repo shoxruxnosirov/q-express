@@ -270,6 +270,8 @@ export const getCustomerProfileResponseAddressesItemXonadonMax = 10;
 
 export const GetCustomerProfileResponse = zod.object({
   "authenticated": zod.boolean(),
+  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
+  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -302,6 +304,8 @@ export const updateCustomerProfileResponseAddressesItemXonadonMax = 10;
 
 export const UpdateCustomerProfileResponse = zod.object({
   "authenticated": zod.boolean(),
+  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
+  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -338,6 +342,8 @@ export const replaceCustomerAddressesResponseAddressesItemXonadonMax = 10;
 
 export const ReplaceCustomerAddressesResponse = zod.object({
   "authenticated": zod.boolean(),
+  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
+  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -379,6 +385,8 @@ export const verifyCustomerLoginResponseAddressesItemXonadonMax = 10;
 
 export const VerifyCustomerLoginResponse = zod.object({
   "authenticated": zod.boolean(),
+  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
+  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -409,6 +417,8 @@ export const signInWithTelegramResponseAddressesItemXonadonMax = 10;
 
 export const SignInWithTelegramResponse = zod.object({
   "authenticated": zod.boolean(),
+  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
+  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -430,6 +440,8 @@ export const customerLogoutResponseAddressesItemXonadonMax = 10;
 
 export const CustomerLogoutResponse = zod.object({
   "authenticated": zod.boolean(),
+  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
+  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -451,6 +463,10 @@ export const listAdminCustomersResponseAddressesItemXonadonMax = 10;
 
 export const ListAdminCustomersResponseItem = zod.object({
   "id": zod.number().int(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
+  "block_reason": zod.string().nullable(),
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
@@ -464,6 +480,81 @@ export const ListAdminCustomersResponseItem = zod.object({
 }))
 })
 export const ListAdminCustomersResponse = zod.array(ListAdminCustomersResponseItem)
+
+
+/**
+ * The block follows the customer's phone number and Telegram account too, so clearing cookies or switching devices does not lift it.
+ * @summary Block a customer from ordering, chatting and signing in (super admins only)
+ */
+export const BlockCustomerParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const blockCustomerBodyReasonMax = 200;
+
+
+
+export const BlockCustomerBody = zod.object({
+  "reason": zod.string().max(blockCustomerBodyReasonMax).optional()
+})
+
+export const blockCustomerResponseAddressesItemDomMax = 10;
+
+export const blockCustomerResponseAddressesItemXonadonMax = 10;
+
+
+
+export const BlockCustomerResponse = zod.object({
+  "id": zod.number().int(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
+  "block_reason": zod.string().nullable(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "order_count": zod.number().int(),
+  "total_spent": zod.number(),
+  "last_order_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(blockCustomerResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(blockCustomerResponseAddressesItemXonadonMax)
+}))
+})
+
+
+/**
+ * @summary Lift a customer's block (super admins only)
+ */
+export const UnblockCustomerParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const unblockCustomerResponseAddressesItemDomMax = 10;
+
+export const unblockCustomerResponseAddressesItemXonadonMax = 10;
+
+
+
+export const UnblockCustomerResponse = zod.object({
+  "id": zod.number().int(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
+  "block_reason": zod.string().nullable(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "order_count": zod.number().int(),
+  "total_spent": zod.number(),
+  "last_order_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(unblockCustomerResponseAddressesItemDomMax),
+  "xonadon": zod.string().max(unblockCustomerResponseAddressesItemXonadonMax)
+}))
+})
 
 
 /**
@@ -1065,6 +1156,7 @@ export const SendChatMessageResponse = zod.object({
  */
 export const ListAdminChatsResponseItem = zod.object({
   "id": zod.number().int(),
+  "customer_blocked": zod.boolean().describe('The customer is blocked and cannot read replies.'),
   "customer_name": zod.string(),
   "phone": zod.string(),
   "last_message": zod.string(),
@@ -1072,6 +1164,17 @@ export const ListAdminChatsResponseItem = zod.object({
   "unread_count": zod.number().int()
 })
 export const ListAdminChatsResponse = zod.array(ListAdminChatsResponseItem)
+
+
+/**
+ * The customer's next message starts a fresh, empty conversation. A later reply to the deleted one, from the dashboard or Telegram, is answered "not found".
+ * @summary Delete a conversation and every message in it
+ */
+export const DeleteAdminChatParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteAdminChatResponse = zod.void()
 
 
 /**

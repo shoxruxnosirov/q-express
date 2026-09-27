@@ -411,6 +411,10 @@ export interface DeliveryAddress {
 
 export interface CustomerProfile {
   authenticated: boolean;
+  /** An admin has blocked this customer; ordering, chat and profile changes are refused. */
+  blocked: boolean;
+  /** The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard. */
+  chat_open: boolean;
   name: string;
   phone: string;
   phone_verified: boolean;
@@ -453,6 +457,11 @@ export interface CustomerLoginInput {
 
 export interface AdminCustomer {
   id: number;
+  blocked: boolean;
+  blocked_at: string | null;
+  /** The admin who blocked them. */
+  blocked_by: string | null;
+  block_reason: string | null;
   name: string;
   phone: string;
   phone_verified: boolean;
@@ -461,6 +470,11 @@ export interface AdminCustomer {
   last_order_at: string | null;
   created_at: string;
   addresses: DeliveryAddress[];
+}
+
+export interface CustomerBlockInput {
+  /** @maxLength 200 */
+  reason?: string;
 }
 
 export interface WeeklyLeaderboardEntry {
@@ -570,6 +584,8 @@ export interface ChatMessageInput {
 
 export interface AdminChatThread {
   id: number;
+  /** The customer is blocked and cannot read replies. */
+  customer_blocked: boolean;
   customer_name: string;
   phone: string;
   last_message: string;

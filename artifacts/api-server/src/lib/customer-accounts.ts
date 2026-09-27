@@ -40,6 +40,79 @@ export function isVerified(user: CustomerRow) {
   return user.phoneVerifiedAt !== null;
 }
 
+// ---------------------------------------------------------------------------
+// Blocks
+//
+// A block is set on the account, but enforced against its phone number and
+// Telegram account as well: a blocked customer who clears their cookies, or
+// opens the shop on another device, is still the same number and the same
+// Telegram user.
+// ---------------------------------------------------------------------------
+
+export const BLOCKED_MESSAGE = "Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
+
+export function isBlocked(user: CustomerRow) {
+  return user.blockedAt !== null;
+}
+
+// Every number a blocked customer is known by: the one on the account, and
+// every one they put on an order. The account only keeps the latest number,
+// so checking it alone let a customer who had ordered under several numbers
+// come back on a fresh browser with an earlier one.
+//
+// Those numbers are only what somebody typed, though, and a prankster may
+// type a stranger's. A number therefore stops counting against anyone once a
+// verified, unblocked customer owns it: they proved through Telegram that it
+// is theirs, and must not be locked out by what someone else typed.
+export async function phoneIsBlocked(phone: string) {
+  const { rows } = await db.execute(sql`
+    select 1 from users u
+    where u.blocked_at is not null
+      and (u.phone = ${phone}
+           or exists (select 1 from orders o where o.user_id = u.id and o.phone = ${phone}))
+      and not exists (
+        select 1 from users v
+        where v.phone = ${phone} and v.phone_verified_at is not null and v.blocked_at is null)
+    limit 1`);
+  return rows.length > 0;
+}
+
+// Proving a number through the bot (Telegram's contact button, then the code)
+// is refused only when that number belongs to a blocked verified customer. A
+// number that a blocked unverified account merely typed does not stop its
+// real owner from proving it is theirs.
+export async function verifiedPhoneIsBlocked(phone: string) {
+  const [row] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(eq(usersTable.phone, phone), isNotNull(usersTable.phoneVerifiedAt), isNotNull(usersTable.blockedAt)))
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function telegramIsBlocked(telegramUserId: string) {
+  const [row] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(eq(usersTable.telegramId, telegramUserId), isNotNull(usersTable.blockedAt)))
+    .limit(1);
+  return Boolean(row);
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+//
+// The chat opens with the customer's first order, so nobody who has never
+// ordered can fill the database with messages. It then stays open, also after
+// delivery, for questions and complaints; an admin deletes a conversation from
+// the dashboard when it is done with.
+// ---------------------------------------------------------------------------
+
+export async function hasOrdered(userId: number) {
+  const [row] = await db.select({ id: ordersTable.id }).from(ordersTable).where(eq(ordersTable.userId, userId)).limit(1);
+  return Boolean(row);
+}
+
 async function loadAddresses(userId: number): Promise<AddressParts[]> {
   const rows = await db
     .select({ dom: customerAddressesTable.dom, xonadon: customerAddressesTable.xonadon })
@@ -51,9 +124,11 @@ async function loadAddresses(userId: number): Promise<AddressParts[]> {
 }
 
 export async function customerProfileDto(user: CustomerRow | undefined) {
-  if (!user) return { authenticated: false, name: "", phone: "", phone_verified: false, addresses: [] };
+  if (!user) return { authenticated: false, name: "", phone: "", phone_verified: false, addresses: [], blocked: false, chat_open: false };
   return {
     authenticated: true,
+    blocked: isBlocked(user),
+    chat_open: !isBlocked(user) && (await hasOrdered(user.id)),
     name: user.name,
     phone: user.phone ?? "",
     phone_verified: isVerified(user),
@@ -369,7 +444,19 @@ export async function signInVerified(
 
 // Moves everything of an unverified customer into a verified one, then drops
 // the empty account.
+// A block must never be merged away: folding a blocked account into another
+// would delete the row that carries the block, and with it every number it
+// guarded. Callers refuse earlier; this is the last line.
+export class BlockedMergeError extends Error {
+  constructor() {
+    super("A blocked customer cannot be merged into another account");
+    this.name = "BlockedMergeError";
+  }
+}
+
 async function mergeCustomer(tx: Tx, fromId: number, intoId: number) {
+  const [from] = await tx.select({ blockedAt: usersTable.blockedAt }).from(usersTable).where(eq(usersTable.id, fromId)).limit(1);
+  if (from?.blockedAt) throw new BlockedMergeError();
   await tx.update(ordersTable).set({ userId: intoId }).where(eq(ordersTable.userId, fromId));
 
   const addresses = await tx.select().from(customerAddressesTable).where(eq(customerAddressesTable.userId, fromId));
@@ -418,10 +505,11 @@ export async function signInByTelegram(req: Request, res: Response, telegramUser
     .from(usersTable)
     .where(and(eq(usersTable.telegramId, telegramUserId), isNotNull(usersTable.phoneVerifiedAt)))
     .limit(1);
-  if (!target) return undefined;
+  if (!target || isBlocked(target)) return undefined;
 
   const signedIn = await resolveCustomer(req, res);
   if (signedIn?.user.id === target.id) return target;
+  if (signedIn && isBlocked(signedIn.user)) throw new BlockedMergeError();
   if (signedIn) {
     await db.transaction(async (tx) => {
       if (!isVerified(signedIn.user)) await mergeCustomer(tx, signedIn.user.id, target.id);

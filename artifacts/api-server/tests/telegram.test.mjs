@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import {
   parseAdminUpdate,
+  preorderReminderText,
+  customerReplyText,
+  isAdminChat,
   registerWebhook,
   sendChatMessageNotification,
   sendNewOrderNotification,
@@ -483,3 +486,51 @@ test("phones in notifications are written for people, not as raw digits", async 
   assert.ok(text.includes("<b>Telefon:</b> odd"), "anything else is shown as stored");
 });
 
+
+test("a pre-order reminder says how long is left, or that the time has come", () => {
+  const base = {
+    orderNumber: "QE-1",
+    customerName: "<Ali>",
+    phone: "998901112233",
+    address: "12-dom",
+    total: "45000",
+    scheduledLabel: "27.09 09:00",
+  };
+  const soon = preorderReminderText({ ...base, minutesLeft: 15 });
+  assert.match(soon, /OLDINDAN BUYURTMA · 15 daqiqa qoldi/);
+  assert.match(soon, /Yetkazish vaqti:<\/b> 27\.09 09:00/);
+  assert.ok(soon.includes("&lt;Ali&gt;"), "names are escaped");
+  assert.ok(soon.includes("+998 90 111 22 33"));
+  assert.match(preorderReminderText({ ...base, minutesLeft: 0 }), /vaqti keldi/);
+  assert.match(preorderReminderText({ ...base, minutesLeft: -5 }), /vaqti keldi/);
+});
+
+test("a customer's private message to the bot is taken as a chat message", () => {
+  configureInbound();
+  const own = (message) => parseAdminUpdate({ update_id: 5, message: { message_id: 11, chat: { id: 7001, type: "private" }, from: { id: 7001 }, ...message } });
+  assert.deepEqual(own({ text: "  non kam keldi " }), {
+    kind: "customer-message", chatId: "7001", telegramUserId: "7001", body: "non kam keldi", messageId: 11, ref: "7001:11",
+  });
+  // A reply to the bot's message is still just the customer's own message:
+  // it can only ever land in their own conversation.
+  const note = { from: { id: BOT_ID, is_bot: true }, text: "YANGI XABAR · Suhbat #1\n\nx" };
+  assert.equal(own({ text: "javob", reply_to_message: note }).kind, "customer-message");
+  assert.equal(own({ photo: [{}] }).kind, "customer-unsupported");
+  assert.equal(own({ text: "x".repeat(1001) }).kind, "customer-unsupported");
+  assert.equal(own({ text: "/help" }).kind, "ignore");
+  // Groups, and a message whose sender is not the chat, are not customers.
+  assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: -100, type: "group" }, from: { id: 7001 }, text: "salom" } }).kind, "ignore");
+  assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: 7002, type: "private" }, from: { id: 7001 }, text: "salom" } }).kind, "ignore");
+  // The admin chat keeps its meaning.
+  assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: 5550001, type: "private" }, from: { id: 5550001 }, text: "salom" } }).kind, "hint");
+});
+
+test("the shop's reply to a customer is escaped and the admin chats are recognised", () => {
+  configureInbound();
+  const text = customerReplyText("<b>10</b> daqiqada");
+  assert.ok(text.includes("&lt;b&gt;10&lt;/b&gt; daqiqada"));
+  assert.match(text, /Q express javobi/);
+  assert.equal(isAdminChat("5550001", []), true, "the owner's chat");
+  assert.equal(isAdminChat("777", ["777"]), true, "a linked admin");
+  assert.equal(isAdminChat("7001", ["777"]), false);
+});

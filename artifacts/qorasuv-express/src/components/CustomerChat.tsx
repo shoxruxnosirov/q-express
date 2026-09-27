@@ -3,11 +3,14 @@ import { LoaderCircle, MessageCircle, Send, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getGetChatTranscriptQueryKey,
+  getGetCustomerProfileQueryKey,
   useGetChatTranscript,
+  useGetCustomerProfile,
   useSendChatMessage,
   useStartChatSession,
 } from '@workspace/api-client-react';
 import { readProfile } from '@/lib/profile';
+import { apiErrorMessage } from '@/pages/admin/AdminLogin';
 
 // Polling rather than a socket: the free instance sleeps after fifteen idle
 // minutes, so a long-lived connection would spend its life reconnecting. Open
@@ -51,20 +54,42 @@ const forgetStarted = () => {
 const time = (value: string) =>
   new Intl.DateTimeFormat('uz-UZ', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 
+// "?chat=open" is how the bot's "Chatni ochish" button lands: the shop opens
+// with the conversation already showing. The parameter is dropped at once, so
+// a reload or a shared link does not keep reopening it.
+function takeOpenRequest() {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('chat') !== 'open') return false;
+    url.searchParams.delete('chat');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function CustomerChat() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  // Held until the chat is known to be open: inside Telegram the profile may
+  // first answer before the Mini App sign-in has finished.
+  const [openRequested, setOpenRequested] = useState(takeOpenRequest);
   const [started, setStarted] = useState(hasStarted);
   const [draft, setDraft] = useState('');
   const [failed, setFailed] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  // The bubble appears with the customer's first order, so nobody who never
+  // ordered can fill the chat. Blocked customers never see it.
+  const customer = useGetCustomerProfile({ query: { queryKey: getGetCustomerProfileQueryKey() } });
+  const chatOpen = Boolean(customer.data?.chat_open);
 
   const startSession = useStartChatSession();
   const sendMessage = useSendChatMessage();
   const transcript = useGetChatTranscript({
     query: {
       queryKey: getGetChatTranscriptQueryKey(),
-      enabled: started,
+      enabled: started && chatOpen,
       refetchInterval: open ? OPEN_POLL_MS : CLOSED_POLL_MS,
       // A browser whose conversation was cleared server-side should stop asking.
       retry: false,
@@ -98,7 +123,7 @@ export function CustomerChat() {
           setStarted(true);
           setFailed('');
         },
-        onError: () => setFailed('Suhbatni ochib bo‘lmadi. Keyinroq urinib ko‘ring.'),
+        onError: err => setFailed(apiErrorMessage(err, 'Suhbatni ochib bo‘lmadi. Keyinroq urinib ko‘ring.')),
         onSettled: () => {
           starting.current = false;
         },
@@ -118,7 +143,26 @@ export function CustomerChat() {
     if (!started || !transcript.isError) return;
     forgetStarted();
     setStarted(false);
-  }, [started, transcript.isError]);
+    // The admin may have deleted the conversation (the next open starts a new
+    // one), or blocked the customer: re-read the profile to find out.
+    queryClient.invalidateQueries({ queryKey: getGetCustomerProfileQueryKey() });
+  }, [started, transcript.isError, queryClient]);
+
+  useEffect(() => {
+    if (!openRequested || !chatOpen) return;
+    setOpenRequested(false);
+    setOpen(true);
+  }, [openRequested, chatOpen]);
+
+  // No chat (signed out, or blocked): forget the conversation.
+  useEffect(() => {
+    if (chatOpen || !customer.isSuccess) return;
+    setOpen(false);
+    if (!hasStarted() && !started) return;
+    forgetStarted();
+    setStarted(false);
+    queryClient.removeQueries({ queryKey: getGetChatTranscriptQueryKey() });
+  }, [chatOpen, customer.isSuccess, started, queryClient]);
 
   // Reading the thread is what clears the dot.
   useEffect(() => {
@@ -143,10 +187,12 @@ export function CustomerChat() {
           setFailed('');
           queryClient.invalidateQueries({ queryKey: getGetChatTranscriptQueryKey() });
         },
-        onError: () => setFailed('Xabar yuborilmadi. Qaytadan urinib ko‘ring.'),
+        onError: err => setFailed(apiErrorMessage(err, 'Xabar yuborilmadi. Qaytadan urinib ko‘ring.')),
       },
     );
   };
+
+  if (!chatOpen) return null;
 
   if (!open) {
     return (

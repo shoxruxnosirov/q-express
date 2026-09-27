@@ -248,6 +248,12 @@ export type AdminUpdate =
   | { kind: "reply"; chatId: string; threadId: number; body: string; messageId: number; ref: string }
   // Something a known admin sent that we cannot route; answer with a hint.
   | { kind: "hint"; chatId: string; messageId: number }
+  // A customer writing to the bot in their private chat: it goes into their
+  // conversation with the shop, as if written on the site.
+  | { kind: "customer-message"; chatId: string; telegramUserId: string; body: string; messageId: number; ref: string }
+  // A customer sent something the chat cannot hold (a photo, a sticker, a
+  // text over the limit); answer with what is accepted.
+  | { kind: "customer-unsupported"; chatId: string; messageId: number }
   // Not ours to handle: a stranger's chat, an edit, and so on.
   | { kind: "ignore" };
 
@@ -293,7 +299,22 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
   if (isPrivate && CUSTOMER_START_PATTERN.test(body)) return { kind: "customer-start", chatId };
   if (isPrivate && BARE_START_PATTERN.test(body)) return { kind: "welcome", chatId };
 
-  if (!isAdminChat) return { kind: "ignore" };
+  if (!isAdminChat) {
+    // A private chat's id is the user's own; anything else (a group the bot
+    // was added to) is not a customer talking to the shop.
+    const senderId = message.from?.id;
+    if (!isPrivate || typeof senderId !== "number" || String(senderId) !== chatId) return { kind: "ignore" };
+    if (body.startsWith("/")) return { kind: "ignore" };
+    if (!body || body.length > MAX_REPLY_LENGTH) return { kind: "customer-unsupported", chatId, messageId: message.message_id };
+    return {
+      kind: "customer-message",
+      chatId,
+      telegramUserId: chatId,
+      body,
+      messageId: message.message_id,
+      ref: `${chatId}:${message.message_id}`,
+    };
+  }
 
   const original = message.reply_to_message;
   const botId = Number(bot.token.split(":")[0]);
@@ -329,11 +350,63 @@ export async function acknowledgeAdminReply(chatId: string, messageId: number): 
   return error === undefined ? { sent } : { sent, error };
 }
 
-export async function sendReplyHint(chatId: string, messageId: number, reason: "unroutable" | "missing-thread") {
+export async function sendReplyHint(chatId: string, messageId: number, reason: "unroutable" | "missing-thread" | "customer-blocked") {
   const text = reason === "missing-thread"
     ? "Bu suhbat topilmadi, javob yuborilmadi."
-    : `Mijozga javob berish uchun uning xabariga <b>Reply</b> qilib yozing (matn ${MAX_REPLY_LENGTH} belgidan oshmasin).`;
+    : reason === "customer-blocked"
+      ? "Bu mijoz bloklangan, javob yuborilmadi."
+      : `Mijozga javob berish uchun uning xabariga <b>Reply</b> qilib yozing (matn ${MAX_REPLY_LENGTH} belgidan oshmasin).`;
   return sendToChat(chatId, text, messageId);
+}
+
+// ---------------------------------------------------------------------------
+// The shop's replies in the customer's own Telegram
+//
+// A customer who verified their phone through the bot has a Telegram account
+// on file and has written to the bot, so the bot may write back. An admin's
+// reply is sent there too, and the customer can answer right in the bot.
+// ---------------------------------------------------------------------------
+
+function webAppButton(text: string, baseUrl: string, path: string) {
+  return { inline_keyboard: [[{ text, web_app: { url: `${baseUrl.replace(/\/+$/, "")}${path}` } }]] };
+}
+
+export function customerReplyText(body: string) {
+  return ["💬 <b>Q express javobi:</b>", "", escapeHtml(body), "", "<i>Javob yozish uchun shu yerga yozing.</i>"].join("\n");
+}
+
+// Whether a chat is an admin's: the owner's chat or one linked to an admin.
+export function isAdminChat(chatId: string, linkedChatIds: readonly string[]) {
+  return recipientChats(linkedChatIds).includes(chatId);
+}
+
+export function sendCustomerReply(telegramUserId: string, body: string, baseUrl: string) {
+  return sendToChatWithMarkup(telegramUserId, customerReplyText(body), webAppButton("💬 Chatni ochish", baseUrl, "/?chat=open"));
+}
+
+export type CustomerNotice = "not-verified" | "no-order" | "blocked" | "unsupported" | "too-many" | "code";
+
+export function customerNoticeText(reason: CustomerNotice) {
+  switch (reason) {
+    case "code":
+      return "Kirish kodini botga yozmang: u saytdagi kod maydoniga kiritiladi. Xabar yuborilmadi. Kodni hech kimga bermang.";
+    case "not-verified":
+      return "Do‘kon bilan yozishish uchun avval saytda telefon raqamingizni tasdiqlang yoki do‘kondagi chatdan yozing.";
+    case "no-order":
+      return "Suhbat birinchi buyurtmangizdan keyin ochiladi. Do‘konni ochib buyurtma bering 👇";
+    case "blocked":
+      return "Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
+    case "unsupported":
+      return `Faqat matnli xabar qabul qilinadi (${MAX_REPLY_LENGTH} belgigacha).`;
+    case "too-many":
+      return "Juda ko‘p xabar yuborildi. Biroz kuting.";
+  }
+}
+
+export function sendCustomerNotice(chatId: string, reason: CustomerNotice, baseUrl: string) {
+  const text = customerNoticeText(reason);
+  if (reason !== "not-verified" && reason !== "no-order") return sendToChat(chatId, text);
+  return sendToChatWithMarkup(chatId, text, webAppButton("🛒 Do‘konni ochish", baseUrl, "/"));
 }
 
 // ---------------------------------------------------------------------------
@@ -484,12 +557,14 @@ export function sendLoginCode(chatId: string, code: string) {
   );
 }
 
-export function sendContactRejected(chatId: string, reason: "not-own" | "not-uzbek" | "too-many") {
+export function sendContactRejected(chatId: string, reason: "not-own" | "not-uzbek" | "too-many" | "blocked") {
   const text = reason === "not-own"
     ? "Faqat o‘zingizning raqamingizni tugma orqali yuboring."
     : reason === "not-uzbek"
       ? "Faqat O‘zbekiston raqamlari (+998) qabul qilinadi."
-      : "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.";
+      : reason === "blocked"
+        ? "Bu hisob do‘kon tomonidan bloklangan."
+        : "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.";
   return sendToChatWithMarkup(chatId, text, { remove_keyboard: true });
 }
 
@@ -556,6 +631,38 @@ export async function sendOperatorReplyNotification(
   // Nobody else to tell is not a failure.
   if (chats.length === 0) return { sent: true };
   return sendToChats(chats, lines.join("\n"));
+}
+
+// The nudge before a pre-order is due. `minutesLeft` is how long until the
+// chosen time; zero or less means it is due now (the server may have been
+// asleep when the reminder was first due).
+export function preorderReminderText(order: {
+  orderNumber: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  total: string | number | null;
+  scheduledLabel: string;
+  minutesLeft: number;
+}) {
+  const when = order.minutesLeft > 0 ? `${order.minutesLeft} daqiqa qoldi` : "vaqti keldi";
+  return [
+    `⏰ <b>OLDINDAN BUYURTMA · ${when}</b>`,
+    "",
+    `<b>Order:</b> #${escapeHtml(order.orderNumber)}`,
+    `<b>Yetkazish vaqti:</b> ${escapeHtml(order.scheduledLabel)}`,
+    `<b>Mijoz:</b> ${escapeHtml(order.customerName)}`,
+    `<b>Telefon:</b> ${escapeHtml(formatUzPhone(order.phone))}`,
+    `<b>Manzil:</b> ${escapeHtml(order.address)}`,
+    `<b>Jami:</b> ${formatMoney(order.total)}`,
+  ].join("\n");
+}
+
+export async function sendPreorderReminder(
+  order: Parameters<typeof preorderReminderText>[0],
+  linkedChatIds: readonly string[] = [],
+): Promise<TelegramResult> {
+  return sendToChats(recipientChats(linkedChatIds), preorderReminderText(order));
 }
 
 export async function sendNewOrderNotification(

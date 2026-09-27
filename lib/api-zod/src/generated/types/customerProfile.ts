@@ -9,6 +9,10 @@ import type { DeliveryAddress } from './deliveryAddress';
 
 export interface CustomerProfile {
   authenticated: boolean;
+  /** An admin has blocked this customer; ordering, chat and profile changes are refused. */
+  blocked: boolean;
+  /** The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard. */
+  chat_open: boolean;
   name: string;
   phone: string;
   phone_verified: boolean;

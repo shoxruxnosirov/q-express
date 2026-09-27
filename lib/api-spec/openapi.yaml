@@ -311,6 +311,58 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AdminCustomer"
+  /admin/customers/{id}/block:
+    post:
+      operationId: blockCustomer
+      tags: [admin]
+      summary: Block a customer from ordering, chatting and signing in (super admins only)
+      description: >-
+        The block follows the customer's phone number and Telegram account
+        too, so clearing cookies or switching devices does not lift it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerBlockInput"
+      responses:
+        "200":
+          description: The customer, now blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCustomer"
+        "403":
+          description: Not a super admin
+        "404":
+          description: No such customer
+    delete:
+      operationId: unblockCustomer
+      tags: [admin]
+      summary: Lift a customer's block (super admins only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The customer, no longer blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCustomer"
+        "403":
+          description: Not a super admin
+        "404":
+          description: No such customer
   /admin/auth:
     post:
       operationId: adminLogin
@@ -739,6 +791,23 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AdminChatThread"
+  /admin/chats/{id}:
+    delete:
+      operationId: deleteAdminChat
+      tags: [admin]
+      summary: Delete a conversation and every message in it
+      description: The customer's next message starts a fresh, empty conversation. A later reply to the deleted one, from the dashboard or Telegram, is answered "not found".
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: No such conversation
   /admin/chats/{id}/messages:
     get:
       operationId: getAdminChatTranscript
@@ -1275,10 +1344,16 @@ components:
           maxLength: 10
     CustomerProfile:
       type: object
-      required: [authenticated, name, phone, phone_verified, addresses]
+      required: [authenticated, name, phone, phone_verified, addresses, blocked, chat_open]
       properties:
         authenticated:
           type: boolean
+        blocked:
+          type: boolean
+          description: An admin has blocked this customer; ordering, chat and profile changes are refused.
+        chat_open:
+          type: boolean
+          description: The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.
         name:
           type: string
         phone:
@@ -1334,10 +1409,23 @@ components:
           pattern: "^[0-9]{6}$"
     AdminCustomer:
       type: object
-      required: [id, name, phone, phone_verified, order_count, total_spent, last_order_at, created_at, addresses]
+      required: [id, name, phone, phone_verified, order_count, total_spent, last_order_at, created_at, addresses, blocked, blocked_at, blocked_by, block_reason]
       properties:
         id:
           type: integer
+        blocked:
+          type: boolean
+        blocked_at:
+          type: string
+          format: date-time
+          nullable: true
+        blocked_by:
+          type: string
+          nullable: true
+          description: The admin who blocked them.
+        block_reason:
+          type: string
+          nullable: true
         name:
           type: string
         phone:
@@ -1359,6 +1447,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DeliveryAddress"
+    CustomerBlockInput:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 200
     WeeklyLeaderboardEntry:
       type: object
       required: [rank, customer_name, phone_masked, order_count, is_winner, prize]
@@ -1511,10 +1605,13 @@ components:
           maxLength: 1000
     AdminChatThread:
       type: object
-      required: [id, customer_name, phone, last_message, last_message_at, unread_count]
+      required: [id, customer_name, phone, last_message, last_message_at, unread_count, customer_blocked]
       properties:
         id:
           type: integer
+        customer_blocked:
+          type: boolean
+          description: The customer is blocked and cannot read replies.
         customer_name:
           type: string
         phone:
