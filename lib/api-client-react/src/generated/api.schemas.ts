@@ -415,6 +415,20 @@ export interface DeliveryAddress {
   xonadon: string;
 }
 
+/**
+ * The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer's Telegram language when the shop first meets them.
+ * @nullable
+ */
+export type CustomerProfileLanguage = typeof CustomerProfileLanguage[keyof typeof CustomerProfileLanguage] | null;
+
+
+export const CustomerProfileLanguage = {
+  uz: 'uz',
+  'uz-Cyrl': 'uz-Cyrl',
+  ru: 'ru',
+  en: 'en',
+} as const;
+
 export interface CustomerProfile {
   authenticated: boolean;
   /** An admin has blocked this customer; ordering, chat and profile changes are refused. */
@@ -428,13 +442,33 @@ export interface CustomerProfile {
   /** The account belongs to a Telegram account (signed in through the Mini App or the bot). */
   telegram_linked: boolean;
   addresses: DeliveryAddress[];
+  /**
+     * The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer's Telegram language when the shop first meets them.
+     * @nullable
+     */
+  language: CustomerProfileLanguage;
 }
+
+/**
+ * The language the customer chose for the shop.
+ */
+export type CustomerProfileInputLanguage = typeof CustomerProfileInputLanguage[keyof typeof CustomerProfileInputLanguage];
+
+
+export const CustomerProfileInputLanguage = {
+  uz: 'uz',
+  'uz-Cyrl': 'uz-Cyrl',
+  ru: 'ru',
+  en: 'en',
+} as const;
 
 export interface CustomerProfileInput {
   /** @maxLength 80 */
   name?: string;
   /** @maxLength 32 */
   phone?: string;
+  /** The language the customer chose for the shop. */
+  language?: CustomerProfileInputLanguage;
 }
 
 export interface CustomerAddressesInput {

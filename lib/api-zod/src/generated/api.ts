@@ -307,7 +307,8 @@ export const GetCustomerProfileResponse = zod.object({
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(getCustomerProfileResponseAddressesItemDomMax),
   "xonadon": zod.string().max(getCustomerProfileResponseAddressesItemXonadonMax)
-}))
+})),
+  "language": zod.union([zod.literal('uz'),zod.literal('uz-Cyrl'),zod.literal('ru'),zod.literal('en'),zod.literal(null)]).nullable().describe('The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer\'s Telegram language when the shop first meets them.')
 })
 
 
@@ -322,7 +323,8 @@ export const updateCustomerProfileBodyPhoneMax = 32;
 
 export const UpdateCustomerProfileBody = zod.object({
   "name": zod.string().max(updateCustomerProfileBodyNameMax).optional(),
-  "phone": zod.string().max(updateCustomerProfileBodyPhoneMax).optional()
+  "phone": zod.string().max(updateCustomerProfileBodyPhoneMax).optional(),
+  "language": zod.enum(['uz', 'uz-Cyrl', 'ru', 'en']).optional().describe('The language the customer chose for the shop.')
 })
 
 export const updateCustomerProfileResponseAddressesItemDomMax = 10;
@@ -342,7 +344,8 @@ export const UpdateCustomerProfileResponse = zod.object({
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(updateCustomerProfileResponseAddressesItemDomMax),
   "xonadon": zod.string().max(updateCustomerProfileResponseAddressesItemXonadonMax)
-}))
+})),
+  "language": zod.union([zod.literal('uz'),zod.literal('uz-Cyrl'),zod.literal('ru'),zod.literal('en'),zod.literal(null)]).nullable().describe('The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer\'s Telegram language when the shop first meets them.')
 })
 
 
@@ -381,7 +384,8 @@ export const ReplaceCustomerAddressesResponse = zod.object({
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(replaceCustomerAddressesResponseAddressesItemDomMax),
   "xonadon": zod.string().max(replaceCustomerAddressesResponseAddressesItemXonadonMax)
-}))
+})),
+  "language": zod.union([zod.literal('uz'),zod.literal('uz-Cyrl'),zod.literal('ru'),zod.literal('en'),zod.literal(null)]).nullable().describe('The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer\'s Telegram language when the shop first meets them.')
 })
 
 
@@ -424,7 +428,8 @@ export const SignInWithTelegramResponse = zod.object({
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(signInWithTelegramResponseProfileAddressesItemDomMax),
   "xonadon": zod.string().max(signInWithTelegramResponseProfileAddressesItemXonadonMax)
-}))
+})),
+  "language": zod.union([zod.literal('uz'),zod.literal('uz-Cyrl'),zod.literal('ru'),zod.literal('en'),zod.literal(null)]).nullable().describe('The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer\'s Telegram language when the shop first meets them.')
 }),
   "session_token": zod.string().describe('The session\'s secret, also set as the cookie. The Mini App sends it as "Authorization: Bearer <token>" on every request, because a webview inside Telegram Web may refuse the cookie of a site in a frame.')
 })
@@ -450,7 +455,8 @@ export const CustomerLogoutResponse = zod.object({
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(customerLogoutResponseAddressesItemDomMax),
   "xonadon": zod.string().max(customerLogoutResponseAddressesItemXonadonMax)
-}))
+})),
+  "language": zod.union([zod.literal('uz'),zod.literal('uz-Cyrl'),zod.literal('ru'),zod.literal('en'),zod.literal(null)]).nullable().describe('The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer\'s Telegram language when the shop first meets them.')
 })
 
 

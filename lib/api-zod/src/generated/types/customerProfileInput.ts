@@ -5,10 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { CustomerProfileInputLanguage } from './customerProfileInputLanguage';
 
 export interface CustomerProfileInput {
   /** @maxLength 80 */
   name?: string;
   /** @maxLength 32 */
   phone?: string;
+  /** The language the customer chose for the shop. */
+  language?: CustomerProfileInputLanguage;
 }

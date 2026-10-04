@@ -11,6 +11,16 @@ const range = (count: number) => Array.from({ length: count }, (_, index) => Str
 export const DOM_OPTIONS = range(200);
 export const XONADON_OPTIONS = range(100);
 
+// The options a search shows: those starting with what was typed first
+// (typing 1 brings 1, 10, 11 … before 21), then those merely containing it.
+export function matchOptions(options: readonly string[], query: string) {
+  const typed = query.trim().toLowerCase();
+  if (typed === '') return [...options];
+  const starts = options.filter(option => option.toLowerCase().startsWith(typed));
+  const contains = options.filter(option => !option.toLowerCase().startsWith(typed) && option.toLowerCase().includes(typed));
+  return [...starts, ...contains];
+}
+
 export type AddressParts = { dom: string; xonadon: string };
 
 export const emptyAddress: AddressParts = { dom: '', xonadon: '' };

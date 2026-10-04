@@ -37,6 +37,8 @@ export * from './customerBlockInput';
 export * from './customerLoginLink';
 export * from './customerProfile';
 export * from './customerProfileInput';
+export * from './customerProfileInputLanguage';
+export * from './customerProfileLanguage';
 export * from './customerSession';
 export * from './customerSessionSource';
 export * from './deliveryAddress';

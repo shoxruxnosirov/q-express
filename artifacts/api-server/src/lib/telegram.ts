@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { inScript, translate, type Lang } from "./i18n.ts";
+import { botMessages } from "./messages.ts";
 
 const TELEGRAM_API = "https://api.telegram.org";
 
@@ -357,7 +359,7 @@ type TelegramUpdate = {
   message?: {
     message_id?: number;
     chat?: { id?: number | string; type?: string };
-    from?: { id?: number; first_name?: string; last_name?: string; username?: string };
+    from?: { id?: number; first_name?: string; last_name?: string; username?: string; language_code?: string };
     text?: string;
     contact?: { phone_number?: string; user_id?: number };
     reply_to_message?: {
@@ -372,7 +374,9 @@ export type AdminUpdate =
   // from any chat, because linking is how a new chat becomes known.
   | { kind: "link"; chatId: string; code: string; messageId: number }
   // Anyone opening the bot: greet them and offer the shop as a Mini App.
-  | { kind: "welcome"; chatId: string }
+  // languageCode is the sender's Telegram language (message.from.language_code),
+  // present only when Telegram sent one, here and on the customer kinds below.
+  | { kind: "welcome"; chatId: string; languageCode?: string }
   // A reply to one of our chat notifications: deliver it to that thread.
   | { kind: "reply"; chatId: string; threadId: number; body: string; messageId: number; ref: string }
   // Something a known admin sent that we cannot route; answer with a hint.
@@ -380,10 +384,10 @@ export type AdminUpdate =
   // A customer writing to the bot in their private chat: it goes into their
   // conversation with the shop, the same one the Mini App shows. The name is
   // Telegram's, for an account the message itself creates.
-  | { kind: "customer-message"; chatId: string; telegramUserId: string; name: string; username: string | null; body: string; messageId: number; ref: string }
+  | { kind: "customer-message"; chatId: string; telegramUserId: string; name: string; username: string | null; body: string; messageId: number; ref: string; languageCode?: string }
   // A customer sent something the chat cannot hold (a photo, a sticker, a
   // text over the limit); answer with what is accepted.
-  | { kind: "customer-unsupported"; chatId: string; messageId: number }
+  | { kind: "customer-unsupported"; chatId: string; messageId: number; languageCode?: string }
   // A group, supergroup or channel the bot was added to: the shop works in
   // private chats only, so the bot leaves it.
   | { kind: "leave"; chatId: string }
@@ -430,8 +434,12 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
   if (link) return { kind: "link", chatId, code: link[1], messageId: message.message_id };
 
   const isAdminChat = recipientChats(linkedChatIds).includes(chatId);
+  // The sender's Telegram language, so the bot can answer a customer in it.
+  // Left out when Telegram sends none (or something that is not a code).
+  const code = message.from?.language_code;
+  const language = typeof code === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8})*$/.test(code) ? { languageCode: code } : {};
   // /start is somebody opening the bot, admins included, and gets the shop.
-  if (BARE_START_PATTERN.test(body)) return { kind: "welcome", chatId };
+  if (BARE_START_PATTERN.test(body)) return { kind: "welcome", chatId, ...language };
 
   if (!isAdminChat) {
     // A private chat's id is the user's own; a message whose sender is not
@@ -439,7 +447,7 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
     const senderId = message.from?.id;
     if (typeof senderId !== "number" || String(senderId) !== chatId) return { kind: "ignore" };
     if (body.startsWith("/")) return { kind: "ignore" };
-    if (!body || body.length > MAX_REPLY_LENGTH) return { kind: "customer-unsupported", chatId, messageId: message.message_id };
+    if (!body || body.length > MAX_REPLY_LENGTH) return { kind: "customer-unsupported", chatId, messageId: message.message_id, ...language };
     const name = [message.from?.first_name, message.from?.last_name]
       .filter((part): part is string => typeof part === "string" && part.trim() !== "")
       .join(" ")
@@ -454,6 +462,7 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
       body,
       messageId: message.message_id,
       ref: `${chatId}:${message.message_id}`,
+      ...language,
     };
   }
 
@@ -512,8 +521,14 @@ function webAppButton(text: string, baseUrl: string, path: string) {
   return { inline_keyboard: [[{ text, web_app: { url: `${baseUrl.replace(/\/+$/, "")}${path}` } }]] };
 }
 
-export function customerReplyText(body: string) {
-  return ["💬 <b>Q express javobi</b>", RULE, quote(body), "", "<i>✍️ Javob yozish uchun shu yerga yozing</i>"].join("\n");
+// The customer-facing messages below take the customer's language; Uzbek
+// unless told otherwise.
+function botText(lang: Lang, key: keyof typeof botMessages.uz, params?: Record<string, string | number>) {
+  return translate(botMessages, lang, key, params);
+}
+
+export function customerReplyText(body: string, lang: Lang = "uz") {
+  return [botText(lang, "replyTitle"), RULE, quote(body), "", botText(lang, "replyHint")].join("\n");
 }
 
 // Whether a chat is an admin's: the owner's chat or one linked to an admin.
@@ -521,41 +536,41 @@ export function isAdminChat(chatId: string, linkedChatIds: readonly string[]) {
   return recipientChats(linkedChatIds).includes(chatId);
 }
 
-export function sendCustomerReply(telegramUserId: string, body: string, baseUrl: string) {
-  return sendToChatWithMarkup(telegramUserId, customerReplyText(body), webAppButton("💬 Chatni ochish", baseUrl, "/?chat=open"));
+export function sendCustomerReply(telegramUserId: string, body: string, baseUrl: string, lang: Lang = "uz") {
+  return sendToChatWithMarkup(telegramUserId, customerReplyText(body, lang), webAppButton(botText(lang, "buttonOpenChat"), baseUrl, "/?chat=open"));
 }
 
 export type CustomerNotice = "blocked" | "unsupported" | "too-many";
 
-export function customerNoticeText(reason: CustomerNotice) {
+export function customerNoticeText(reason: CustomerNotice, lang: Lang = "uz") {
   switch (reason) {
     case "blocked":
-      return "⛔️ Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
+      return botText(lang, "noticeBlocked");
     case "unsupported":
-      return `ℹ️ Faqat matnli xabar qabul qilinadi (${MAX_REPLY_LENGTH} belgigacha).`;
+      return botText(lang, "noticeUnsupported", { max: MAX_REPLY_LENGTH });
     case "too-many":
-      return "⏳ Juda ko‘p xabar yuborildi. Bir daqiqadan keyin yozing.";
+      return botText(lang, "noticeTooMany");
   }
 }
 
 // The keyboard is removed too: chats of earlier builds may still show the
 // old "share your number" button, and a contact sent with it is not text.
-export function sendCustomerNotice(chatId: string, reason: CustomerNotice) {
-  return sendToChatWithMarkup(chatId, customerNoticeText(reason), { remove_keyboard: true });
+export function sendCustomerNotice(chatId: string, reason: CustomerNotice, lang: Lang = "uz") {
+  return sendToChatWithMarkup(chatId, customerNoticeText(reason, lang), { remove_keyboard: true });
 }
 
 // What the customer wrote in the Mini App's chat, copied into their chat with
 // the bot, so the bot holds the whole conversation. Silent: they wrote it.
-export function customerEchoText(body: string) {
-  return ["✉️ <b>Siz yozdingiz</b>", quote(body)].join("\n");
+export function customerEchoText(body: string, lang: Lang = "uz") {
+  return [botText(lang, "echoTitle"), quote(body)].join("\n");
 }
 
-export async function sendCustomerEcho(telegramUserId: string, body: string) {
+export async function sendCustomerEcho(telegramUserId: string, body: string, lang: Lang = "uz") {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
   const { sent, error } = await callBotApi(bot.token, "sendMessage", {
     chat_id: telegramUserId,
-    text: customerEchoText(body),
+    text: customerEchoText(body, lang),
     parse_mode: "HTML",
     disable_notification: true,
   });
@@ -580,17 +595,21 @@ async function sendToChatWithMarkup(chatId: string, text: string, replyMarkup: R
 
 export type WelcomeOffer = { name: string; price: number; oldPrice: number | null };
 
-function formatSum(value: number) {
-  return `${Math.round(value).toLocaleString("ru-RU")} so‘m`;
+// "12 000 so‘m" / "12 000 сум" / "12 000 UZS".
+function formatSum(value: number, lang: Lang = "uz") {
+  return `${Math.round(value).toLocaleString("ru-RU")} ${botText(lang, "currency")}`;
 }
 
 // The greeting a customer gets on /start: the brand banner, what the shop
 // promises, today's biggest discounts from the catalogue, and buttons that
 // open the site inside Telegram. Web-app buttons need no BotFather setup.
+// In the customer's language; the product names are the shop's own (Uzbek),
+// only transliterated for Uzbek Cyrillic.
 export function welcomeMessage(
   baseUrl: string,
   offers: readonly WelcomeOffer[],
   hours?: { openTime: string; closeTime: string },
+  lang: Lang = "uz",
 ) {
   const root = baseUrl.replace(/\/+$/, "");
   const deals = offers
@@ -598,19 +617,20 @@ export function welcomeMessage(
     .slice(0, 3)
     .map((offer) => {
       const percent = Math.round((1 - offer.price / offer.oldPrice!) * 100);
-      return `▫️ ${escapeHtml(shorten(offer.name, 60))}: <b>${formatSum(offer.price)}</b> <s>${formatSum(offer.oldPrice!)}</s> (−${percent}%)`;
+      const name = escapeHtml(shorten(inScript(offer.name, lang), 60));
+      return `▫️ ${name}: <b>${formatSum(offer.price, lang)}</b> <s>${formatSum(offer.oldPrice!, lang)}</s> (−${percent}%)`;
     });
   const caption = [
-    "🛒 <b>Q express'ga xush kelibsiz!</b>",
-    "Qorasuvda oziq-ovqat eshigingizgacha.",
+    botText(lang, "welcomeTitle"),
+    botText(lang, "welcomeTagline"),
     RULE,
-    "⚡ <b>15–19 daqiqada</b> yetkazamiz",
-    ...(hours ? [`🕕 Ish vaqti: <b>${escapeHtml(hours.openTime)}–${escapeHtml(hours.closeTime)}</b>, yopiq paytda oldindan buyurtma bering`] : []),
-    "🎁 <b>Har bir xonadonga birinchi yetkazish bepul</b>",
-    "💵 Naqd, Click, Payme, Uzcard yoki Humo",
-    ...(deals.length ? [RULE, "🔥 <b>Bugungi chegirmalar</b>", ...deals] : []),
+    botText(lang, "welcomeSpeed"),
+    ...(hours ? [botText(lang, "welcomeHours", { open: escapeHtml(hours.openTime), close: escapeHtml(hours.closeTime) })] : []),
+    botText(lang, "welcomeFreeDelivery"),
+    botText(lang, "welcomePayment"),
+    ...(deals.length ? [RULE, botText(lang, "welcomeDeals"), ...deals] : []),
     RULE,
-    "👇 Pastdagi tugmani bosing, do‘kon shu yerning o‘zida ochiladi",
+    botText(lang, "welcomeHint"),
   ].join("\n");
   const app = (text: string, path: string) => ({ text, web_app: { url: `${root}${path}` } });
   return {
@@ -619,8 +639,8 @@ export function welcomeMessage(
     parse_mode: "HTML",
     reply_markup: {
       inline_keyboard: [
-        [app("🛒 Do‘konni ochish", "/")],
-        [app("🔥 Chegirmalar", "/catalog?sort=discount"), app("📦 Buyurtmalarim", "/orders")],
+        [app(botText(lang, "buttonOpenShop"), "/")],
+        [app(botText(lang, "buttonDeals"), "/catalog?sort=discount"), app(botText(lang, "buttonOrders"), "/orders")],
       ],
     },
   };
@@ -631,20 +651,24 @@ export async function sendWelcome(
   baseUrl: string,
   offers: readonly WelcomeOffer[],
   hours?: { openTime: string; closeTime: string },
+  lang: Lang = "uz",
 ) {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
-  const { sent, error } = await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, ...welcomeMessage(baseUrl, offers, hours) });
+  const { sent, error } = await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, ...welcomeMessage(baseUrl, offers, hours, lang) });
   return error === undefined ? { sent } : { sent, error };
 }
 
 // The button next to the message box in every private chat with the bot opens
 // the shop too. Set on each start, like the webhook; it is idempotent.
-export async function registerMenuButton(baseUrl: string): Promise<TelegramResult> {
+// Without a chat, the default button for everyone (Uzbek); with one, that
+// customer's own button in their language.
+export async function registerMenuButton(baseUrl: string, chatId?: string, lang: Lang = "uz"): Promise<TelegramResult> {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
   const { sent, error } = await callBotApi(bot.token, "setChatMenuButton", {
-    menu_button: { type: "web_app", text: "Do‘kon", web_app: { url: `${baseUrl.replace(/\/+$/, "")}/` } },
+    ...(chatId ? { chat_id: chatId } : {}),
+    menu_button: { type: "web_app", text: translate(botMessages, lang, "menuButton"), web_app: { url: `${baseUrl.replace(/\/+$/, "")}/` } },
   });
   return error === undefined ? { sent } : { sent, error };
 }

@@ -1,4 +1,6 @@
 import { isCompleteAddress, normalizeAddress, parseAddress, type AddressParts } from './address.ts';
+import { translateText, type Lang } from './i18n-text.ts';
+import messages from '../i18n/messages/profileErrors.ts';
 
 // The shop has no accounts: orders carry the customer's details directly and
 // `users` is never written. So the profile is whatever this browser remembers,
@@ -116,8 +118,8 @@ export function clearProfile() {
 
 // Checkout will not accept an order below these thresholds, so the profile
 // applies the same rules rather than storing something that cannot be used.
-export function profileFieldError(profile: Pick<CustomerProfile, 'name' | 'phone'>) {
-  if (profile.name.trim() && profile.name.trim().length < 2) return 'Ism kamida 2 ta harf bo‘lsin.';
-  if (profile.phone.trim() && profile.phone.trim().length < 7) return 'Telefon raqam to‘liq emas.';
+export function profileFieldError(profile: Pick<CustomerProfile, 'name' | 'phone'>, lang: Lang = 'uz') {
+  if (profile.name.trim() && profile.name.trim().length < 2) return translateText(messages, lang, 'nameShort');
+  if (profile.phone.trim() && profile.phone.trim().length < 7) return translateText(messages, lang, 'phoneShort');
   return '';
 }

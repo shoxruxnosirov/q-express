@@ -1,3 +1,6 @@
+import { translate, type Lang } from "./i18n.ts";
+import { scheduleMessages, type ScheduleProblem } from "./messages.ts";
+
 // Opening hours and pre-order slots, on the shop's clock: Tashkent, UTC+5 with
 // no daylight saving. Pure, so the rules are tested without a database.
 
@@ -97,19 +100,22 @@ export function earliestAcceptedAt(now = new Date()) {
   return new Date(now.getTime() + SUBMIT_GRACE_MINUTES * MINUTE_MS);
 }
 
-// Why a chosen delivery time cannot be accepted, in Uzbek, or undefined when
-// it can. The same rules as the slot list, so any listed slot passes.
-export function scheduleProblem(when: Date, hours: StoreHours, now = new Date()) {
-  if (!Number.isFinite(when.getTime())) return "Yetkazish vaqti noto‘g‘ri";
-  if (!hours.acceptingOrders) return "Hozir buyurtma qabul qilinmayapti";
-  if (!onGrid(when)) return "Yetkazish vaqtini ro‘yxatdan tanlang";
-  if (when.getTime() < earliestAcceptedAt(now).getTime()) {
-    return "Bu vaqt o‘tib ketdi, boshqa vaqtni tanlang";
-  }
-  if (when.getTime() >= horizonEnd(now).getTime()) return "Faqat 3 kun oldinga buyurtma berish mumkin";
-  if (!withinHours(when, hours.openTime, hours.closeTime)) {
-    return `Yetkazish faqat ish vaqtida: ${hours.openTime}–${hours.closeTime}`;
-  }
+// Why a chosen delivery time cannot be accepted, in the customer's language
+// (Uzbek unless told otherwise), or undefined when it can. The same rules as
+// the slot list, so any listed slot passes.
+export function scheduleProblem(when: Date, hours: StoreHours, now = new Date(), lang: Lang = "uz") {
+  const key = scheduleProblemKey(when, hours, now);
+  if (key === undefined) return undefined;
+  return translate(scheduleMessages, lang, key, { days: SLOT_DAYS, open: hours.openTime, close: hours.closeTime });
+}
+
+function scheduleProblemKey(when: Date, hours: StoreHours, now: Date): ScheduleProblem | undefined {
+  if (!Number.isFinite(when.getTime())) return "invalidTime";
+  if (!hours.acceptingOrders) return "notAccepting";
+  if (!onGrid(when)) return "offGrid";
+  if (when.getTime() < earliestAcceptedAt(now).getTime()) return "passed";
+  if (when.getTime() >= horizonEnd(now).getTime()) return "tooFar";
+  if (!withinHours(when, hours.openTime, hours.closeTime)) return "outsideHours";
   return undefined;
 }
 

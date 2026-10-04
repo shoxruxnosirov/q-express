@@ -1,0 +1,47 @@
+import { defineMessages } from '../core';
+
+// {when} is a delivery label such as "Ertaga, 06:00" / "Завтра, 06:00".
+export default defineMessages({
+  uz: {
+    closedMoved: 'Do‘kon yopildi. Buyurtmangiz {when} ga oldindan buyurtma sifatida beriladi, kerak bo‘lsa vaqtni o‘zgartiring.',
+    expiredMoved: 'Tanlangan vaqt ({from}) o‘tib ketdi. {when} tanlandi, kerak bo‘lsa o‘zgartiring.',
+    loadFailed: 'Yetkazish vaqtlarini yuklab bo‘lmadi.',
+    retry: 'Qayta urinish',
+    paused: 'Hozir buyurtma qabul qilinmayapti. Birozdan keyin qayta urinib ko‘ring.',
+    closedNow: 'Do‘kon hozir yopiq. Ish vaqti {open}–{close}. Yetkazish vaqtini tanlab, oldindan buyurtma bering.',
+    now: 'Hozir',
+    nowHint: '15–19 daqiqada',
+    later: 'Oldindan buyurtma',
+    pickDayTime: 'Kun va vaqtni tanlang',
+    day: 'Kun',
+    time: 'Vaqt',
+  },
+  ru: {
+    closedMoved: 'Магазин закрылся. Заказ будет оформлен как предзаказ ({when}). При необходимости измените время.',
+    expiredMoved: 'Выбранное время ({from}) уже прошло. Выбрано: {when}. При необходимости измените.',
+    loadFailed: 'Не удалось загрузить время доставки.',
+    retry: 'Повторить',
+    paused: 'Сейчас заказы не принимаются. Попробуйте чуть позже.',
+    closedNow: 'Магазин сейчас закрыт. Часы работы: {open}–{close}. Выберите время доставки и оформите предзаказ.',
+    now: 'Сейчас',
+    nowHint: 'за 15–19 минут',
+    later: 'Предзаказ',
+    pickDayTime: 'Выберите день и время',
+    day: 'День',
+    time: 'Время',
+  },
+  en: {
+    closedMoved: 'The shop has closed. Your order will be placed as a pre-order ({when}). Change the time if you need to.',
+    expiredMoved: 'The time you chose ({from}) has passed. {when} is selected instead. Change it if you need to.',
+    loadFailed: 'Could not load delivery times.',
+    retry: 'Try again',
+    paused: 'We are not taking orders right now. Please try again a little later.',
+    closedNow: 'The shop is closed now. Opening hours: {open}–{close}. Pick a delivery time to pre-order.',
+    now: 'Now',
+    nowHint: 'in 15–19 minutes',
+    later: 'Pre-order',
+    pickDayTime: 'Choose a day and time',
+    day: 'Day',
+    time: 'Time',
+  },
+});

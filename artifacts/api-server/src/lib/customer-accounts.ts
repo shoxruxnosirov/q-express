@@ -18,6 +18,8 @@ import {
 } from "./customer-session";
 import { createRateLimiter } from "./rate-window";
 import { parseOrderAddress, type AddressParts } from "./order-rules";
+import { isLang, langFromCode, translate, type Lang } from "./i18n";
+import { accountMessages } from "./messages";
 
 export type { AddressParts };
 
@@ -53,7 +55,10 @@ export function isVerified(user: CustomerRow) {
 // another device is still the same Telegram user.
 // ---------------------------------------------------------------------------
 
-export const BLOCKED_MESSAGE = "Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
+// What a blocked customer is told, in their language.
+export function blockedMessage(lang: Lang) {
+  return translate(accountMessages, lang, "blocked");
+}
 
 export function isBlocked(user: CustomerRow) {
   return user.blockedAt !== null;
@@ -114,7 +119,7 @@ async function loadAddresses(userId: number): Promise<AddressParts[]> {
 // bare account row where the device does not matter.
 export async function customerProfileDto(customer: SignedInCustomer | CustomerRow | undefined) {
   if (!customer) {
-    return { authenticated: false, name: "", phone: "", phone_verified: false, telegram_linked: false, addresses: [], blocked: false, chat_open: false };
+    return { authenticated: false, name: "", phone: "", phone_verified: false, telegram_linked: false, addresses: [], blocked: false, chat_open: false, language: null };
   }
   const user = "user" in customer ? customer.user : customer;
   const blocked = "user" in customer ? customerIsBlocked(customer) : isBlocked(user);
@@ -127,6 +132,8 @@ export async function customerProfileDto(customer: SignedInCustomer | CustomerRo
     phone_verified: isVerified(user),
     telegram_linked: user.telegramId !== null,
     addresses: await loadAddresses(user.id),
+    // The language the customer reads the shop in; null until known.
+    language: isLang(user.language) ? user.language : null,
   };
 }
 
@@ -463,7 +470,13 @@ export async function signInByTelegram(
 
 // The customer of a Telegram account that wrote to the bot, created on the
 // first message: writing to the bot is as good a way in as opening the shop.
-export async function telegramCustomer(telegramUserId: string, identity: TelegramIdentity): Promise<CustomerRow> {
+// A new account starts in the language of the sender's Telegram; an existing
+// one keeps whatever language it has.
+export async function telegramCustomer(
+  telegramUserId: string,
+  identity: TelegramIdentity,
+  languageCode?: string | null,
+): Promise<CustomerRow> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`telegram:${telegramUserId}`}))`);
     const [existing] = await tx.select().from(usersTable).where(eq(usersTable.telegramId, telegramUserId)).limit(1);
@@ -474,10 +487,28 @@ export async function telegramCustomer(telegramUserId: string, identity: Telegra
     }
     const [created] = await tx
       .insert(usersTable)
-      .values({ name: identity.name, telegramId: telegramUserId, lastSeenAt: new Date(), ...identityValues(identity) })
+      .values({
+        name: identity.name,
+        telegramId: telegramUserId,
+        lastSeenAt: new Date(),
+        language: langFromCode(languageCode),
+        ...identityValues(identity),
+      })
       .returning();
     return created;
   });
+}
+
+// Saves the language an account reads the shop in, unless it already has
+// one. Returns the row as it now is.
+export async function rememberLanguage(user: CustomerRow, lang: Lang): Promise<CustomerRow> {
+  if (isLang(user.language)) return user;
+  const [updated] = await db
+    .update(usersTable)
+    .set({ language: lang })
+    .where(and(eq(usersTable.id, user.id), isNull(usersTable.language)))
+    .returning();
+  return updated ?? user;
 }
 
 // ---------------------------------------------------------------------------

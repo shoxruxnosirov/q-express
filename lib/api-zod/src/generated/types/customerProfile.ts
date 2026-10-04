@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { CustomerProfileLanguage } from './customerProfileLanguage';
 import type { DeliveryAddress } from './deliveryAddress';
 
 export interface CustomerProfile {
@@ -20,4 +21,9 @@ export interface CustomerProfile {
   /** The account belongs to a Telegram account (signed in through the Mini App or the bot). */
   telegram_linked: boolean;
   addresses: DeliveryAddress[];
+  /**
+     * The language the customer reads the shop in: Uzbek (Latin), Uzbek (Cyrillic), Russian or English. Null until known; set from the customer's Telegram language when the shop first meets them.
+     * @nullable
+     */
+  language: CustomerProfileLanguage;
 }

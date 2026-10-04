@@ -1,12 +1,15 @@
 import { getGetCustomerLoginLinkQueryKey, useGetCustomerLoginLink } from '@workspace/api-client-react';
 import { Send } from 'lucide-react';
 import { isMiniApp } from '@/lib/telegram-mini-app';
+import { useT } from '@/i18n';
+import messages from '@/i18n/messages/openInTelegram';
 
 // The shop lives in Telegram: there the customer is signed in by their
 // Telegram account, with their profile, orders and the chat that the bot
 // shares. A browser outside Telegram orders as a guest and is offered the way
 // in. Inside the Mini App there is nothing to show.
 export function OpenInTelegram({ title, hint }: { title: string; hint: string }) {
+  const { t } = useT(messages);
   const link = useGetCustomerLoginLink({
     query: { queryKey: getGetCustomerLoginLinkQueryKey(), staleTime: Infinity, retry: false, enabled: !isMiniApp() },
   });
@@ -17,7 +20,7 @@ export function OpenInTelegram({ title, hint }: { title: string; hint: string })
       <p className="mt-1 text-xs leading-relaxed text-[#2c5e75]">{hint}</p>
       {link.data ? (
         <a href={link.data.url} target="_blank" rel="noreferrer" data-testid="link-open-telegram" className="tap mt-3 flex h-11 items-center justify-center gap-2 rounded-full bg-[#229ED9] text-sm font-extrabold text-white">
-          <Send size={15} /> Telegram'da ochish
+          <Send size={15} /> {t('open')}
         </a>
       ) : (
         <div className="mt-3 skeleton h-11 rounded-full" />

@@ -1,0 +1,12 @@
+-- The shop speaks four languages: Uzbek in Latin and in Cyrillic, Russian and
+-- English.
+--
+-- Each customer's language is kept on their account, so the bot writes to
+-- them in it (the welcome, the shop's replies, its notices) and the Mini App
+-- opens in it on any device. One of 'uz', 'uz-Cyrl', 'ru' or 'en'; NULL until
+-- known. It is set from the customer's Telegram language the first time the
+-- shop meets them, and afterwards by the customer choosing one. The admins
+-- still read everything in Uzbek.
+--
+-- Idempotent: an existing database is left untouched.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "language" text;

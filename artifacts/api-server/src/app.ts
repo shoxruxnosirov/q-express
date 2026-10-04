@@ -5,6 +5,8 @@ import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { requestLang, translate } from "./lib/i18n";
+import { commonMessages } from "./lib/messages";
 
 const app: Express = express();
 
@@ -61,14 +63,15 @@ if (clientDirSetting) {
 }
 
 // Keep malformed request errors client-visible without leaking database or
-// provider details. Route-specific validation adds the more useful Uzbek
-// messages for quantity and stock rules.
+// provider details, in the language the web app asked for (X-Lang).
+// Route-specific validation adds the more useful messages for quantity and
+// stock rules.
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof Error && error.name === "ZodError") {
-    return res.status(400).json({ error: "Kiritilgan ma'lumotlar noto‘g‘ri" });
+    return res.status(400).json({ error: translate(commonMessages, requestLang(req), "invalidInput") });
   }
   req.log.error({ error }, "Unhandled API error");
-  return res.status(500).json({ error: "Serverda xatolik yuz berdi" });
+  return res.status(500).json({ error: translate(commonMessages, requestLang(req), "serverError") });
 });
 
 export default app;

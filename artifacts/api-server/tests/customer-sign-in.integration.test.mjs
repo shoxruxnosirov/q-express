@@ -576,3 +576,61 @@ test("an address too long for one Telegram message is refused", async () => {
   const r = await placeOrder(miniA, long, "+998 90 111 22 33", "Aziz aka");
   assert.equal(r.status, 400);
 });
+
+test("the shop answers in the customer's language and remembers it on the account", async () => {
+  // A browser without Telegram asking in Russian is told so in Russian.
+  const ru = await fetch(`${BASE}/orders`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-lang": "ru" },
+    body: JSON.stringify({ customer_name: "Ivan", phone: "+998 90 111 22 33", address: "1-dom, 1-xonadon", payment_method: "cash", items: [{ product_id: 1, quantity: 1 }] }),
+  });
+  const ruBody = await ru.json();
+  assert.equal(ru.status, 403);
+  assert.match(ruBody.error, /[А-Яа-я]/, ruBody.error);
+  assert.equal(ruBody.telegram_required, true);
+  // Without a header the shop speaks Uzbek, as before.
+  const uz = await placeOrder(new Device("plain-uz"), "1-dom, 1-xonadon");
+  assert.match(uz.body.error, /Telegram/);
+  assert.doesNotMatch(uz.body.error, /[А-Яа-я]/);
+  // A Telegram user who opens the Mini App with a Russian interface gets Russian kept on the account.
+  const ivan = new Device("ivan");
+  const signIn = await fetch(`${BASE}/customer/telegram`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-lang": "ru", "user-agent": "ivan" },
+    body: JSON.stringify({ init_data: initData({ id: 5010, first_name: "Ivan", language_code: "ru" }) }),
+  });
+  const session = await signIn.json();
+  assert.equal(session.profile.language, "ru");
+  ivan.token = session.session_token;
+  // They switch to English, and the account follows.
+  const changed = await ivan.call("PATCH", "/customer/me", { language: "en" });
+  assert.equal(changed.body.language, "en");
+  assert.equal((await ivan.call("PATCH", "/customer/me", { language: "fr" })).status, 400, "only the four languages");
+  // The bot writes to them in their language.
+  await writeToBot(5010, "hello", "Ivan");
+  const thread = (await admin.call("GET", "/admin/chats")).body.find((c) => c.customer_name === "Ivan");
+  await admin.call("POST", `/admin/chats/${thread.id}/messages`, { body: "Hi Ivan" });
+  const reply = lastTo(5010);
+  assert.doesNotMatch(plain(reply.text), /javobi/, "not the Uzbek header");
+  assert.match(plain(reply.text), /Hi Ivan/);
+  // The admins still read Uzbek.
+  assert.match(plain(lastTo(OWNER_CHAT).text), /OPERATOR JAVOBI/);
+});
+
+test("Cyrillic search finds Latin names, the leaderboard speaks the customer's language, and the bot menu follows it", async () => {
+  const { toCyrillic } = await import(pathToFileURL(join(here, "../src/lib/translit.ts")).href);
+  const [product] = await q(`select name from products where active and name ~ '^[A-Za-z]' order by id limit 1`);
+  const cyrillic = toCyrillic(product.name.split(" ")[0]);
+  const found = await fetch(`${BASE}/products?search=${encodeURIComponent(cyrillic)}`, { headers: { "x-lang": "uz-Cyrl" } });
+  const list = await found.json();
+  assert.ok(list.some((item) => item.name === product.name), `${cyrillic} → ${JSON.stringify(list.map((item) => item.name))}`);
+  // The leaderboard's own words follow the language.
+  const ru = await (await fetch(`${BASE}/leaderboard/weekly`, { headers: { "x-lang": "ru" } })).json();
+  const uz = await (await fetch(`${BASE}/leaderboard/weekly`)).json();
+  assert.equal(uz[0].prize, "Maxsus sovg‘a");
+  assert.equal(ru[0].prize, "Особый подарок");
+  // A Russian-speaking Telegram user gets their own menu button on /start.
+  await sendUpdate({ chat: { id: 5011, type: "private" }, from: { id: 5011, first_name: "Олег", language_code: "ru" }, text: "/start" });
+  const menu = botCalls().filter((c) => c.method === "setChatMenuButton" && String(c.body.chat_id) === "5011").pop();
+  assert.equal(menu?.body.menu_button.text, "Магазин");
+});

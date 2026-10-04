@@ -3,6 +3,8 @@ import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-quer
 import { getGetCustomerProfileQueryKey, signInWithTelegram, type CustomerProfile } from '@workspace/api-client-react';
 import { Ban } from 'lucide-react';
 import { isMiniApp, setSessionToken, startMiniApp, telegramInitData } from '@/lib/telegram-mini-app';
+import { useT } from '@/i18n';
+import messages from '@/i18n/messages/telegramSignIn';
 
 // Set when the server refused this Telegram account as blocked. No session is
 // opened then, so the profile cannot say it; this flag does, for the banner
@@ -88,6 +90,7 @@ export function TelegramSignIn() {
   const qc = useQueryClient();
   const attempted = useRef(false);
   const blocked = useTelegramBlocked();
+  const { t } = useT(messages);
 
   useEffect(() => {
     if (!isMiniApp() || attempted.current) return;
@@ -119,7 +122,7 @@ export function TelegramSignIn() {
   if (!blocked) return null;
   return (
     <div role="alert" data-testid="banner-telegram-blocked" className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-2 bg-[#8c1d18] px-4 py-2.5 text-center text-xs font-bold text-white">
-      <Ban size={14} /> Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.
+      <Ban size={14} /> {t('blocked')}
     </div>
   );
 }

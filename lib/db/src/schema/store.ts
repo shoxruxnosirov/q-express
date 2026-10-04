@@ -66,6 +66,9 @@ export const usersTable = pgTable("users", {
   blockedAt: timestamp("blocked_at", { withTimezone: true }),
   blockedBy: integer("blocked_by").references((): AnyPgColumn => adminsTable.id, { onDelete: "set null" }),
   blockReason: text("block_reason"),
+  // The language the customer reads the shop in: uz, uz-Cyrl, ru or en.
+  // NULL until known; set from Telegram on first sight, then by the customer.
+  language: text("language"),
 });
 
 // One row per signed-in device. The cookie holds a random secret and only its

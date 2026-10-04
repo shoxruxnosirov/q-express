@@ -1,6 +1,10 @@
 // Pure stock rules for the storefront, kept free of React so node --test can
 // load them directly.
 
+import { translateText, type Lang } from './i18n-text.ts';
+import messages from '../i18n/messages/stockRules.ts';
+import { unitLabel } from '../i18n/messages/units.ts';
+
 type Stocked = { id: number; stock: number };
 type Line = { productId: number; quantity: number };
 
@@ -35,8 +39,10 @@ export function findLineProblems(lines: readonly Line[], catalog: readonly Stock
   return problems;
 }
 
-export function lineProblemText(problem: LineProblem, unit: string) {
-  if (problem.kind === 'gone') return 'Bu mahsulot endi sotuvda yo‘q. Savatdan olib tashlang.';
-  if (problem.kind === 'sold-out') return 'Tugagan. Savatdan olib tashlang.';
-  return `Omborda faqat ${problem.available} ${unit} qoldi. Miqdorni o‘zgartiring.`;
+// `unit` is the product's unit as stored (dona, kg...); it is shown in the
+// reader's language.
+export function lineProblemText(problem: LineProblem, unit: string, lang: Lang = 'uz') {
+  if (problem.kind === 'gone') return translateText(messages, lang, 'gone');
+  if (problem.kind === 'sold-out') return translateText(messages, lang, 'soldOut');
+  return translateText(messages, lang, 'short', { available: problem.available, unit: unitLabel(unit, lang) });
 }

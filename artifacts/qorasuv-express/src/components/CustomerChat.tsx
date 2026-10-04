@@ -11,6 +11,8 @@ import {
 } from '@workspace/api-client-react';
 import { readProfile } from '@/lib/profile';
 import { apiErrorMessage } from '@/pages/admin/AdminLogin';
+import { useT } from '@/i18n';
+import chatMessages from '@/i18n/messages/chat';
 
 // Polling rather than a socket: the free instance sleeps after fifteen idle
 // minutes, so a long-lived connection would spend its life reconnecting. Open
@@ -51,8 +53,8 @@ const forgetStarted = () => {
   }
 };
 
-const time = (value: string) =>
-  new Intl.DateTimeFormat('uz-UZ', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+const time = (value: string, locale: string) =>
+  new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 
 // "?chat=open" is how the bot's "Chatni ochish" button lands: the shop opens
 // with the conversation already showing. The parameter is dropped at once, so
@@ -70,6 +72,7 @@ function takeOpenRequest() {
 }
 
 export function CustomerChat() {
+  const { t, locale } = useT(chatMessages);
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   // Held until the chat is known to be open: inside Telegram the profile may
@@ -123,7 +126,7 @@ export function CustomerChat() {
           setStarted(true);
           setFailed('');
         },
-        onError: err => setFailed(apiErrorMessage(err, 'Suhbatni ochib bo‘lmadi. Keyinroq urinib ko‘ring.')),
+        onError: err => setFailed(apiErrorMessage(err, t('startFailed'))),
         onSettled: () => {
           starting.current = false;
         },
@@ -187,7 +190,7 @@ export function CustomerChat() {
           setFailed('');
           queryClient.invalidateQueries({ queryKey: getGetChatTranscriptQueryKey() });
         },
-        onError: err => setFailed(apiErrorMessage(err, 'Xabar yuborilmadi. Qaytadan urinib ko‘ring.')),
+        onError: err => setFailed(apiErrorMessage(err, t('sendFailed'))),
       },
     );
   };
@@ -199,7 +202,7 @@ export function CustomerChat() {
       <button
         type="button"
         data-testid="button-open-chat"
-        aria-label="Do‘kon bilan bog‘lanish"
+        aria-label={t('openChat')}
         onClick={() => setOpen(true)}
         className="tap fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[hsl(var(--primary))] text-white shadow-[0_12px_28px_rgba(22,116,96,.32)] transition hover:scale-105"
       >
@@ -221,13 +224,13 @@ export function CustomerChat() {
     >
       <div className="flex items-center justify-between gap-3 bg-[hsl(var(--primary))] px-4 py-3 text-white">
         <div>
-          <p className="text-sm font-extrabold">Do‘kon bilan suhbat</p>
-          <p className="text-[11px] text-[#d9e5ce]">Savolingizni yozing, operator javob beradi.</p>
+          <p className="text-sm font-extrabold">{t('title')}</p>
+          <p className="text-[11px] text-[#d9e5ce]">{t('subtitle')}</p>
         </div>
         <button
           type="button"
           data-testid="button-close-chat"
-          aria-label="Suhbatni yopish"
+          aria-label={t('close')}
           onClick={() => setOpen(false)}
           className="tap rounded-lg p-1.5 transition hover:bg-white/15"
         >
@@ -255,13 +258,13 @@ export function CustomerChat() {
                   message.sender === 'operator' ? 'text-[hsl(var(--muted-foreground))]' : 'text-[#d9e5ce]'
                 }`}
               >
-                {time(message.created_at)}
+                {time(message.created_at, locale)}
               </p>
             </div>
           ))
         ) : (
           <p className="mt-6 text-center text-xs text-[hsl(var(--muted-foreground))]">
-            Hali xabar yo‘q. Buyurtmangiz yoki mahsulotlar haqida so‘rang.
+            {t('empty')}
           </p>
         )}
         <div ref={bottomRef} />
@@ -278,7 +281,7 @@ export function CustomerChat() {
           data-testid="input-chat-message"
           value={draft}
           onChange={event => setDraft(event.target.value)}
-          placeholder="Xabar yozing..."
+          placeholder={t('placeholder')}
           maxLength={1000}
           disabled={!started}
           className="h-11 min-w-0 flex-1 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm outline-none focus:border-[hsl(var(--primary))] disabled:opacity-60"
@@ -286,7 +289,7 @@ export function CustomerChat() {
         <button
           type="submit"
           data-testid="button-send-chat"
-          aria-label="Xabarni yuborish"
+          aria-label={t('send')}
           disabled={!started || !draft.trim() || sendMessage.isPending}
           className="tap flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--primary))] text-white disabled:opacity-50"
         >

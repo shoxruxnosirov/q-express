@@ -1476,7 +1476,7 @@ components:
           maxLength: 10
     CustomerProfile:
       type: object
-      required: [authenticated, name, phone, phone_verified, telegram_linked, addresses, blocked, chat_open]
+      required: [authenticated, name, phone, phone_verified, telegram_linked, addresses, blocked, chat_open, language]
       properties:
         authenticated:
           type: boolean
@@ -1500,6 +1500,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DeliveryAddress"
+        language:
+          type: ["string", "null"]
+          enum: [uz, uz-Cyrl, ru, en, null]
+          description: >-
+            The language the customer reads the shop in: Uzbek (Latin), Uzbek
+            (Cyrillic), Russian or English. Null until known; set from the
+            customer's Telegram language when the shop first meets them.
     CustomerProfileInput:
       type: object
       properties:
@@ -1509,6 +1516,10 @@ components:
         phone:
           type: string
           maxLength: 32
+        language:
+          type: string
+          enum: [uz, uz-Cyrl, ru, en]
+          description: The language the customer chose for the shop.
     CustomerAddressesInput:
       type: object
       required: [addresses]

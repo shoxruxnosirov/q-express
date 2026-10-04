@@ -547,6 +547,19 @@ test("a customer's private message to the bot is taken as a chat message", () =>
   assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: 5550001, type: "private" }, from: { id: 5550001 }, text: "salom" } }).kind, "hint");
 });
 
+test("the sender's Telegram language comes along with a welcome and a customer's message", () => {
+  configureInbound();
+  const from = (text, extra = {}) => parseAdminUpdate({ message: { message_id: 3, chat: { id: 7001, type: "private" }, from: { id: 7001, language_code: "ru", ...extra }, text } });
+  assert.deepEqual(from("/start"), { kind: "welcome", chatId: "7001", languageCode: "ru" });
+  assert.equal(from("salom").languageCode, "ru");
+  assert.equal(from("x".repeat(1001)).languageCode, "ru", "an unsupported message too");
+  assert.equal(from("salom", { language_code: "en-US" }).languageCode, "en-US");
+  assert.equal("languageCode" in from("salom", { language_code: "<b>" }), false, "only something shaped like a code");
+  assert.equal("languageCode" in from("salom", { language_code: undefined }), false, "absent when Telegram sends none");
+  // Admins' replies carry none: the admins read Uzbek.
+  assert.equal("languageCode" in parseAdminUpdate({ message: { message_id: 1, chat: { id: 5550001, type: "private" }, from: { id: 5550001, language_code: "ru" }, text: "salom" } }), false);
+});
+
 test("the shop's reply to a customer is escaped and the admin chats are recognised", () => {
   configureInbound();
   const text = customerReplyText("<b>10</b> daqiqada");
@@ -688,6 +701,12 @@ test("text that would push a message past Telegram's limits is cut, never droppe
   const caption = welcomeMessage("https://x", offers, { openTime: "06:00", closeTime: "23:00" }).caption;
   assert.ok(caption.replace(/<[^>]+>/g, "").length < 1024, `${caption.length}`);
   assert.ok(!/<Juda/.test(caption), "names stay escaped after cutting");
+  // In every language the customer may read it in.
+  for (const lang of ["uz", "uz-Cyrl", "ru", "en"]) {
+    const translated = welcomeMessage("https://x", offers, { openTime: "06:00", closeTime: "23:00" }, lang).caption;
+    assert.ok(translated.replace(/<[^>]+>/g, "").length < 1024, `${lang}: ${translated.length}`);
+    assert.ok(!/<Juda|<Жуда/.test(translated), `${lang}: names stay escaped after cutting`);
+  }
   // A product name never takes the whole order list.
   assert.ok(orderLineText({ name: "x".repeat(5000), quantity: 1, unit: "dona", price: 1, total: 1 }).length < 250);
   // An old order with a long address is printed short.

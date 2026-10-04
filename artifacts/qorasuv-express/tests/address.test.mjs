@@ -6,6 +6,7 @@ import {
   emptyAddress,
   formatAddress,
   isCompleteAddress,
+  matchOptions,
   normalizeAddress,
   parseAddress,
 } from "../src/lib/address.ts";
@@ -60,4 +61,12 @@ test("a value the shop no longer offers is cleared rather than kept", () => {
   assert.deepEqual(normalizeAddress({ dom: "12", xonadon: "9999" }), { dom: "12", xonadon: "" });
   assert.deepEqual(normalizeAddress({ dom: "  12  ", xonadon: "7" }), { dom: "", xonadon: "7" });
   assert.deepEqual(parseAddress("9999-dom, 7-xonadon"), { dom: "", xonadon: "7" });
+});
+
+test("the address search puts numbers starting with what was typed first", () => {
+  assert.deepEqual(matchOptions(["1", "2", "10", "12", "21", "31"], "1"), ["1", "10", "12", "21", "31"]);
+  assert.deepEqual(matchOptions(DOM_OPTIONS, " 57 "), ["57", "157"]);
+  assert.deepEqual(matchOptions(XONADON_OPTIONS, ""), XONADON_OPTIONS);
+  assert.deepEqual(matchOptions(XONADON_OPTIONS, "999"), []);
+  assert.deepEqual(matchOptions(["12A", "12B", "3"], "12a"), ["12A"]);
 });

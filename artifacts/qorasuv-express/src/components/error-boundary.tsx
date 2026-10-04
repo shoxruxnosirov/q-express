@@ -4,6 +4,8 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from 'react';
+import { getCurrentLang, translate, type Lang } from '@/i18n';
+import messages from '@/i18n/messages/errorBoundary';
 
 export interface ErrorFallbackProps {
   error: Error;
@@ -35,16 +37,28 @@ function toError(value: unknown): Error {
   }
 }
 
+// The boundary in main.tsx sits outside the LanguageProvider, so the fallback
+// reads the language the page is using (the customer's latest choice, else
+// the first-visit guess) rather than the context.
+function fallbackLang(): Lang {
+  try {
+    return getCurrentLang();
+  } catch {
+    return 'uz';
+  }
+}
+
 function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
+  const lang = fallbackLang();
+  const t = (key: keyof typeof messages.uz) => translate(messages, lang, key);
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-gray-50 p-6">
       <div className="max-w-lg w-full text-center">
         <h1 className="text-xl font-semibold text-gray-900">
-          Something went wrong
+          {t('title')}
         </h1>
         <p className="mt-2 text-sm text-gray-600">
-          This part of the app hit an error. The rest of the app is still
-          running.
+          {t('body')}
         </p>
         {/* Dev only: messages can carry API responses and other internals. */}
         {import.meta.env.DEV ? (
@@ -57,7 +71,7 @@ function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
           onClick={resetError}
           className="mt-4 rounded bg-gray-900 px-4 py-2 text-sm text-white hover:bg-gray-700"
         >
-          Try again
+          {t('retry')}
         </button>
       </div>
     </div>

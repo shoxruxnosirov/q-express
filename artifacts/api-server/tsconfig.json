@@ -5,6 +5,11 @@
     "tsBuildInfoFile": ".tsbuildinfo",
     "outDir": "dist",
     "rootDir": "src",
+    // esbuild bundles the server and tsc only type-checks it, so imports may
+    // name the .ts file; the unit tests load src/lib files straight into
+    // Node, which needs the extension to find them.
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
   "include": ["src"],

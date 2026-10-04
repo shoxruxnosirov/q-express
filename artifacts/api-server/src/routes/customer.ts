@@ -18,8 +18,8 @@ import { customerAddressesTable, customerSessionsTable, ordersTable, usersTable 
 import { signedInAdmin } from "../lib/admin-directory";
 import {
   AccountLimitError,
-  BLOCKED_MESSAGE,
   BlockedMergeError,
+  blockedMessage,
   customerIsBlocked,
   customerProfileDto,
   customerSessions,
@@ -28,6 +28,7 @@ import {
   isBlocked,
   isSessionActive,
   isVerified,
+  rememberLanguage,
   replaceAddresses,
   resolveCustomer,
   signInByTelegram,
@@ -37,11 +38,12 @@ import {
 import { CHAT_SESSION_COOKIE } from "../lib/chat-session";
 import { clearCustomerCookie } from "../lib/customer-session";
 import { normalizeUzPhone } from "../lib/phone";
-import { botConfigured, getBotUsername, verifyWebAppInitData, webAppUser } from "../lib/telegram";
+import { botConfigured, getBotUsername, verifyWebAppInitData, webAppUser, registerMenuButton } from "../lib/telegram";
+import { requestLang, translate, type Lang } from "../lib/i18n";
+import { accountMessages, commonMessages } from "../lib/messages";
 
 const router: IRouter = Router();
 
-const TOO_MANY_ACCOUNTS = "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.";
 const ADDRESS_PART = /^[0-9A-Za-z]{1,10}$/;
 
 router.get("/customer/me", async (req, res, next) => {
@@ -52,7 +54,18 @@ router.get("/customer/me", async (req, res, next) => {
   }
 });
 
+// What the customer is told, in the language the web app shows (X-Lang),
+// else their account's, else their browser's.
+function say(lang: Lang, key: keyof typeof accountMessages.uz) {
+  return translate(accountMessages, lang, key);
+}
+
+function tooManyAccounts(lang: Lang) {
+  return translate(commonMessages, lang, "tooManyAttempts");
+}
+
 router.patch("/customer/me", async (req, res, next) => {
+  let lang = requestLang(req);
   try {
     const input = UpdateCustomerProfileBody.parse(req.body);
     const name = input.name?.trim();
@@ -62,14 +75,15 @@ router.patch("/customer/me", async (req, res, next) => {
       if (rawPhone === "") phone = null;
       else {
         phone = normalizeUzPhone(rawPhone);
-        if (!phone) return res.status(400).json({ error: "Telefon raqam noto‘g‘ri. Masalan: +998 90 123 45 67" });
+        if (!phone) return res.status(400).json({ error: say(lang, "phoneInvalid") });
       }
     }
     if (name !== undefined && name !== "" && (name.length < 2 || name.length > 80)) {
-      return res.status(400).json({ error: "Ism 2–80 ta belgidan iborat bo‘lsin" });
+      return res.status(400).json({ error: say(lang, "nameLength") });
     }
     const customer = await ensureCustomer(req, res);
-    if (customerIsBlocked(customer)) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    lang = requestLang(req, customer.user);
+    if (customerIsBlocked(customer)) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     // The customer's own details, whatever they type: the Telegram account,
     // not the phone, is who they are. A number changed away from the one an
     // earlier build verified is no longer marked verified.
@@ -80,40 +94,49 @@ router.patch("/customer/me", async (req, res, next) => {
       .set({
         ...(name !== undefined ? { name } : {}),
         ...(phone !== undefined ? { phone } : {}),
+        // The language the customer picked in the shop.
+        ...(input.language !== undefined ? { language: input.language } : {}),
         ...(phoneChanged && isVerified(user) ? { phoneVerifiedAt: null } : {}),
       })
       .where(eq(usersTable.id, user.id))
       .returning();
+    // The bot's menu button follows the customer's language. Best effort.
+    if (input.language !== undefined && input.language !== user.language && updated.telegramId) {
+      const base = process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `https://${req.get("host")}`;
+      void registerMenuButton(base, updated.telegramId, input.language);
+    }
     return res.json(await customerProfileDto({ ...customer, user: updated }));
   } catch (error) {
-    if (error instanceof AccountLimitError) return res.status(429).json({ error: TOO_MANY_ACCOUNTS });
+    if (error instanceof AccountLimitError) return res.status(429).json({ error: tooManyAccounts(lang) });
     return next(error);
   }
 });
 
 router.put("/customer/me/addresses", async (req, res, next) => {
+  let lang = requestLang(req);
   try {
     const { addresses } = ReplaceCustomerAddressesBody.parse(req.body);
     const cleaned = addresses.map((address) => ({ dom: address.dom.trim(), xonadon: address.xonadon.trim() }));
     if (cleaned.some((address) => !ADDRESS_PART.test(address.dom) || !ADDRESS_PART.test(address.xonadon))) {
-      return res.status(400).json({ error: "Manzil noto‘g‘ri" });
+      return res.status(400).json({ error: say(lang, "addressInvalid") });
     }
     const customer = await ensureCustomer(req, res);
-    if (customerIsBlocked(customer)) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    lang = requestLang(req, customer.user);
+    if (customerIsBlocked(customer)) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     await replaceAddresses(customer.user.id, cleaned);
     return res.json(await customerProfileDto(customer));
   } catch (error) {
-    if (error instanceof AccountLimitError) return res.status(429).json({ error: TOO_MANY_ACCOUNTS });
+    if (error instanceof AccountLimitError) return res.status(429).json({ error: tooManyAccounts(lang) });
     return next(error);
   }
 });
 
 // Outside Telegram the site sends people to the bot, where the shop opens as
 // the Mini App and they are signed in by their Telegram account.
-router.get("/customer/login", async (_req, res, next) => {
+router.get("/customer/login", async (req, res, next) => {
   try {
     const username = await getBotUsername();
-    if (!username) return res.status(503).json({ error: "Telegram bot sozlanmagan" });
+    if (!username) return res.status(503).json({ error: say(requestLang(req), "botNotConfigured") });
     return res.json({ url: `https://t.me/${username}` });
   } catch (error) {
     return next(error);
@@ -123,25 +146,31 @@ router.get("/customer/login", async (_req, res, next) => {
 // Inside the Mini App: Telegram's signed launch data is the sign-in. Sent on
 // every launch, so the webview always follows the Telegram account using it.
 router.post("/customer/telegram", async (req, res, next) => {
+  // The Mini App says which language it shows; on the first launch that is
+  // the language of the customer's Telegram.
+  const lang = requestLang(req);
   try {
     const { init_data } = SignInWithTelegramBody.parse(req.body);
-    if (!botConfigured()) return res.status(503).json({ error: "Telegram bot sozlanmagan" });
+    if (!botConfigured()) return res.status(503).json({ error: say(lang, "botNotConfigured") });
     const telegramUserId = verifyWebAppInitData(init_data);
-    if (!telegramUserId) return res.status(401).json({ error: "Telegram ma’lumoti tasdiqlanmadi" });
-    if (await telegramIsBlocked(telegramUserId)) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    if (!telegramUserId) return res.status(401).json({ error: say(lang, "telegramNotVerified") });
+    if (await telegramIsBlocked(telegramUserId)) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     // A blocked device stays blocked for the account it belongs to. Another
     // Telegram account on the same phone is a different person and gets its
     // own session.
     const current = await resolveCustomer(req, res);
     if (customerIsBlocked(current) && (current!.session.telegramId ?? telegramUserId) === telegramUserId) {
-      return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+      return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     }
-    const customer = await signInByTelegram(req, res, telegramUserId, webAppUser(init_data));
+    const signedIn = await signInByTelegram(req, res, telegramUserId, webAppUser(init_data));
+    // An account that has no language yet takes the one the Mini App opened
+    // in, without asking; one the customer already has is kept.
+    const customer = { ...signedIn, user: await rememberLanguage(signedIn.user, lang) };
     // The token goes back too: the Mini App sends it as a bearer header,
     // because Telegram Web runs the shop in a frame that may drop the cookie.
     return res.json({ profile: await customerProfileDto(customer), session_token: customer.token });
   } catch (error) {
-    if (error instanceof BlockedMergeError) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    if (error instanceof BlockedMergeError) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     return next(error);
   }
 });

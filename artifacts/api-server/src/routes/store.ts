@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, ilike, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import {
   CreateOrderBody,
   CreateAdminCategoryBody,
@@ -62,11 +62,12 @@ import {
   sendReplyHint,
   sendWelcome,
   webhookSecretMatches,
+  registerMenuButton,
 } from "../lib/telegram";
 import { linkedTelegramChatIds, linkedTelegramRecipients, signedInAdmin } from "../lib/admin-directory";
 import { telegramLinkHash } from "./admins";
 import {
-  BLOCKED_MESSAGE,
+  blockedMessage,
   chatIsOpen,
   customerIsBlocked,
   isVerified,
@@ -76,6 +77,19 @@ import {
   resolveCustomer,
 } from "../lib/customer-accounts";
 import { normalizeUzPhone } from "../lib/phone";
+import { accountLang, inScript, isLang, requestLang, translate, type Lang } from "../lib/i18n";
+import { toLatin } from "../lib/translit";
+import {
+  accountMessages,
+  catalogMessages,
+  chatMessages,
+  leaderboardMessages,
+  orderMessages,
+  orderProblems,
+  valueLabels,
+  type OrderProblem,
+  type ValueLabel,
+} from "../lib/messages";
 import { addressKey, canChangeStatus, stockToRestore, tashkentDayStart, tashkentWeekStart } from "../lib/order-rules";
 import {
   createChatToken,
@@ -102,7 +116,6 @@ const DELIVERY_FEE_CENTS = 4590 * 100;
 const THOUSANDTH_SCALE = 1_000;
 // numeric(12,2) is used by prices and order totals.
 const MAX_MONEY_CENTS = 999_999_999_999;
-const WEEKLY_PRIZE = "Maxsus sovg‘a";
 
 // Everything limited per caller is keyed by this. Behind Render the socket
 // address is always their proxy, so app.ts trusts exactly one hop and req.ip
@@ -257,35 +270,52 @@ function money(value: string | number | null) {
 type ProductUnit = "dona" | "kg" | "litr" | "qadoq";
 type PurchaseMode = "quantity" | "amount";
 
-class OrderValidationError extends Error {}
+type ProblemParams = { label?: ValueLabel; name?: string };
 
-function invalidOrder(message: string): never {
-  throw new OrderValidationError(message);
+// Why an order (or a product an admin saves) was refused, kept as a message
+// key so it can be told in the reader's language: the customer's for an
+// order, Uzbek for an admin.
+class OrderValidationError extends Error {
+  constructor(readonly problem: OrderProblem, readonly params: ProblemParams = {}) {
+    super(problem);
+  }
+
+  text(lang: Lang) {
+    const params: Record<string, string> = {};
+    if (this.params.label) params.label = translate(valueLabels, lang, this.params.label);
+    // A product's name is the shop's own Uzbek, only put in the reader's script.
+    if (this.params.name !== undefined) params.name = inScript(this.params.name, lang);
+    return translate(orderProblems, lang, this.problem, params);
+  }
 }
 
-function scaledInteger(value: number, scale: number, label: string, positive = false) {
+function invalidOrder(problem: OrderProblem, params?: ProblemParams): never {
+  throw new OrderValidationError(problem, params);
+}
+
+function scaledInteger(value: number, scale: number, label: ValueLabel, positive = false) {
   if (!Number.isFinite(value) || !Number.isSafeInteger(Math.round(value * scale))) {
-    invalidOrder(`${label} noto‘g‘ri yoki chegaradan tashqari`);
+    invalidOrder("valueInvalid", { label });
   }
   const scaled = Math.round(value * scale);
   if (Math.abs(value * scale - scaled) > 1e-7) {
-    invalidOrder(`${label} aniqligi noto‘g‘ri`);
+    invalidOrder("valuePrecision", { label });
   }
   if ((positive && scaled <= 0) || (!positive && scaled < 0)) {
-    invalidOrder(`${label} musbat bo‘lishi kerak`);
+    invalidOrder("valuePositive", { label });
   }
   return scaled;
 }
 
-function priceCents(value: string | number | null, label = "Narx") {
-  if (value === null) invalidOrder(`${label} mavjud emas`);
+function priceCents(value: string | number | null, label: ValueLabel = "price") {
+  if (value === null) invalidOrder("valueMissing", { label });
   const cents = scaledInteger(Number(value), 100, label, true);
-  if (cents > MAX_MONEY_CENTS) invalidOrder(`${label} chegaradan tashqari`);
+  if (cents > MAX_MONEY_CENTS) invalidOrder("valueOutOfRange", { label });
   return cents;
 }
 
 function stockMicro(value: number | string) {
-  return scaledInteger(Number(value), MICROQUANTITY_SCALE, "Ombor qoldig‘i");
+  return scaledInteger(Number(value), MICROQUANTITY_SCALE, "stock");
 }
 
 function validateAdminProductNumbers(input: {
@@ -296,16 +326,16 @@ function validateAdminProductNumbers(input: {
 }) {
   if (input.price !== undefined) priceCents(input.price);
   if (input.old_price !== undefined && input.old_price !== null) {
-    if (!Number.isFinite(input.old_price)) invalidOrder("Eski narx noto‘g‘ri");
-    if (scaledInteger(input.old_price, 100, "Eski narx") > MAX_MONEY_CENTS) {
-      invalidOrder("Eski narx chegaradan tashqari");
+    if (!Number.isFinite(input.old_price)) invalidOrder("oldPriceInvalid");
+    if (scaledInteger(input.old_price, 100, "oldPrice") > MAX_MONEY_CENTS) {
+      invalidOrder("valueOutOfRange", { label: "oldPrice" });
     }
   }
   if (input.stock !== undefined) {
     const unit = input.unit;
-    if (!unit) invalidOrder("Ombor birligi ko‘rsatilmagan");
+    if (!unit) invalidOrder("stockUnitMissing");
     if (unit === "dona" || unit === "qadoq") {
-      scaledInteger(input.stock, 1, "Ombor qoldig‘i");
+      scaledInteger(input.stock, 1, "stock");
     } else {
       stockMicro(input.stock);
     }
@@ -316,9 +346,9 @@ function normalizePhone(value: string) {
   return value.replace(/\D/g, "");
 }
 
-function maskPhone(phone: string) {
+function maskPhone(phone: string, lang: Lang = "uz") {
   const digits = normalizePhone(phone);
-  return digits.length >= 4 ? `•••• ${digits.slice(-4)}` : "Noma’lum";
+  return digits.length >= 4 ? `•••• ${digits.slice(-4)}` : translate(leaderboardMessages, lang, "unknownPhone");
 }
 
 function realCustomerName(value: string) {
@@ -327,7 +357,7 @@ function realCustomerName(value: string) {
   return placeholderNames.has(name.toLocaleLowerCase("uz-UZ")) ? undefined : name;
 }
 
-function weeklyLeaderboard(orders: Array<typeof ordersTable.$inferSelect>) {
+function weeklyLeaderboard(orders: Array<typeof ordersTable.$inferSelect>, lang: Lang = "uz") {
   // Monday 00:00 on the shop's clock, not the server's UTC one.
   const start = tashkentWeekStart();
   const customers = new Map<string, { phone: string; realName?: string; realNameAt?: Date; orderCount: number }>();
@@ -368,11 +398,11 @@ function weeklyLeaderboard(orders: Array<typeof ordersTable.$inferSelect>) {
     .slice(0, 10)
     .map((customer, index) => ({
       rank: index + 1,
-      customer_name: customer.realName ?? "Ism kiritilmagan",
-      phone_masked: maskPhone(customer.phone),
+      customer_name: customer.realName ?? translate(leaderboardMessages, lang, "noName"),
+      phone_masked: maskPhone(customer.phone, lang),
       order_count: customer.orderCount,
       is_winner: index === 0,
-      prize: index === 0 ? WEEKLY_PRIZE : null,
+      prize: index === 0 ? translate(leaderboardMessages, lang, "prize") : null,
     }));
 }
 
@@ -404,7 +434,7 @@ function resolveImagePublicId(
   if (imagePublicId === undefined) return undefined;
   if (imagePublicId === null) return null;
   if (!imageUrl || !isOwnImageUrl(imageUrl)) {
-    invalidOrder("Rasm manzili yuklangan faylga mos kelmadi");
+    invalidOrder("imageUrlMismatch");
   }
   return imagePublicId;
 }
@@ -472,8 +502,26 @@ async function resolveThread(req: Request, res: Response) {
   return { ...found, blocked, closed };
 }
 
-const CHAT_CLOSED_MESSAGE = "Chat do‘konning Telegram botida ishlaydi. Do‘konni Telegram orqali oching.";
-const TELEGRAM_REQUIRED_MESSAGE = "Buyurtma Telegram'dagi do‘kon orqali qabul qilinadi. Do‘konni Telegram'da oching.";
+// What the storefront is told, in the language it shows (X-Lang), else the
+// customer's own, else their browser's.
+function chatText(lang: Lang, key: keyof typeof chatMessages.uz) {
+  return translate(chatMessages, lang, key);
+}
+
+function orderText(lang: Lang, key: keyof typeof orderMessages.uz, params?: Record<string, string | number>) {
+  return translate(orderMessages, lang, key, params);
+}
+
+// The language a Telegram user's account reads the shop in, when the shop
+// knows them; their Telegram's language otherwise.
+async function telegramUserLang(telegramUserId: string, languageCode: string | undefined) {
+  const [row] = await db
+    .select({ language: usersTable.language })
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, telegramUserId))
+    .limit(1);
+  return accountLang(row, languageCode);
+}
 
 // Orders a customer has placed and not cancelled, so the admins can tell a
 // buyer from someone who has only written.
@@ -599,7 +647,7 @@ async function deliverReplyToCustomerTelegram(
   const [owner] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
   if (!owner?.telegramId || owner.blockedAt) return;
   if (isAdminChat(owner.telegramId, linkedChatIds)) return;
-  const sent = await sendCustomerReply(owner.telegramId, body, publicBaseUrl(req));
+  const sent = await sendCustomerReply(owner.telegramId, body, publicBaseUrl(req), accountLang(owner));
   if (!sent.sent) req.log.warn({ reason: sent.error }, "Telegram reply to customer failed");
 }
 
@@ -758,7 +806,13 @@ router.get("/products", async (req, res, next) => {
     await ensureSeedData();
     const query = ListProductsQueryParams.parse(req.query);
     const filters = [eq(productsTable.active, true)];
-    if (query.search) filters.push(ilike(productsTable.name, `%${query.search}%`));
+    if (query.search) {
+      // Names are written in Uzbek Latin; a customer reading the shop in
+      // Cyrillic searches in Cyrillic, so that is looked for in Latin too.
+      const term = query.search;
+      const latin = /[Ѐ-ӿ]/.test(term) ? toLatin(term) : undefined;
+      filters.push(latin ? or(ilike(productsTable.name, `%${term}%`), ilike(productsTable.name, `%${latin}%`))! : ilike(productsTable.name, `%${term}%`));
+    }
     if (query.category) filters.push(eq(categoriesTable.slug, query.category));
 
     const orderBy =
@@ -795,7 +849,7 @@ router.get("/products/:id", async (req, res, next) => {
       // A hidden product is gone from the storefront, direct links included.
       .where(and(eq(productsTable.id, id), eq(productsTable.active, true)))
       .limit(1);
-    if (!row) return res.status(404).json({ error: "Product not found" });
+    if (!row) return res.status(404).json({ error: translate(catalogMessages, requestLang(req), "productNotFound") });
     return res.json(productDto(row.product, row.category));
   } catch (error) {
     return next(error);
@@ -834,13 +888,14 @@ router.get("/orders/:id", async (req, res, next) => {
     const customer = await resolveCustomer(req, res);
     // Somebody else's order answers exactly like a missing one, so order ids
     // cannot be probed.
-    if (!customer) return res.status(404).json({ error: "Order not found" });
+    const lang = requestLang(req, customer?.user);
+    if (!customer) return res.status(404).json({ error: orderText(lang, "notFound") });
     const [order] = await db
       .select()
       .from(ordersTable)
       .where(and(eq(ordersTable.id, id), eq(ordersTable.userId, customer.user.id)))
       .limit(1);
-    if (!order) return res.status(404).json({ error: "Order not found" });
+    if (!order) return res.status(404).json({ error: orderText(lang, "notFound") });
     return res.json(orderDto(order));
   } catch (error) {
     return next(error);
@@ -858,11 +913,12 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
     const { id } = SendOrderFeedbackParams.parse(req.params);
     const { text } = SendOrderFeedbackBody.parse(req.body);
     const body = text.trim();
-    if (!body) return res.status(400).json({ error: "Izoh bo‘sh bo‘lmasin" });
+    if (!body) return res.status(400).json({ error: orderText(requestLang(req), "feedbackEmpty") });
     const customer = await resolveCustomer(req, res);
-    if (customerIsBlocked(customer)) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+    const lang = requestLang(req, customer?.user);
+    if (customerIsBlocked(customer)) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     if (!customer || customer.session.source !== "telegram" || customer.user.telegramId === null) {
-      return res.status(403).json({ error: TELEGRAM_REQUIRED_MESSAGE, telegram_required: true });
+      return res.status(403).json({ error: orderText(lang, "telegramRequired"), telegram_required: true });
     }
     // Somebody else's order answers exactly like a missing one.
     const [order] = await db
@@ -870,13 +926,13 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
       .from(ordersTable)
       .where(and(eq(ordersTable.id, id), eq(ordersTable.userId, customer.user.id)))
       .limit(1);
-    if (!order) return res.status(404).json({ error: "Order not found" });
+    if (!order) return res.status(404).json({ error: orderText(lang, "notFound") });
     if (order.status !== "delivered") {
-      return res.status(409).json({ error: "Izohni buyurtma yetkazilgandan keyin yozish mumkin" });
+      return res.status(409).json({ error: orderText(lang, "feedbackNotDelivered") });
     }
     // Only a comment that reached the admins counts against the three.
     if (feedbackLimiter.isExhausted(order.id)) {
-      return res.status(429).json({ error: "Bu buyurtma uchun bugun yetarlicha izoh yozildi. Ertaga yozishingiz mumkin." });
+      return res.status(429).json({ error: orderText(lang, "feedbackLimit") });
     }
     const sent = await sendOrderFeedback(
       {
@@ -895,7 +951,7 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
     // itself is never logged.
     if (!sent.sent) {
       req.log.warn({ reason: sent.error, orderId: order.id }, "Telegram order feedback failed");
-      return res.status(502).json({ error: "Izoh yuborilmadi. Birozdan keyin qayta urinib ko‘ring." });
+      return res.status(502).json({ error: orderText(lang, "feedbackFailed") });
     }
     feedbackLimiter.allow(order.id);
     return res.json({ sent: true });
@@ -905,17 +961,19 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
 });
 
 router.post("/orders", async (req, res, next) => {
+  // The language the storefront shows; the customer's own once they are known.
+  let lang = requestLang(req);
   try {
     await ensureSeedData();
     const input = CreateOrderBody.parse(req.body);
     const customerName = input.customer_name.trim();
     if (customerName.length < 2 || customerName.length > 80) {
-      res.status(400).json({ error: "Mijoz ismi 2-80 ta belgidan iborat bo‘lishi kerak" });
+      res.status(400).json({ error: orderText(lang, "customerNameLength") });
       return;
     }
     const phone = normalizeUzPhone(input.phone);
     if (!phone) {
-      res.status(400).json({ error: "Telefon raqam noto‘g‘ri. Masalan: +998 90 123 45 67" });
+      res.status(400).json({ error: translate(accountMessages, lang, "phoneInvalid") });
       return;
     }
     // Right now only while open; ahead of time only for a slot inside the
@@ -923,31 +981,30 @@ router.post("/orders", async (req, res, next) => {
     const hours = await loadStoreHours();
     const scheduledFor = input.scheduled_for ? new Date(input.scheduled_for) : null;
     if (!hours.acceptingOrders) {
-      res.status(409).json({ error: "Hozir buyurtma qabul qilinmayapti. Birozdan keyin urinib ko‘ring." });
+      res.status(409).json({ error: orderText(lang, "notAcceptingNow") });
       return;
     }
     if (scheduledFor) {
-      const problem = scheduleProblem(scheduledFor, hours);
+      const problem = scheduleProblem(scheduledFor, hours, new Date(), lang);
       if (problem) {
         res.status(409).json({ error: problem });
         return;
       }
     } else if (!isOpenNow(hours)) {
-      res.status(409).json({
-        error: `Do‘kon hozir yopiq. Ish vaqti ${hours.openTime}–${hours.closeTime}. Yetkazish vaqtini tanlab, oldindan buyurtma bering.`,
-      });
+      res.status(409).json({ error: orderText(lang, "closedNow", { open: hours.openTime, close: hours.closeTime }) });
       return;
     }
     // Orders are taken only in the Mini App: every buyer is a Telegram
     // account, which is what a block holds. A browser has no identity to
     // block, so it is sent to Telegram instead.
     const customer = await resolveCustomer(req, res);
+    lang = requestLang(req, customer?.user);
     if (customerIsBlocked(customer)) {
-      res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
+      res.status(403).json({ error: blockedMessage(lang), blocked: true });
       return;
     }
     if (!customer || customer.session.source !== "telegram" || customer.user.telegramId === null) {
-      res.status(403).json({ error: TELEGRAM_REQUIRED_MESSAGE, telegram_required: true });
+      res.status(403).json({ error: orderText(lang, "telegramRequired"), telegram_required: true });
       return;
     }
     const key = addressKey(input.address);
@@ -964,10 +1021,10 @@ router.post("/orders", async (req, res, next) => {
         .orderBy(asc(productsTable.id))
         .for("update");
       const productById = new Map(products.map((row) => [row.product.id, row]));
-      if (products.length !== productIds.length) invalidOrder("Mahsulot topilmadi");
+      if (products.length !== productIds.length) invalidOrder("productNotFound");
       // A cart can outlive a product being hidden; the shop no longer sells it.
       const hidden = products.find((row) => !row.product.active);
-      if (hidden) invalidOrder(`"${hidden.product.name}" hozir sotuvda yo‘q. Uni savatdan olib tashlang.`);
+      if (hidden) invalidOrder("productUnavailable", { name: hidden.product.name });
 
       const aggregates = new Map<number, {
         mode: PurchaseMode;
@@ -976,49 +1033,49 @@ router.post("/orders", async (req, res, next) => {
       }>();
       for (const item of input.items) {
         const row = productById.get(item.product_id);
-        if (!row) invalidOrder("Mahsulot topilmadi");
+        if (!row) invalidOrder("productNotFound");
         const mode = item.purchase_mode ?? "quantity";
         if (item.quantity !== undefined && item.amount !== undefined) {
-          invalidOrder("Miqdor va summa bir vaqtda yuborilmaydi");
+          invalidOrder("quantityAndAmount");
         }
         if (mode === "quantity" && item.amount !== undefined) {
-          invalidOrder("Miqdor rejimida summa yuborilmaydi");
+          invalidOrder("amountInQuantityMode");
         }
         if (mode === "amount" && item.quantity !== undefined) {
-          invalidOrder("Summa rejimida miqdor yuborilmaydi");
+          invalidOrder("quantityInAmountMode");
         }
         const unit = row.product.unit as ProductUnit;
         if (mode === "amount" && unit !== "kg" && unit !== "litr") {
-          invalidOrder("Summa rejimi faqat kg yoki litr uchun mavjud");
+          invalidOrder("amountModeUnits");
         }
         const existing = aggregates.get(item.product_id);
         if (existing && existing.mode !== mode) {
-          invalidOrder("Bir mahsulot uchun rejimlar aralashtirilmasin");
+          invalidOrder("mixedModes");
         }
         const aggregate = existing ?? { mode };
         if (mode === "quantity") {
-          if (item.quantity === undefined) invalidOrder("Miqdor ko‘rsatilishi kerak");
-          const quantityThousandths = scaledInteger(item.quantity, THOUSANDTH_SCALE, "Miqdor", true);
+          if (item.quantity === undefined) invalidOrder("quantityRequired");
+          const quantityThousandths = scaledInteger(item.quantity, THOUSANDTH_SCALE, "quantity", true);
           const quantityMicro = quantityThousandths * (MICROQUANTITY_SCALE / THOUSANDTH_SCALE);
-          if (!Number.isSafeInteger(quantityMicro)) invalidOrder("Miqdor chegaradan tashqari");
+          if (!Number.isSafeInteger(quantityMicro)) invalidOrder("valueOutOfRange", { label: "quantity" });
           if (unit === "dona" || unit === "qadoq") {
             if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
-              invalidOrder("Dona va qadoq miqdori butun musbat son bo‘lishi kerak");
+              invalidOrder("wholeUnits");
             }
           }
           try {
             aggregate.quantityMicro = addMicroquantities(aggregate.quantityMicro ?? 0, quantityMicro);
           } catch {
-            invalidOrder("Buyurtma qiymati chegaradan tashqari");
+            invalidOrder("orderValueOutOfRange");
           }
         } else {
-          if (item.amount === undefined) invalidOrder("Summa ko‘rsatilishi kerak");
-          const amountCents = scaledInteger(item.amount, 100, "Summa", true);
-          if (amountCents > MAX_MONEY_CENTS) invalidOrder("Summa chegaradan tashqari");
+          if (item.amount === undefined) invalidOrder("amountRequired");
+          const amountCents = scaledInteger(item.amount, 100, "amount", true);
+          if (amountCents > MAX_MONEY_CENTS) invalidOrder("valueOutOfRange", { label: "amount" });
           aggregate.amountCents = (aggregate.amountCents ?? 0) + amountCents;
         }
         if (!Number.isSafeInteger(aggregate.quantityMicro ?? 0) || !Number.isSafeInteger(aggregate.amountCents ?? 0)) {
-          invalidOrder("Buyurtma qiymati chegaradan tashqari");
+          invalidOrder("orderValueOutOfRange");
         }
         aggregates.set(item.product_id, aggregate);
       }
@@ -1033,25 +1090,25 @@ router.post("/orders", async (req, res, next) => {
           quantityMicro = deriveAmountQuantityMicro(aggregate.amountCents!, currentPriceCents);
           requestedAmountCents = aggregate.amountCents;
           if (!Number.isSafeInteger(quantityMicro) || quantityMicro <= 0) {
-            invalidOrder("Summa bo‘yicha miqdor juda kichik");
+            invalidOrder("amountTooSmall");
           }
         } else {
           quantityMicro = aggregate.quantityMicro!;
         }
         if (quantityMicro < MICROQUANTITY_SCALE / 1000) {
-          invalidOrder("Miqdor kamida 0.001 bo‘lishi kerak");
+          invalidOrder("quantityMinimum");
         }
         if ((unit === "dona" || unit === "qadoq") && quantityMicro % MICROQUANTITY_SCALE !== 0) {
           try {
             requireWholeUnitQuantity(quantityMicro);
           } catch {
-            invalidOrder("Dona va qadoq miqdori butun musbat son bo‘lishi kerak");
+            invalidOrder("wholeUnits");
           }
         }
         const availableMicro = stockMicro(row.product.stock);
-        if (availableMicro < quantityMicro) invalidOrder("Omborda yetarli mahsulot yo‘q");
+        if (availableMicro < quantityMicro) invalidOrder("notEnoughStock");
         const totalCents = requestedAmountCents ?? quantityTotalCents(currentPriceCents, quantityMicro);
-        if (!Number.isSafeInteger(totalCents)) invalidOrder("Buyurtma summasi chegaradan tashqari");
+        if (!Number.isSafeInteger(totalCents)) invalidOrder("orderSumOutOfRange");
         const line = {
           product_id: row.product.id,
           name: row.product.name,
@@ -1067,10 +1124,10 @@ router.post("/orders", async (req, res, next) => {
       });
       const subtotalCents = items.reduce((sum, item) => sum + item.totalCents, 0);
       if (!Number.isSafeInteger(subtotalCents) || subtotalCents > MAX_MONEY_CENTS) {
-        invalidOrder("Buyurtma summasi chegaradan tashqari");
+        invalidOrder("orderSumOutOfRange");
       }
       if (subtotalCents + deliveryFeeCents > MAX_MONEY_CENTS) {
-        invalidOrder("Buyurtma jami chegaradan tashqari");
+        invalidOrder("orderTotalOutOfRange");
       }
       // Numbered from the id sequence, so two orders can never share a number.
       // The last six digits of the clock, used before, repeated every 16.7
@@ -1131,7 +1188,7 @@ router.post("/orders", async (req, res, next) => {
     return res.status(201).json(orderDto(order));
   } catch (error) {
     if (error instanceof OrderValidationError) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: error.text(lang) });
     }
     return next(error);
   }
@@ -1170,7 +1227,7 @@ router.put("/admin/store-hours", async (req, res, next) => {
   }
 });
 
-router.get("/leaderboard/weekly", async (_req, res, next) => {
+router.get("/leaderboard/weekly", async (req, res, next) => {
   try {
     const orders = await db.select().from(ordersTable);
     // A blocked customer's orders are off the leaderboard, so prank orders
@@ -1185,7 +1242,7 @@ router.get("/leaderboard/weekly", async (_req, res, next) => {
         where b.telegram_id = ${usersTable.telegramId} and b.blocked_at is not null)`);
     const blockedIds = new Set(blocked.map((row) => row.id));
     const eligible = orders.filter((order) => !(order.userId !== null && blockedIds.has(order.userId)));
-    res.json(weeklyLeaderboard(eligible));
+    res.json(weeklyLeaderboard(eligible, requestLang(req)));
   } catch (error) {
     return next(error);
   }
@@ -1200,8 +1257,9 @@ router.post("/chat/session", async (req, res, next) => {
     const phone = input.phone?.trim() ?? "";
 
     const { thread: existing, customer, blocked, closed } = await resolveThread(req, res);
-    if (blocked) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
-    if (closed || !customer) return res.status(403).json({ error: CHAT_CLOSED_MESSAGE, chat_closed: true });
+    const lang = requestLang(req, customer?.user);
+    if (blocked) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
+    if (closed || !customer) return res.status(403).json({ error: chatText(lang, "closed"), chat_closed: true });
     if (existing) {
       // The customer may have filled in their profile since the thread was
       // opened, so newly supplied details replace blanks without wiping what
@@ -1218,7 +1276,7 @@ router.post("/chat/session", async (req, res, next) => {
     }
 
     if (!chatSessionLimiter.allow(clientKey(req))) {
-      return res.status(429).json({ error: "Juda ko‘p suhbat ochildi. Biroz kuting." });
+      return res.status(429).json({ error: chatText(lang, "tooManyThreads") });
     }
 
     const { thread } = await customerThread(customer.user, { name, phone });
@@ -1230,10 +1288,11 @@ router.post("/chat/session", async (req, res, next) => {
 
 router.get("/chat/messages", async (req, res, next) => {
   try {
-    const { thread, blocked, closed } = await resolveThread(req, res);
-    if (blocked) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
-    if (closed) return res.status(403).json({ error: CHAT_CLOSED_MESSAGE, chat_closed: true });
-    if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    const { thread, customer, blocked, closed } = await resolveThread(req, res);
+    const lang = requestLang(req, customer?.user);
+    if (blocked) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
+    if (closed) return res.status(403).json({ error: chatText(lang, "closed"), chat_closed: true });
+    if (!thread) return res.status(404).json({ error: chatText(lang, "threadNotFound") });
     await db
       .update(chatThreadsTable)
       .set({ customerReadAt: new Date() })
@@ -1248,11 +1307,12 @@ router.post("/chat/messages", async (req, res, next) => {
   try {
     const { body } = SendChatMessageBody.parse(req.body);
     const { thread, customer, blocked, closed } = await resolveThread(req, res);
-    if (blocked) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
-    if (closed || !customer) return res.status(403).json({ error: CHAT_CLOSED_MESSAGE, chat_closed: true });
-    if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
+    const lang = requestLang(req, customer?.user);
+    if (blocked) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
+    if (closed || !customer) return res.status(403).json({ error: chatText(lang, "closed"), chat_closed: true });
+    if (!thread) return res.status(404).json({ error: chatText(lang, "threadNotFound") });
     if (!chatMessageLimiter.allow(thread.id)) {
-      return res.status(429).json({ error: "Juda ko‘p xabar yuborildi. Biroz kuting." });
+      return res.status(429).json({ error: chatText(lang, "tooManyMessages") });
     }
 
     // The device it was written on is kept with the message.
@@ -1276,7 +1336,9 @@ router.post("/chat/messages", async (req, res, next) => {
     const telegramId = customer.user.telegramId;
     const echo = async () => {
       if (!telegramId || isAdminChat(telegramId, linkedChatIds)) return;
-      const echoed = await sendCustomerEcho(telegramId, message.body);
+      // In the language saved on their account, which the bot writes to them
+      // in; the one the Mini App shows when none is saved yet.
+      const echoed = await sendCustomerEcho(telegramId, message.body, isLang(customer.user.language) ? customer.user.language : lang);
       if (!echoed.sent) req.log.warn({ reason: echoed.error }, "Telegram chat echo to customer failed");
     };
     await Promise.all([notifyAdminsOfChat(req, thread, message.body, via, linkedChatIds), echo()]);
@@ -1348,13 +1410,21 @@ router.post("/telegram/webhook", async (req, res, next) => {
         .where(and(eq(productsTable.active, true), sql`${productsTable.stock} > 0`, sql`${productsTable.oldPrice} > ${productsTable.price}`))
         .orderBy(desc(sql`(${productsTable.oldPrice} - ${productsTable.price}) / ${productsTable.oldPrice}`))
         .limit(3);
+      // The language saved on their account, or their Telegram's.
+      const lang = await telegramUserLang(update.chatId, update.languageCode);
       const welcomed = await sendWelcome(
         update.chatId,
         publicBaseUrl(req),
         offers.map((offer) => ({ name: offer.name, price: Number(offer.price), oldPrice: offer.oldPrice === null ? null : Number(offer.oldPrice) })),
         await loadStoreHours(),
+        lang,
       );
       if (!welcomed.sent) req.log.warn({ reason: welcomed.error }, "Telegram welcome failed");
+      // Their own menu button, in their language (the default one is Uzbek).
+      if (lang !== "uz") {
+        const menu = await registerMenuButton(publicBaseUrl(req), update.chatId, lang);
+        if (!menu.sent) req.log.warn({ reason: menu.error }, "Telegram menu button not set for chat");
+      }
       return res.json({ ok: true });
     }
 
@@ -1369,18 +1439,24 @@ router.post("/telegram/webhook", async (req, res, next) => {
     // shop has not met yet becomes a customer with its first message, ordered
     // or not.
     if (update.kind === "customer-unsupported") {
-      if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "unsupported");
+      if (customerNoticeLimiter.allow(update.chatId)) {
+        await sendCustomerNotice(update.chatId, "unsupported", await telegramUserLang(update.chatId, update.languageCode));
+      }
       return res.json({ ok: true });
     }
     if (update.kind === "customer-message") {
       if (await telegramIsBlocked(update.telegramUserId)) {
-        if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "blocked");
+        if (customerNoticeLimiter.allow(update.chatId)) {
+          await sendCustomerNotice(update.chatId, "blocked", await telegramUserLang(update.telegramUserId, update.languageCode));
+        }
         return res.json({ ok: true });
       }
-      const customer = await telegramCustomer(update.telegramUserId, { name: update.name, username: update.username });
+      const customer = await telegramCustomer(update.telegramUserId, { name: update.name, username: update.username }, update.languageCode);
       const { thread } = await customerThread(customer);
       if (!chatMessageLimiter.allow(thread.id)) {
-        if (customerNoticeLimiter.allow(update.chatId)) await sendCustomerNotice(update.chatId, "too-many");
+        if (customerNoticeLimiter.allow(update.chatId)) {
+          await sendCustomerNotice(update.chatId, "too-many", accountLang(customer, update.languageCode));
+        }
         return res.json({ ok: true });
       }
       const [message] = await db
@@ -1525,7 +1601,7 @@ router.post("/admin/products", async (req, res, next) => {
     return res.status(201).json(productDto(product, category.name));
   } catch (error) {
     if (error instanceof OrderValidationError) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: error.text("uz") });
     }
     return next(error);
   }
@@ -1558,7 +1634,7 @@ router.patch("/admin/products/:id", async (req, res, next) => {
       update.imageUrl = input.image_url;
       update.imagePublicId = resolveImagePublicId(input.image_url, input.image_public_id ?? null);
     } else if (input.image_public_id !== undefined) {
-      invalidOrder("Rasm identifikatori manzilsiz yuborildi");
+      invalidOrder("imageIdWithoutUrl");
     }
     if (input.price !== undefined) update.price = String(input.price);
     if (input.old_price !== undefined) update.oldPrice = input.old_price == null ? null : String(input.old_price);
@@ -1597,7 +1673,7 @@ router.patch("/admin/products/:id", async (req, res, next) => {
     return res.json(productDto(product, category?.name ?? "Noma'lum"));
   } catch (error) {
     if (error instanceof OrderValidationError) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: error.text("uz") });
     }
     return next(error);
   }
