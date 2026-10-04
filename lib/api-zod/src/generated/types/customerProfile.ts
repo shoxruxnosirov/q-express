@@ -11,10 +11,13 @@ export interface CustomerProfile {
   authenticated: boolean;
   /** An admin has blocked this customer; ordering, chat and profile changes are refused. */
   blocked: boolean;
-  /** The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard. */
+  /** The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram. */
   chat_open: boolean;
   name: string;
   phone: string;
+  /** Verified by a code in an earlier build. Nothing verifies phones any more. */
   phone_verified: boolean;
+  /** The account belongs to a Telegram account (signed in through the Mini App or the bot). */
+  telegram_linked: boolean;
   addresses: DeliveryAddress[];
 }

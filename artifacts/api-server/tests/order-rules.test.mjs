@@ -53,3 +53,14 @@ test("the shop's week starts on Monday in Tashkent", () => {
   // Saturday 26 Sep midday belongs to the week that began Monday 21 Sep.
   assert.equal(tashkentWeekStart(new Date("2026-09-26T07:00:00Z")).toISOString(), "2026-09-20T19:00:00.000Z");
 });
+
+test("the free first delivery is counted per flat, however the line is spelled", async () => {
+  const { addressKey } = await import("../src/lib/order-rules.ts");
+  assert.equal(addressKey("12-dom, 5-xonadon"), "12|5");
+  assert.equal(addressKey("  12 dom 5 xonadon "), "12|5", "the same flat");
+  assert.equal(addressKey("12A-DOM, 5b-Xonadon"), "12a|5b", "letters in any case");
+  assert.notEqual(addressKey("12-dom, 5-xonadon"), addressKey("12-dom, 6-xonadon"), "a neighbour is another flat");
+  assert.equal(addressKey("Navoiy ko‘chasi 5"), undefined, "a line the shop did not write never goes free");
+  assert.equal(addressKey("012-dom, 05-xonadon"), "12|5", "leading zeros name the same flat");
+  assert.equal(addressKey("0-dom, 00-xonadon"), "0|0", "a zero stays a zero");
+});

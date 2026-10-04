@@ -47,13 +47,18 @@ export const productsTable = pgTable("products", {
 export const usersTable = pgTable("users", {
   id: serial("id").primaryKey(),
   telegramId: text("telegram_id").unique(),
+  // Who the customer is in Telegram, refreshed on every Mini App launch and
+  // bot message: the name Telegram shows and the @username, if any. What the
+  // customer typed (name, phone) is kept apart from it.
+  telegramName: text("telegram_name"),
+  telegramUsername: text("telegram_username"),
   name: text("name").notNull(),
   phone: text("phone"),
   role: text("role").notNull().default("customer"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  // Set once the phone was confirmed through the Telegram bot. Only a verified
-  // phone identifies a customer across devices, and only it earns the free
-  // first delivery. Unique among verified customers (partial index).
+  // Set by the phone verification of earlier builds (a code from the bot).
+  // Nothing sets it any more: the Telegram account is the identity and the
+  // customer types their phone. Kept for the accounts that have it.
   phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   // Set by an admin. A blocked customer cannot order, chat, change their
@@ -63,14 +68,27 @@ export const usersTable = pgTable("users", {
   blockReason: text("block_reason"),
 });
 
-// One row per signed-in browser. The cookie holds a random secret and only its
-// SHA-256 is stored, as with the chat; a customer may have several devices.
+// One row per signed-in device. The cookie holds a random secret and only its
+// SHA-256 is stored; a customer may have several devices. An admin can sign a
+// device out (revoked) or block it; a blocked device keeps its cookie and is
+// refused everything a blocked customer is.
 export const customerSessionsTable = pgTable("customer_sessions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
   tokenHash: text("token_hash").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  // 'telegram' when opened in the Mini App, 'browser' otherwise.
+  source: text("source").notNull().default("browser"),
+  // The Telegram account a Mini App session belongs to. When another account
+  // opens the Mini App on the same phone, the webview switches session.
+  telegramId: text("telegram_id"),
+  userAgent: text("user_agent"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedBy: integer("revoked_by").references((): AnyPgColumn => adminsTable.id, { onDelete: "set null" }),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: integer("blocked_by").references((): AnyPgColumn => adminsTable.id, { onDelete: "set null" }),
+  blockReason: text("block_reason"),
 });
 
 export const customerAddressesTable = pgTable(
@@ -86,18 +104,6 @@ export const customerAddressesTable = pgTable(
   (table) => [unique("customer_addresses_user_address_key").on(table.userId, table.dom, table.xonadon)],
 );
 
-// The code the bot sent after a customer shared their own phone. One live code
-// per phone; only its hash is kept, and it dies after five minutes or five
-// wrong guesses.
-export const phoneLoginCodesTable = pgTable("phone_login_codes", {
-  phone: text("phone").primaryKey(),
-  codeHash: text("code_hash").notNull(),
-  telegramUserId: text("telegram_user_id").notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  attempts: integer("attempts").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
 export const ordersTable = pgTable("orders", {
   id: serial("id").primaryKey(),
   orderNumber: text("order_number").notNull().unique(),
@@ -105,6 +111,10 @@ export const ordersTable = pgTable("orders", {
   customerName: text("customer_name").notNull(),
   phone: text("phone").notNull(),
   address: text("address").notNull(),
+  // "dom|xonadon", lower-cased, when the address has the shape the shop
+  // writes. The first order to a flat has free delivery, so this is what is
+  // counted.
+  addressKey: text("address_key"),
   items: jsonb("items").notNull(),
   status: text("status").notNull().default("new"),
   paymentMethod: text("payment_method").notNull(),
@@ -159,9 +169,9 @@ export const adminsTable = pgTable("admins", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// A chat thread belongs to whoever holds its secret, not to a phone number,
-// because the shop has no accounts and a phone number is not a credential.
-// Only the hash of that secret is stored.
+// A customer's one conversation with the shop, reached through their account
+// and its sessions. token_hash is left from before accounts, when a chat
+// cookie owned the thread; new threads get a random hash nobody holds.
 export const chatThreadsTable = pgTable("chat_threads", {
   id: serial("id").primaryKey(),
   tokenHash: text("token_hash").notNull().unique(),
@@ -189,6 +199,9 @@ export const chatMessagesTable = pgTable("chat_messages", {
   // Which admin wrote an operator message. NULL for customer messages, for
   // replies from the owner's Telegram chat, and after the admin is deleted.
   adminId: integer("admin_id").references(() => adminsTable.id, { onDelete: "set null" }),
+  // The device a customer wrote from on the site; NULL for operator messages
+  // and for messages sent through the bot.
+  sessionId: integer("session_id").references(() => customerSessionsTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

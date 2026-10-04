@@ -10,7 +10,9 @@ const TELEGRAM_API = "https://api.telegram.org";
 // else's conversation. The renderer and the parser share one place so they
 // cannot drift apart.
 const THREAD_SEPARATOR = " · Suhbat #";
-const THREAD_HEADER_PATTERN = /^[A-Z ]+ · Suhbat #(\d+)$/;
+// An emoji may lead the title (the admins tell a chat from an order at a
+// glance); older notifications without one still parse.
+const THREAD_HEADER_PATTERN = /^(?:\S+ )?[A-Z ]+ · Suhbat #(\d+)$/u;
 // Postgres `serial` ids stop here; anything larger cannot name a thread.
 const MAX_THREAD_ID = 2_147_483_647;
 
@@ -45,6 +47,9 @@ type TelegramOrder = {
   // "28-sentabr, 06:00" for a pre-order, formatted by the caller on the
   // Tashkent clock; absent for as soon as possible.
   scheduledLabel?: string;
+  // Who placed it in Telegram.
+  telegramName?: string | null;
+  telegramUsername?: string | null;
 };
 
 function escapeHtml(value: string) {
@@ -64,6 +69,63 @@ function formatUzPhone(phone: string) {
 
 function formatMoney(value: string | number | null) {
   return `${Number(value ?? 0).toLocaleString("ru-RU")} so'm`;
+}
+
+// "3 dona", "0.5 kg": what the courier has to bring. Pieces and packs are
+// whole; weight and volume keep up to three decimals, without the noise of
+// floating point (0.30000000000000004).
+export function formatQuantity(quantity: unknown, unit: unknown) {
+  const value = typeof quantity === "number" && Number.isFinite(quantity) ? quantity : 0;
+  const unitText = typeof unit === "string" ? unit : "";
+  const whole = unitText === "dona" || unitText === "qadoq";
+  const shown = whole ? String(Math.round(value)) : String(Number(value.toFixed(3)));
+  return `${shown} ${unitText}`.trim();
+}
+
+// One line of an order for the admins: how many, at what price, for how much.
+// A line bought by amount ("30 000 so'mlik go'sht") says the amount and the
+// weight it came to.
+export function orderLineText(item: unknown) {
+  const line = (item ?? {}) as {
+    name?: string;
+    quantity?: number;
+    unit?: string;
+    price?: number;
+    total?: number;
+    purchase_mode?: "quantity" | "amount";
+    requested_amount?: number | null;
+  };
+  const name = escapeHtml(line.name ?? "Mahsulot");
+  const quantity = escapeHtml(formatQuantity(line.quantity, line.unit));
+  if (line.purchase_mode === "amount" && line.requested_amount != null) {
+    return `• ${name} — ${formatMoney(line.requested_amount)}lik (~${quantity})`;
+  }
+  const price = typeof line.price === "number" ? ` × ${formatMoney(line.price)}` : "";
+  return `• ${name} — <b>${quantity}</b>${price} = ${formatMoney(line.total ?? 0)}`;
+}
+
+// Telegram refuses a message over 4096 characters, and then no admin hears of
+// the order at all. The lines stop well short of that, and the rest are
+// counted; the dashboard always lists them all.
+const ITEMS_TEXT_LIMIT = 2800;
+
+export function itemsWithinLimit(lines: string[]) {
+  const shown: string[] = [];
+  let length = 0;
+  for (const line of lines) {
+    if (length + line.length + 1 > ITEMS_TEXT_LIMIT) break;
+    shown.push(line);
+    length += line.length + 1;
+  }
+  const rest = lines.length - shown.length;
+  if (rest > 0) shown.push(`… va yana <b>${rest}</b> ta mahsulot (to‘liq ro‘yxat admin panelda)`);
+  return shown.join("\n");
+}
+
+const PAYMENT_LABELS: Record<string, string> = { cash: "Naqd", click: "Click", payme: "Payme", uzcard: "Uzcard", humo: "Humo" };
+
+function paymentLabel(method: string) {
+  return PAYMENT_LABELS[method] ?? method;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,10 +158,18 @@ export function ownerChatId() {
   return process.env.TELEGRAM_ADMIN_CHAT_ID?.trim() || undefined;
 }
 
+// The bot works with private chats only: a private chat's id is the user's
+// own, a positive number, while groups and channels have negative ids. A
+// group or channel configured as the owner chat is left out rather than
+// written to.
+export function isPrivateChatId(chatId: string) {
+  return /^[1-9]\d{0,19}$/.test(chatId);
+}
+
 function recipientChats(linkedChatIds: readonly string[], exclude?: string) {
   const owner = ownerChatId();
   const all = [...(owner ? [owner] : []), ...linkedChatIds];
-  return [...new Set(all)].filter((chatId) => chatId !== exclude);
+  return [...new Set(all)].filter((chatId) => chatId !== exclude && isPrivateChatId(chatId));
 }
 
 type BotApiResult = TelegramResult & { result?: unknown };
@@ -200,7 +270,9 @@ export async function registerWebhook(baseUrl: string): Promise<TelegramResult> 
   const { sent, error } = await callBotApi(bot.token, "setWebhook", {
     url: `${baseUrl.replace(/\/+$/, "")}/api/telegram/webhook`,
     secret_token: secret,
-    allowed_updates: ["message"],
+    // my_chat_member: the bot being added to a group or channel, which it
+    // then leaves (a channel never sends it a message to react to).
+    allowed_updates: ["message", "my_chat_member"],
   });
   return error === undefined ? { sent } : { sent, error };
 }
@@ -220,10 +292,14 @@ export async function getBotUsername(): Promise<string | undefined> {
 
 type TelegramUpdate = {
   update_id?: number;
+  my_chat_member?: {
+    chat?: { id?: number | string; type?: string };
+    new_chat_member?: { status?: string };
+  };
   message?: {
     message_id?: number;
     chat?: { id?: number | string; type?: string };
-    from?: { id?: number };
+    from?: { id?: number; first_name?: string; last_name?: string; username?: string };
     text?: string;
     contact?: { phone_number?: string; user_id?: number };
     reply_to_message?: {
@@ -239,30 +315,30 @@ export type AdminUpdate =
   | { kind: "link"; chatId: string; code: string; messageId: number }
   // Anyone opening the bot: greet them and offer the shop as a Mini App.
   | { kind: "welcome"; chatId: string }
-  // A customer who came from the site's "verify" button.
-  | { kind: "customer-start"; chatId: string }
-  // A shared contact. ownContact is Telegram's own statement that the number
-  // belongs to the account that sent it; a forwarded card fails it.
-  | { kind: "contact"; chatId: string; telegramUserId: string; phone: string; ownContact: boolean }
   // A reply to one of our chat notifications: deliver it to that thread.
   | { kind: "reply"; chatId: string; threadId: number; body: string; messageId: number; ref: string }
   // Something a known admin sent that we cannot route; answer with a hint.
   | { kind: "hint"; chatId: string; messageId: number }
   // A customer writing to the bot in their private chat: it goes into their
-  // conversation with the shop, as if written on the site.
-  | { kind: "customer-message"; chatId: string; telegramUserId: string; body: string; messageId: number; ref: string }
+  // conversation with the shop, the same one the Mini App shows. The name is
+  // Telegram's, for an account the message itself creates.
+  | { kind: "customer-message"; chatId: string; telegramUserId: string; name: string; username: string | null; body: string; messageId: number; ref: string }
   // A customer sent something the chat cannot hold (a photo, a sticker, a
   // text over the limit); answer with what is accepted.
   | { kind: "customer-unsupported"; chatId: string; messageId: number }
-  // Not ours to handle: a stranger's chat, an edit, and so on.
+  // A group, supergroup or channel the bot was added to: the shop works in
+  // private chats only, so the bot leaves it.
+  | { kind: "leave"; chatId: string }
+  // Not ours to handle: an edit, a command, and so on.
   | { kind: "ignore" };
 
 // The same ceiling the website puts on a chat message (ChatMessageInput).
 export const MAX_REPLY_LENGTH = 1000;
 // What createTelegramLinkCode produces: 32 hex characters.
 const LINK_COMMAND_PATTERN = /^\/start(?:@\w+)?\s+([0-9a-f]{32})$/;
-const CUSTOMER_START_PATTERN = /^\/start(?:@\w+)?\s+login$/;
-const BARE_START_PATTERN = /^\/start(?:@\w+)?$/;
+// A bare /start, or the "login" ones that pages of earlier builds still link
+// to (signing in and verifying phones are gone): all of them get the shop.
+const BARE_START_PATTERN = /^\/start(?:@\w+)?(?:\s+login(?:_[0-9a-f]{32})?)?$/;
 
 // Pure so it can be tested without Telegram: decides what an update means.
 // Only the owner's chat and chats linked to an admin are listened to, since
@@ -271,45 +347,52 @@ const BARE_START_PATTERN = /^\/start(?:@\w+)?$/;
 export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string[] = []): AdminUpdate {
   const bot = resolveBotToken();
   if (!("token" in bot)) return { kind: "ignore" };
+  const membership = (update as TelegramUpdate | null)?.my_chat_member;
+  if (membership) {
+    const memberChatId = String(membership.chat?.id ?? "");
+    const type = membership.chat?.type;
+    const joined = ["member", "administrator"].includes(membership.new_chat_member?.status ?? "");
+    return joined && memberChatId && (type === "group" || type === "supergroup" || type === "channel")
+      ? { kind: "leave", chatId: memberChatId }
+      : { kind: "ignore" };
+  }
   const message = (update as TelegramUpdate | null)?.message;
   if (!message || typeof message.message_id !== "number") return { kind: "ignore" };
   const chatId = String(message.chat?.id ?? "");
   if (!chatId) return { kind: "ignore" };
 
+  // Private chats only, for customers and admins alike. Anything from a group
+  // or channel is not read at all, and the bot leaves.
+  const type = message.chat?.type;
+  const isPrivate = type === undefined ? isPrivateChatId(chatId) : type === "private" && isPrivateChatId(chatId);
+  if (!isPrivate) return type === "group" || type === "supergroup" || type === "channel" ? { kind: "leave", chatId } : { kind: "ignore" };
+
   const body = typeof message.text === "string" ? message.text.trim() : "";
   const link = LINK_COMMAND_PATTERN.exec(body);
   if (link) return { kind: "link", chatId, code: link[1], messageId: message.message_id };
 
-  // Customers only ever talk to the bot in a private chat.
-  const isPrivate = message.chat?.type === undefined || message.chat.type === "private";
-  if (message.contact && isPrivate) {
-    const senderId = message.from?.id;
-    return {
-      kind: "contact",
-      chatId,
-      telegramUserId: String(senderId ?? ""),
-      phone: String(message.contact.phone_number ?? ""),
-      ownContact: typeof senderId === "number" && message.contact.user_id === senderId,
-    };
-  }
-
   const isAdminChat = recipientChats(linkedChatIds).includes(chatId);
-  // "/start login" comes from the site's verify button; a bare /start is
-  // somebody opening the bot, admins included, and gets the shop.
-  if (isPrivate && CUSTOMER_START_PATTERN.test(body)) return { kind: "customer-start", chatId };
-  if (isPrivate && BARE_START_PATTERN.test(body)) return { kind: "welcome", chatId };
+  // /start is somebody opening the bot, admins included, and gets the shop.
+  if (BARE_START_PATTERN.test(body)) return { kind: "welcome", chatId };
 
   if (!isAdminChat) {
-    // A private chat's id is the user's own; anything else (a group the bot
-    // was added to) is not a customer talking to the shop.
+    // A private chat's id is the user's own; a message whose sender is not
+    // the chat is not a customer talking to the shop.
     const senderId = message.from?.id;
-    if (!isPrivate || typeof senderId !== "number" || String(senderId) !== chatId) return { kind: "ignore" };
+    if (typeof senderId !== "number" || String(senderId) !== chatId) return { kind: "ignore" };
     if (body.startsWith("/")) return { kind: "ignore" };
     if (!body || body.length > MAX_REPLY_LENGTH) return { kind: "customer-unsupported", chatId, messageId: message.message_id };
+    const name = [message.from?.first_name, message.from?.last_name]
+      .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+      .join(" ")
+      .trim()
+      .slice(0, 80);
     return {
       kind: "customer-message",
       chatId,
       telegramUserId: chatId,
+      name,
+      username: cleanUsername(message.from?.username),
       body,
       messageId: message.message_id,
       ref: `${chatId}:${message.message_id}`,
@@ -384,16 +467,10 @@ export function sendCustomerReply(telegramUserId: string, body: string, baseUrl:
   return sendToChatWithMarkup(telegramUserId, customerReplyText(body), webAppButton("💬 Chatni ochish", baseUrl, "/?chat=open"));
 }
 
-export type CustomerNotice = "not-verified" | "no-order" | "blocked" | "unsupported" | "too-many" | "code";
+export type CustomerNotice = "blocked" | "unsupported" | "too-many";
 
 export function customerNoticeText(reason: CustomerNotice) {
   switch (reason) {
-    case "code":
-      return "Kirish kodini botga yozmang: u saytdagi kod maydoniga kiritiladi. Xabar yuborilmadi. Kodni hech kimga bermang.";
-    case "not-verified":
-      return "Do‘kon bilan yozishish uchun avval saytda telefon raqamingizni tasdiqlang yoki do‘kondagi chatdan yozing.";
-    case "no-order":
-      return "Suhbat birinchi buyurtmangizdan keyin ochiladi. Do‘konni ochib buyurtma bering 👇";
     case "blocked":
       return "Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
     case "unsupported":
@@ -403,15 +480,29 @@ export function customerNoticeText(reason: CustomerNotice) {
   }
 }
 
-export function sendCustomerNotice(chatId: string, reason: CustomerNotice, baseUrl: string) {
-  const text = customerNoticeText(reason);
-  if (reason !== "not-verified" && reason !== "no-order") return sendToChat(chatId, text);
-  return sendToChatWithMarkup(chatId, text, webAppButton("🛒 Do‘konni ochish", baseUrl, "/"));
+// The keyboard is removed too: chats of earlier builds may still show the
+// old "share your number" button, and a contact sent with it is not text.
+export function sendCustomerNotice(chatId: string, reason: CustomerNotice) {
+  return sendToChatWithMarkup(chatId, customerNoticeText(reason), { remove_keyboard: true });
 }
 
-// ---------------------------------------------------------------------------
-// Customer phone verification
-// ---------------------------------------------------------------------------
+// What the customer wrote in the Mini App's chat, copied into their chat with
+// the bot, so the bot holds the whole conversation. Silent: they wrote it.
+export function customerEchoText(body: string) {
+  return ["✉️ <b>Siz yozdingiz:</b>", "", escapeHtml(body)].join("\n");
+}
+
+export async function sendCustomerEcho(telegramUserId: string, body: string) {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  const { sent, error } = await callBotApi(bot.token, "sendMessage", {
+    chat_id: telegramUserId,
+    text: customerEchoText(body),
+    parse_mode: "HTML",
+    disable_notification: true,
+  });
+  return error === undefined ? { sent } : { sent, error };
+}
 
 async function sendToChatWithMarkup(chatId: string, text: string, replyMarkup: Record<string, unknown>) {
   const bot = resolveBotToken();
@@ -423,20 +514,6 @@ async function sendToChatWithMarkup(chatId: string, text: string, replyMarkup: R
     reply_markup: replyMarkup,
   });
   return error === undefined ? { sent } : { sent, error };
-}
-
-// Telegram's own button: it sends the account's verified number, which a
-// customer cannot type or fake.
-export function sendContactRequest(chatId: string) {
-  return sendToChatWithMarkup(
-    chatId,
-    "Q express: telefon raqamingizni tasdiqlash uchun pastdagi <b>📱 Raqamni yuborish</b> tugmasini bosing.",
-    {
-      keyboard: [[{ text: "📱 Raqamni yuborish", request_contact: true }]],
-      resize_keyboard: true,
-      one_time_keyboard: true,
-    },
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +548,7 @@ export function welcomeMessage(
     "",
     "⚡ <b>15–19 daqiqada</b> yetkazamiz",
     ...(hours ? [`🕕 Ish vaqti: <b>${escapeHtml(hours.openTime)}–${escapeHtml(hours.closeTime)}</b>, yopiq paytda oldindan buyurtma bering`] : []),
-    "🎁 <b>Birinchi yetkazish bepul</b> — raqamingizni tasdiqlang",
+    "🎁 <b>Har bir xonadonga birinchi yetkazish bepul</b>",
     "💵 Naqd, Click, Payme, Uzcard yoki Humo",
     ...(deals.length ? ["", "<b>Bugungi chegirmalar:</b>", ...deals] : []),
     "",
@@ -523,6 +600,42 @@ export async function registerMenuButton(baseUrl: string): Promise<TelegramResul
 // issues fresh data every time the Mini App opens, and after the first
 // sign-in the webview's own cookie carries the session.
 const INIT_DATA_MAX_AGE_SECONDS = 60 * 60;
+// A Telegram @username as Telegram allows it (5-32 letters, digits and
+// underscores), without the @; anything else is dropped.
+export function cleanUsername(value: unknown) {
+  return typeof value === "string" && /^[A-Za-z0-9_]{4,32}$/.test(value) ? value : null;
+}
+
+export type TelegramProfile = { name: string; username: string | null };
+
+// Who Telegram says the launching user is: their name and @username. Read only
+// after verifyWebAppInitData accepted the same data.
+export function webAppUser(initData: string): TelegramProfile {
+  try {
+    const user = JSON.parse(new URLSearchParams(initData).get("user") ?? "") as { first_name?: unknown; last_name?: unknown; username?: unknown };
+    const parts = [user.first_name, user.last_name].filter((part): part is string => typeof part === "string" && part.trim() !== "");
+    return { name: parts.join(" ").trim().slice(0, 80), username: cleanUsername(user.username) };
+  } catch {
+    return { name: "", username: null };
+  }
+}
+
+// The bot was added to a group or channel; it works in private chats only.
+export async function leaveChat(chatId: string): Promise<TelegramResult> {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  const { sent, error } = await callBotApi(bot.token, "leaveChat", { chat_id: chatId });
+  return error === undefined ? { sent } : { sent, error };
+}
+
+// "Aziz Karimov (@aziz)" for the admins: who the customer is in Telegram.
+export function telegramLabel(profile: { telegramName?: string | null; telegramUsername?: string | null }) {
+  const name = profile.telegramName?.trim();
+  const username = profile.telegramUsername ? `@${profile.telegramUsername}` : "";
+  if (name && username) return `${name} (${username})`;
+  return name || username || undefined;
+}
+
 export function verifyWebAppInitData(initData: string, now = Date.now()): string | undefined {
   const bot = resolveBotToken();
   if (!("token" in bot) || !initData) return undefined;
@@ -549,25 +662,6 @@ export function verifyWebAppInitData(initData: string, now = Date.now()): string
   }
 }
 
-export function sendLoginCode(chatId: string, code: string) {
-  return sendToChatWithMarkup(
-    chatId,
-    `Kirish kodi: <b>${code}</b>\n\nUni saytga kiriting. Kod 5 daqiqa amal qiladi. <b>Hech kimga bermang</b>, Q express xodimlari ham so‘ramaydi.`,
-    { remove_keyboard: true },
-  );
-}
-
-export function sendContactRejected(chatId: string, reason: "not-own" | "not-uzbek" | "too-many" | "blocked") {
-  const text = reason === "not-own"
-    ? "Faqat o‘zingizning raqamingizni tugma orqali yuboring."
-    : reason === "not-uzbek"
-      ? "Faqat O‘zbekiston raqamlari (+998) qabul qilinadi."
-      : reason === "blocked"
-        ? "Bu hisob do‘kon tomonidan bloklangan."
-        : "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.";
-  return sendToChatWithMarkup(chatId, text, { remove_keyboard: true });
-}
-
 export async function sendLinkResult(chatId: string, displayName: string | undefined) {
   const text = displayName
     ? `✅ <b>${escapeHtml(displayName)}</b>, Telegram ulandi. Endi buyurtma va mijoz xabarlari shu yerga keladi.`
@@ -581,23 +675,48 @@ export async function sendLinkResult(chatId: string, displayName: string | undef
 
 // The operators are not always watching the dashboard, so a customer's message
 // reaches the same chats the order notifications already go to.
+export type ChatSource = "mini-app" | "bot" | "site";
+
 export async function sendChatMessageNotification(
-  message: { threadId: number; customerName: string; phone: string; body: string },
+  message: {
+    threadId: number;
+    customerName: string;
+    phone: string;
+    body: string;
+    // Orders the customer has placed (not cancelled); absent when unknown.
+    orderCount?: number;
+    via?: ChatSource;
+    telegramName?: string | null;
+    telegramUsername?: string | null;
+  },
   linkedChatIds: readonly string[] = [],
 ): Promise<TelegramResult> {
+  return sendToChats(recipientChats(linkedChatIds), chatNotificationText(message));
+}
+
+export function chatNotificationText(message: Parameters<typeof sendChatMessageNotification>[0]) {
   const who = message.customerName.trim() || "Noma’lum mijoz";
   const phone = message.phone.trim();
+  const where = message.via === "bot" ? "Telegram bot" : message.via === "mini-app" ? "Mini App" : message.via === "site" ? "Sayt" : undefined;
+  const status = message.orderCount === undefined
+    ? undefined
+    : message.orderCount > 0
+      ? `Buyurtmachi (${message.orderCount} ta buyurtma)`
+      : "Hali buyurtma bermagan";
   const lines = [
-    threadHeader("YANGI XABAR", message.threadId),
+    threadHeader("💬 CHAT", message.threadId),
     "",
     "<b>Mijoz:</b> " + escapeHtml(who),
     ...(phone ? ["<b>Telefon:</b> " + escapeHtml(formatUzPhone(phone))] : []),
+    ...(telegramLabel(message) ? ["<b>Telegram:</b> " + escapeHtml(telegramLabel(message)!)] : []),
+    ...(status ? ["<b>Holat:</b> " + status] : []),
+    ...(where ? ["<b>Qayerdan:</b> " + where] : []),
     "",
     escapeHtml(message.body),
     "",
     "<i>Javob berish uchun shu xabarga Reply qiling.</i>",
   ];
-  return sendToChats(recipientChats(linkedChatIds), lines.join("\n"));
+  return lines.join("\n");
 }
 
 // What an admin wrote, copied to every other admin chat so Telegram holds the
@@ -619,7 +738,7 @@ export async function sendOperatorReplyNotification(
   const phone = message.phone.trim();
   const where = message.via === "panel" ? "admin paneldan" : "Telegram'dan";
   const lines = [
-    threadHeader("OPERATOR JAVOBI", message.threadId),
+    threadHeader("💬 OPERATOR JAVOBI", message.threadId),
     `<i>${escapeHtml(message.authorName)} ${where} yozdi</i>`,
     "",
     "<b>Kimga:</b> " + escapeHtml(who),
@@ -658,6 +777,40 @@ export function preorderReminderText(order: {
   ].join("\n");
 }
 
+// A customer's comment on a delivered order. It is not stored anywhere: this
+// message is the only place it ends up, so it says everything the admins need
+// to know whose it is. Not a chat notification, so a reply to it is not
+// routed to anyone (its first line carries no thread number).
+export type OrderFeedback = {
+  orderNumber: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  total: string | number | null;
+  telegramName?: string | null;
+  telegramUsername?: string | null;
+  text: string;
+};
+
+export function orderFeedbackText(feedback: OrderFeedback) {
+  const telegram = telegramLabel(feedback);
+  return [
+    `⭐ <b>IZOH · Buyurtma #${escapeHtml(feedback.orderNumber)}</b>`,
+    "",
+    `<b>Mijoz:</b> ${escapeHtml(feedback.customerName.trim() || "Noma’lum mijoz")}`,
+    `<b>Telefon:</b> ${escapeHtml(formatUzPhone(feedback.phone))}`,
+    ...(telegram ? [`<b>Telegram:</b> ${escapeHtml(telegram)}`] : []),
+    `<b>Manzil:</b> ${escapeHtml(feedback.address)}`,
+    `<b>Jami:</b> ${formatMoney(feedback.total)}`,
+    "",
+    escapeHtml(feedback.text),
+  ].join("\n");
+}
+
+export async function sendOrderFeedback(feedback: OrderFeedback, linkedChatIds: readonly string[] = []): Promise<TelegramResult> {
+  return sendToChats(recipientChats(linkedChatIds), orderFeedbackText(feedback));
+}
+
 export async function sendPreorderReminder(
   order: Parameters<typeof preorderReminderText>[0],
   linkedChatIds: readonly string[] = [],
@@ -669,41 +822,25 @@ export async function sendNewOrderNotification(
   order: TelegramOrder,
   linkedChatIds: readonly string[] = [],
 ): Promise<TelegramResult> {
-  const items = Array.isArray(order.items)
-    ? order.items
-        .map((item) => {
-          const line = item as {
-            name?: string;
-            quantity?: number;
-            unit?: string;
-            total?: number;
-            purchase_mode?: "quantity" | "amount";
-            requested_amount?: number | null;
-          };
-          const quantity = `${line.quantity ?? 0} ${escapeHtml(line.unit ?? "")}`;
-          const priceText = line.purchase_mode === "amount" && line.requested_amount != null
-            ? `${formatMoney(line.requested_amount)} (~${quantity})`
-            : formatMoney(line.total ?? 0);
-          return `• ${escapeHtml(line.name ?? "Mahsulot")} × ${priceText}`;
-        })
-        .join("\n")
-    : "• Mahsulotlar ro‘yxati mavjud emas";
+  const lines = Array.isArray(order.items) ? order.items : [];
+  const items = lines.length > 0 ? itemsWithinLimit(lines.map(orderLineText)) : "• Mahsulotlar ro‘yxati mavjud emas";
 
   const text = [
-    order.scheduledLabel ? "<b>YANGI BUYURTMA · OLDINDAN</b>" : "<b>YANGI BUYURTMA</b>",
+    order.scheduledLabel ? "🛒 <b>YANGI BUYURTMA · OLDINDAN</b>" : "🛒 <b>YANGI BUYURTMA</b>",
     ...(order.scheduledLabel ? [`⏰ <b>Yetkazish vaqti:</b> ${escapeHtml(order.scheduledLabel)}`] : []),
     "",
     `<b>Order:</b> #${escapeHtml(order.orderNumber)}`,
     `<b>Mijoz:</b> ${escapeHtml(order.customerName)}`,
     `<b>Telefon:</b> ${escapeHtml(formatUzPhone(order.phone))}`,
+    ...(telegramLabel(order) ? [`<b>Telegram:</b> ${escapeHtml(telegramLabel(order)!)}`] : []),
     "",
-    "<b>Mahsulotlar:</b>",
+    `<b>Mahsulotlar (${lines.length} xil):</b>`,
     items,
     "",
-    `<b>Mahsulotlar:</b> ${formatMoney(order.subtotal)}`,
+    `<b>Mahsulotlar summasi:</b> ${formatMoney(order.subtotal)}`,
     `<b>Yetkazib berish:</b> ${formatMoney(order.deliveryFee)}`,
     `<b>Jami:</b> ${formatMoney(order.total)}`,
-    `<b>To‘lov:</b> ${escapeHtml(order.paymentMethod)}`,
+    `<b>To‘lov:</b> ${escapeHtml(paymentLabel(order.paymentMethod))}`,
     "",
     `<b>Manzil:</b> ${escapeHtml(order.address)}`,
   ].join("\n");

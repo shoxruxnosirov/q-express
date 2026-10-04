@@ -8,6 +8,10 @@
 
 export interface AdminChatThread {
   id: number;
+  /** The name Telegram shows for the customer. */
+  telegram_name: string | null;
+  /** The customer's Telegram @username, without the @, if they have one. */
+  telegram_username: string | null;
   /** The customer is blocked and cannot read replies. */
   customer_blocked: boolean;
   customer_name: string;

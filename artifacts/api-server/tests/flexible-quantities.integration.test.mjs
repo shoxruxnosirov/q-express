@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
@@ -25,6 +25,20 @@ const adminPassword = "integration-only-password";
 let duplicateProductId;
 let concurrentProductId;
 const createdOrderIds = [];
+// Orders are taken only in the Telegram Mini App, so the suite signs in as a
+// Telegram account of its own (signed with the stub bot token) and sends the
+// session as a bearer header, as the Mini App does.
+const BOT_TOKEN = "integration-stub-token";
+const telegramUserId = String(900_000_000 + (process.pid % 1_000_000));
+let sessionToken;
+
+function signedInitData(userId) {
+  const fields = { auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: Number(userId), first_name: "Integration" }) };
+  const check = Object.entries(fields).map(([key, value]) => `${key}=${value}`).sort().join("\n");
+  const secret = createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
+  const hash = createHmac("sha256", secret).update(check).digest("hex");
+  return new URLSearchParams({ ...fields, hash }).toString();
+}
 
 const shouldRun = Boolean(databaseUrl);
 
@@ -42,7 +56,11 @@ async function query(text, values = []) {
 async function http(path, init = {}) {
   return fetch(`http://127.0.0.1:${port}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}),
+      ...(init.headers ?? {}),
+    },
   });
 }
 
@@ -98,13 +116,22 @@ before(async () => {
       ...process.env,
       PORT: String(port),
       ADMIN_ACCESS_CODE: adminCode,
+      // Admin sessions are signed with it; a run without one in the shell
+      // still works.
+      SESSION_SECRET: process.env.SESSION_SECRET ?? "integration-only-session-secret",
       TELEGRAM_BOT_MODE: "new",
-      TELEGRAM_NEW_BOT_TOKEN: "integration-stub-token",
-      TELEGRAM_ADMIN_CHAT_ID: "integration-stub-chat",
+      TELEGRAM_NEW_BOT_TOKEN: BOT_TOKEN,
+      TELEGRAM_ADMIN_CHAT_ID: "4440002",
     },
     stdio: ["ignore", "ignore", "ignore"],
   });
   await waitForHealth();
+  const signIn = await http("/api/customer/telegram", {
+    method: "POST",
+    body: JSON.stringify({ init_data: signedInitData(telegramUserId) }),
+  });
+  assert.equal(signIn.status, 200, "the suite signs in as a Mini App customer");
+  sessionToken = (await signIn.json()).session_token;
 });
 
 after(async () => {
@@ -114,6 +141,9 @@ after(async () => {
   if (createdOrderIds.length > 0) {
     await query("delete from orders where id = any($1::int[])", [createdOrderIds]);
   }
+  // The suite's own Telegram customer, with its sessions and addresses.
+  await query("delete from orders where user_id in (select id from users where telegram_id = $1)", [telegramUserId]);
+  await query("delete from users where telegram_id = $1", [telegramUserId]);
   const productIds = [duplicateProductId, concurrentProductId].filter((id) => id != null);
   if (productIds.length > 0) {
     await query("delete from products where id = any($1::int[])", [productIds]);

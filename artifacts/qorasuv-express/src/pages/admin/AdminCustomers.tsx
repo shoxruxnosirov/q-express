@@ -9,23 +9,27 @@ import {
   useUnblockCustomer,
   type AdminCustomer,
 } from '@workspace/api-client-react';
-import { Ban, BadgeCheck, MapPin, Search, UserRound } from 'lucide-react';
+import { Ban, ChevronDown, MapPin, Search, Send, Smartphone, UserRound } from 'lucide-react';
 import { apiErrorMessage } from './AdminLogin';
 import { formatAddress } from '@/lib/address';
 import { formatUzPhone } from '@/lib/phone';
+import { CustomerDevices } from './CustomerDevices';
+import { telegramLabel, telegramProfileUrl } from '@/lib/telegram-label';
 
 const money = (value: number) => `${Math.round(value).toLocaleString('ru-RU')} so'm`;
 const date = (value: string) =>
   new Intl.DateTimeFormat('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 
-// Every customer account, newest order first. A customer who never verified
-// may appear more than once if they cleared their browser; a verified phone is
-// always one row.
+// Every customer account, newest order first. A Telegram account is always
+// one row; a browser guest may appear more than once if they cleared their
+// browser.
 export function AdminCustomers() {
   const customers = useListAdminCustomers({ query: { queryKey: getListAdminCustomersQueryKey() } });
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'verified' | 'blocked'>('all');
+  const [filter, setFilter] = useState<'all' | 'telegram' | 'blocked'>('all');
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  // The one customer whose devices are shown.
+  const [openDevices, setOpenDevices] = useState<number | null>(null);
   const qc = useQueryClient();
   // Only a super admin may block or unblock; everyone sees who is blocked.
   const session = useGetAdminSession({ query: { queryKey: getGetAdminSessionQueryKey() } });
@@ -61,14 +65,14 @@ Sabab (ixtiyoriy):`, '');
     const needle = search.trim().toLowerCase();
     const digits = needle.replace(/\D/g, '');
     return (customers.data ?? []).filter(customer => {
-      if (filter === 'verified' && !customer.phone_verified) return false;
+      if (filter === 'telegram' && !customer.telegram_linked) return false;
       if (filter === 'blocked' && !customer.blocked) return false;
       if (!needle) return true;
       return customer.name.toLowerCase().includes(needle) || (digits.length >= 3 && customer.phone.includes(digits));
     });
   }, [customers.data, search, filter]);
 
-  const verifiedCount = (customers.data ?? []).filter(customer => customer.phone_verified).length;
+  const telegramCount = (customers.data ?? []).filter(customer => customer.telegram_linked).length;
   const blockedCount = (customers.data ?? []).filter(customer => customer.blocked).length;
 
   return (
@@ -77,7 +81,7 @@ Sabab (ixtiyoriy):`, '');
         <p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">Operator workspace / Mijozlar</p>
         <h1 className="display mt-2 text-4xl font-extrabold sm:text-5xl">Mijozlar</h1>
         <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
-          Jami {customers.data?.length ?? 0} ta, shundan {verifiedCount} tasi Telegram orqali tasdiqlangan{blockedCount ? `, ${blockedCount} tasi bloklangan` : ''}.
+          Jami {customers.data?.length ?? 0} ta, shundan {telegramCount} tasi Telegram orqali{blockedCount ? `, ${blockedCount} tasi bloklangan` : ''}.
         </p>
       </div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -87,7 +91,7 @@ Sabab (ixtiyoriy):`, '');
         </div>
         <select data-testid="select-customer-filter" value={filter} onChange={event => setFilter(event.target.value as typeof filter)} className="h-11 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 text-sm font-semibold">
           <option value="all">Hammasi</option>
-          <option value="verified">Faqat tasdiqlanganlar</option>
+          <option value="telegram">Faqat Telegram</option>
           <option value="blocked">Faqat bloklanganlar</option>
         </select>
       </div>
@@ -107,9 +111,10 @@ Sabab (ixtiyoriy):`, '');
                     <p className="truncate text-sm font-extrabold">{customer.name || 'Ism kiritilmagan'}</p>
                     <p className="mt-0.5 flex items-center gap-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                       {customer.phone ? formatUzPhone(customer.phone) : 'Telefon yo‘q'}
-                      {customer.phone_verified && <span className="inline-flex items-center gap-1 rounded-full bg-[#e8efdc] px-1.5 py-0.5 text-[9px] font-bold text-[hsl(var(--primary))]"><BadgeCheck size={10} /> tasdiqlangan</span>}
+                      {customer.telegram_linked && <span className="inline-flex items-center gap-1 rounded-full bg-[#eaf6fc] px-1.5 py-0.5 text-[9px] font-bold text-[#136a93]"><Send size={10} /> Telegram</span>}
                       {customer.blocked && <span data-testid={`badge-blocked-${customer.id}`} className="inline-flex items-center gap-1 rounded-full bg-[#fdecea] px-1.5 py-0.5 text-[9px] font-bold text-[#8c1d18]"><Ban size={10} /> bloklangan</span>}
                     </p>
+                    {telegramLabel(customer) && <p data-testid={`text-customer-telegram-${customer.id}`} className="mt-0.5 truncate text-[11px] font-semibold text-[#136a93]">Telegram: {telegramProfileUrl(customer) ? <a href={telegramProfileUrl(customer)} target="_blank" rel="noreferrer" className="underline">{telegramLabel(customer)}</a> : telegramLabel(customer)}</p>}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -126,13 +131,19 @@ Sabab (ixtiyoriy):`, '');
                   Bloklangan{customer.blocked_by ? `: ${customer.blocked_by}` : ''}{customer.blocked_at ? `, ${date(customer.blocked_at)}` : ''}{customer.block_reason ? `. Sabab: ${customer.block_reason}` : ''}
                 </p>
               )}
-              {canBlock && <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <button type="button" data-testid={`button-devices-${customer.id}`} onClick={() => setOpenDevices(openDevices === customer.id ? null : customer.id)} className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-1.5 text-xs font-bold text-[hsl(var(--muted-foreground))]">
+                  <Smartphone size={12} /> Qurilmalar ({customer.active_sessions}) <ChevronDown size={12} className={openDevices === customer.id ? 'rotate-180' : ''} />
+                </button>
+              {canBlock && <div className="flex justify-end">
                 {customer.blocked ? (
                   <button type="button" data-testid={`button-unblock-${customer.id}`} onClick={() => unblockCustomer(customer)} disabled={unblock.isPending} className="rounded-full border border-[hsl(var(--primary)/.4)] px-3 py-1.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-50">Blokdan chiqarish</button>
                 ) : (
                   <button type="button" data-testid={`button-block-${customer.id}`} onClick={() => blockCustomer(customer)} disabled={block.isPending} className="inline-flex items-center gap-1.5 rounded-full border border-[#e6b2a8] px-3 py-1.5 text-xs font-bold text-[#9d493e] disabled:opacity-50"><Ban size={12} /> Bloklash</button>
                 )}
               </div>}
+              </div>
+              {openDevices === customer.id && <CustomerDevices customerId={customer.id} canBlock={canBlock} />}
               {customer.addresses.length > 0 && (
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                   <MapPin size={13} className="mt-0.5 shrink-0 text-[hsl(var(--primary))]" />

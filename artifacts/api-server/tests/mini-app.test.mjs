@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { afterEach, test } from "node:test";
-import { verifyWebAppInitData, welcomeMessage } from "../src/lib/telegram.ts";
+import { verifyWebAppInitData, webAppUser, welcomeMessage } from "../src/lib/telegram.ts";
 
 const TOKEN = "424242:mini-app-test-token";
 const originalToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -65,7 +65,8 @@ test("the welcome carries the banner, the promises, real discounts and Mini App 
   ]);
   assert.equal(message.photo, "https://q-express.onrender.com/brand/q-express-logo.png");
   assert.ok(message.caption.includes("15–19 daqiqada"));
-  assert.ok(message.caption.includes("Birinchi yetkazish bepul"));
+  assert.ok(message.caption.includes("Har bir xonadonga birinchi yetkazish bepul"));
+  assert.ok(!message.caption.includes("tasdiqlang"), "nothing to verify any more");
   // Thousands are grouped with a non-breaking space, so "98 000" never wraps.
   const caption = message.caption.replaceAll(" ", " ");
   assert.ok(caption.includes("Mol go‘shti: <b>98 000 so‘m</b> <s>110 000 so‘m</s> (−11%)"), caption);
@@ -100,12 +101,24 @@ test("a pre-order notification leads with its delivery time", async () => {
     const order = { id: 1, orderNumber: "QE-1", customerName: "A", phone: "998901112233", address: "x", items: [], paymentMethod: "cash", subtotal: 0, deliveryFee: 0, total: 0 };
     await sendNewOrderNotification({ ...order, scheduledLabel: "28-sentabr, 06:00" });
     const [first, second] = text.split("\n");
-    assert.equal(first, "<b>YANGI BUYURTMA · OLDINDAN</b>");
+    assert.equal(first, "🛒 <b>YANGI BUYURTMA · OLDINDAN</b>");
     assert.equal(second, "⏰ <b>Yetkazish vaqti:</b> 28-sentabr, 06:00");
     await sendNewOrderNotification(order);
-    assert.equal(text.split("\n")[0], "<b>YANGI BUYURTMA</b>", "an order for now looks as before");
+    assert.equal(text.split("\n")[0], "🛒 <b>YANGI BUYURTMA</b>", "an order for now looks as before");
+    await sendNewOrderNotification({ ...order, telegramName: "Aziz", telegramUsername: "aziz_k" });
+    assert.match(text, /<b>Telegram:<\/b> Aziz \(@aziz_k\)/);
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.TELEGRAM_ADMIN_CHAT_ID;
   }
+});
+
+test("a new Mini App account is named after the Telegram user, with their @username", () => {
+  const data = (user) => new URLSearchParams({ user: JSON.stringify(user), auth_date: "1", hash: "x" }).toString();
+  assert.deepEqual(webAppUser(data({ id: 1, first_name: "Aziz", last_name: "Karimov", username: "aziz_k" })), { name: "Aziz Karimov", username: "aziz_k" });
+  assert.deepEqual(webAppUser(data({ id: 1, first_name: "Aziz" })), { name: "Aziz", username: null });
+  assert.equal(webAppUser(data({ id: 1, first_name: "  ", last_name: 5 })).name, "", "nothing usable");
+  assert.equal(webAppUser(data({ id: 1, first_name: "x".repeat(200) })).name.length, 80, "kept within the profile limit");
+  assert.equal(webAppUser(data({ id: 1, username: "bad name" })).username, null);
+  assert.deepEqual(webAppUser("user=not-json"), { name: "", username: null });
 });

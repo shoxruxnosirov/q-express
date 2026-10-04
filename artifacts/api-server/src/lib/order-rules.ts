@@ -65,3 +65,16 @@ export function parseOrderAddress(address: string): AddressParts | undefined {
   const match = ADDRESS_PATTERN.exec(address);
   return match ? { dom: match[1], xonadon: match[2] } : undefined;
 }
+
+// The flat an address names, as orders.address_key stores it: "12|45", lower
+// case and without leading zeros ("012" is flat 12 too), the same however the
+// line was spaced. The first order to a flat has
+// free delivery, so two spellings of one flat must give one key. Undefined
+// for a line the shop did not write, which never earns the free delivery.
+// Migration 0011 fills in older orders with the same pattern.
+export function addressKey(address: string): string | undefined {
+  const parts = parseOrderAddress(address);
+  if (!parts) return undefined;
+  const part = (value: string) => value.toLowerCase().replace(/^0+(?=.)/, "");
+  return `${part(parts.dom)}|${part(parts.xonadon)}`;
+}

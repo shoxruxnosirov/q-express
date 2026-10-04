@@ -8,8 +8,6 @@
 
 export interface DeliveryFeeEstimate {
   delivery_fee: number;
-  previous_order_count: number;
+  /** No order has gone to this address yet, so delivery is free. */
   is_first_order: boolean;
-  /** True when this would be the phone's first order but the phone is not verified on this browser, so the fee applies until it is. */
-  verification_required: boolean;
 }

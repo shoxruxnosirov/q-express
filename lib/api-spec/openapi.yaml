@@ -134,18 +134,27 @@ paths:
                 $ref: "#/components/schemas/Order"
         "400":
           description: Invalid order
+        "403":
+          description: >-
+            Orders are taken only in the Telegram Mini App (telegram_required),
+            or the customer or this device is blocked (blocked).
   /orders/delivery-fee:
     get:
       operationId: getDeliveryFeeEstimate
       tags: [orders]
-      summary: Estimate delivery fee for a customer phone number
+      summary: Estimate the delivery fee for an address
+      description: >-
+        The first order to a flat (dom and xonadon) has free delivery, whoever
+        places it and from whichever account.
       parameters:
-        - name: phone
+        - name: address
           in: query
           required: true
+          description: The address line an order would carry, "12-dom, 5-xonadon".
           schema:
             type: string
-            minLength: 7
+            minLength: 3
+            maxLength: 200
       responses:
         "200":
           description: Delivery fee estimate
@@ -173,6 +182,45 @@ paths:
                 $ref: "#/components/schemas/Order"
         "404":
           description: No such order, or it was placed from another browser
+  /orders/{id}/feedback:
+    post:
+      operationId: sendOrderFeedback
+      tags: [orders]
+      summary: Send the admins a comment about a delivered order
+      description: >-
+        Only the customer who placed the order, in the Mini App, once it is
+        delivered. The comment is NOT stored: it goes straight to the admins
+        through the Telegram bot, with the order and who wrote it. Three
+        comments per order a day.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderFeedbackInput"
+      responses:
+        "200":
+          description: The comment reached the admins
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderFeedbackReceipt"
+        "403":
+          description: Not in the Mini App (telegram_required), or blocked (blocked)
+        "404":
+          description: No such order, or not this customer's
+        "409":
+          description: The order is not delivered yet
+        "429":
+          description: Too many comments on this order today
+        "502":
+          description: Telegram did not take it; nothing was kept, so try again
   /customer/me:
     get:
       operationId: getCustomerProfile
@@ -226,50 +274,30 @@ paths:
     get:
       operationId: getCustomerLoginLink
       tags: [customer]
-      summary: The Telegram link that starts phone verification
+      summary: The bot, where the shop opens as the Mini App
+      description: >-
+        Accounts, the chat and the profile live in Telegram. A browser shows
+        this link to send people there.
       responses:
         "200":
-          description: Open it, share the phone number, and the bot sends a code
+          description: The t.me link of the bot
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CustomerLoginLink"
         "503":
           description: The Telegram bot is not configured
-    post:
-      operationId: verifyCustomerLogin
-      tags: [customer]
-      summary: Verify the phone with the code the bot sent, and sign in
-      description: >-
-        If the verified phone already belongs to a customer (another device),
-        this browser signs in as that customer and brings its orders,
-        addresses and chat along.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CustomerLoginInput"
-      responses:
-        "200":
-          description: Verified and signed in
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CustomerProfile"
-        "401":
-          description: Wrong or expired code
-        "429":
-          description: Too many attempts
   /customer/telegram:
     post:
       operationId: signInWithTelegram
       tags: [customer]
       summary: Sign in inside the Telegram Mini App
       description: >-
-        Takes the Mini App's signed initData. If that Telegram account belongs
-        to a verified customer, this webview is signed in as them; otherwise
-        nothing changes and authenticated stays false.
+        Takes the Mini App's signed initData. The Telegram account is the
+        customer: this webview is signed in as its account, which is created
+        on first sight. A guest account the webview had before is folded
+        in. Called on every launch, so a different Telegram account
+        opening the Mini App on the same phone gets its own session.
       requestBody:
         required: true
         content:
@@ -278,13 +306,15 @@ paths:
               $ref: "#/components/schemas/TelegramSignInInput"
       responses:
         "200":
-          description: The customer, or authenticated false
+          description: The signed-in customer and the session token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CustomerProfile"
+                $ref: "#/components/schemas/TelegramSession"
         "401":
           description: initData is not genuine or is too old
+        "403":
+          description: The customer or this device is blocked
   /customer/logout:
     post:
       operationId: customerLogout
@@ -363,6 +393,104 @@ paths:
           description: Not a super admin
         "404":
           description: No such customer
+  /admin/customers/{id}/sessions:
+    get:
+      operationId: listCustomerSessions
+      tags: [admin]
+      summary: The devices a customer is or was signed in on
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Sessions, most recently seen first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerSession"
+  /admin/customer-sessions/{id}/revoke:
+    post:
+      operationId: revokeCustomerSession
+      tags: [admin]
+      summary: Sign one of a customer's devices out
+      description: >-
+        The device's cookie stops working at once. In the Mini App the
+        customer is signed in again on the next launch, since Telegram still
+        vouches for them; block the device or the customer to keep them out.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The session, now revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSession"
+        "404":
+          description: No such session
+  /admin/customer-sessions/{id}/block:
+    post:
+      operationId: blockCustomerSession
+      tags: [admin]
+      summary: Block one device (super admins only)
+      description: >-
+        The device keeps its cookie and is refused ordering, chat and profile
+        changes. A Mini App session's Telegram account is refused on every
+        later launch too. Clearing a browser's cookies escapes a device block;
+        block the customer for that.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerBlockInput"
+      responses:
+        "200":
+          description: The session, now blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSession"
+        "403":
+          description: Not a super admin
+        "404":
+          description: No such session
+    delete:
+      operationId: unblockCustomerSession
+      tags: [admin]
+      summary: Lift a device block (super admins only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The session, no longer blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSession"
+        "403":
+          description: Not a super admin
+        "404":
+          description: No such session
   /admin/auth:
     post:
       operationId: adminLogin
@@ -1023,6 +1151,14 @@ components:
           format: date-time
           nullable: true
           description: When the status last changed. Admin endpoints only.
+        telegram_name:
+          type: string
+          nullable: true
+          description: The ordering customer's name in Telegram. Admin endpoints only.
+        telegram_username:
+          type: string
+          nullable: true
+          description: The ordering customer's Telegram @username, without the @. Admin endpoints only.
     OrderInput:
       type: object
       required: [customer_name, items, address, phone, payment_method]
@@ -1273,19 +1409,13 @@ components:
           type: boolean
     DeliveryFeeEstimate:
       type: object
-      required: [delivery_fee, previous_order_count, is_first_order, verification_required]
+      required: [delivery_fee, is_first_order]
       properties:
         delivery_fee:
           type: number
-        previous_order_count:
-          type: integer
         is_first_order:
           type: boolean
-        verification_required:
-          type: boolean
-          description: >-
-            True when this would be the phone's first order but the phone is
-            not verified on this browser, so the fee applies until it is.
+          description: No order has gone to this address yet, so delivery is free.
     StoreStatus:
       type: object
       required: [open_now, accepting_orders, open_time, close_time, next_open_at, slots, earliest_accepted_at]
@@ -1344,7 +1474,7 @@ components:
           maxLength: 10
     CustomerProfile:
       type: object
-      required: [authenticated, name, phone, phone_verified, addresses, blocked, chat_open]
+      required: [authenticated, name, phone, phone_verified, telegram_linked, addresses, blocked, chat_open]
       properties:
         authenticated:
           type: boolean
@@ -1353,13 +1483,17 @@ components:
           description: An admin has blocked this customer; ordering, chat and profile changes are refused.
         chat_open:
           type: boolean
-          description: The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.
+          description: The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram.
         name:
           type: string
         phone:
           type: string
         phone_verified:
           type: boolean
+          description: Verified by a code in an earlier build. Nothing verifies phones any more.
+        telegram_linked:
+          type: boolean
+          description: The account belongs to a Telegram account (signed in through the Mini App or the bot).
         addresses:
           type: array
           items:
@@ -1390,26 +1524,79 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
+    TelegramSession:
+      type: object
+      required: [profile, session_token]
+      properties:
+        profile:
+          $ref: "#/components/schemas/CustomerProfile"
+        session_token:
+          type: string
+          description: >-
+            The session's secret, also set as the cookie. The Mini App sends it
+            as "Authorization: Bearer <token>" on every request, because a
+            webview inside Telegram Web may refuse the cookie of a site in a
+            frame.
+    OrderFeedbackInput:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    OrderFeedbackReceipt:
+      type: object
+      required: [sent]
+      properties:
+        sent:
+          type: boolean
     CustomerLoginLink:
       type: object
       required: [url]
       properties:
         url:
           type: string
-    CustomerLoginInput:
+    CustomerSession:
       type: object
-      required: [phone, code]
+      required: [id, source, user_agent, created_at, last_seen_at, revoked_at, blocked, blocked_at, blocked_by, block_reason, current]
       properties:
-        phone:
+        id:
+          type: integer
+        source:
           type: string
-          minLength: 7
-          maxLength: 32
-        code:
+          enum: [telegram, browser]
+        user_agent:
           type: string
-          pattern: "^[0-9]{6}$"
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        blocked:
+          type: boolean
+        blocked_at:
+          type: string
+          format: date-time
+          nullable: true
+        blocked_by:
+          type: string
+          nullable: true
+        block_reason:
+          type: string
+          nullable: true
+        current:
+          type: boolean
+          description: Still usable, neither revoked nor blocked.
     AdminCustomer:
       type: object
-      required: [id, name, phone, phone_verified, order_count, total_spent, last_order_at, created_at, addresses, blocked, blocked_at, blocked_by, block_reason]
+      required: [id, name, phone, phone_verified, telegram_linked, telegram_name, telegram_username, active_sessions, blocked_devices, order_count, total_spent, last_order_at, created_at, addresses, blocked, blocked_at, blocked_by, block_reason]
       properties:
         id:
           type: integer
@@ -1432,6 +1619,22 @@ components:
           type: string
         phone_verified:
           type: boolean
+        telegram_linked:
+          type: boolean
+        telegram_name:
+          type: string
+          nullable: true
+          description: The name Telegram shows for the customer.
+        telegram_username:
+          type: string
+          nullable: true
+          description: The customer's Telegram @username, without the @, if they have one.
+        active_sessions:
+          type: integer
+          description: Devices currently signed in (neither revoked nor blocked).
+        blocked_devices:
+          type: integer
+          description: Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere.
         order_count:
           type: integer
         total_spent:
@@ -1605,10 +1808,19 @@ components:
           maxLength: 1000
     AdminChatThread:
       type: object
-      required: [id, customer_name, phone, last_message, last_message_at, unread_count, customer_blocked]
+      required: [id, customer_name, phone, telegram_name, telegram_username, last_message, last_message_at, unread_count, customer_blocked]
       properties:
         id:
           type: integer
+        telegram_name:
+          type: string
+          nullable: true
+          description: The name Telegram shows for the customer.
+        telegram_username:
+          type: string
+          nullable: true
+          description: The customer's Telegram @username, without the @, if they have one.
+
         customer_blocked:
           type: boolean
           description: The customer is blocked and cannot read replies.

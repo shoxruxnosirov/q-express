@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { __test, openTelegramLink, postEvent } from "../src/lib/telegram-mini-app.ts";
 
-const { captureInitData, setInitData } = __test;
+const { captureInitData, insideTelegram, readSessionToken, setInitData } = __test;
 
 function memoryStorage() {
   const store = new Map();
@@ -68,4 +68,22 @@ test("a t.me link is opened inside Telegram only in the Mini App, and only for t
     delete globalThis.window;
     setInitData("");
   }
+});
+
+test("the Mini App's session token is read back only in the shape the server issues", () => {
+  const token = "a".repeat(64);
+  assert.equal(readSessionToken({ getItem: () => token }), token);
+  assert.equal(readSessionToken({ getItem: () => "short" }), "");
+  assert.equal(readSessionToken({ getItem: () => null }), "");
+  assert.equal(readSessionToken({ getItem: () => { throw new Error("blocked"); } }), "", "blocked storage never breaks the page");
+  assert.equal(readSessionToken(undefined), "");
+});
+
+test("launch data counts only inside Telegram, not in a plain tab opened from a link", () => {
+  const top = {}; top.parent = top; top.self = top;
+  assert.equal(insideTelegram(top), false, "a plain browser tab");
+  assert.equal(insideTelegram({ ...top, TelegramWebviewProxy: { postEvent() {} } }), true, "the phone and desktop apps");
+  const framed = { self: {}, parent: {} };
+  assert.equal(insideTelegram(framed), true, "Telegram Web runs the shop in a frame");
+  assert.equal(insideTelegram({ ...top, external: { notify() {} } }), true);
 });

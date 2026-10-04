@@ -114,6 +114,10 @@ export interface Order {
   status_changed_by?: string | null;
   /** When the status last changed. Admin endpoints only. */
   status_changed_at?: string | null;
+  /** The ordering customer's name in Telegram. Admin endpoints only. */
+  telegram_name?: string | null;
+  /** The ordering customer's Telegram @username, without the @. Admin endpoints only. */
+  telegram_username?: string | null;
 }
 
 export type OrderInputItemsItemPurchaseMode = typeof OrderInputItemsItemPurchaseMode[keyof typeof OrderInputItemsItemPurchaseMode];
@@ -373,10 +377,8 @@ export interface AdminProductUpdateInput {
 
 export interface DeliveryFeeEstimate {
   delivery_fee: number;
-  previous_order_count: number;
+  /** No order has gone to this address yet, so delivery is free. */
   is_first_order: boolean;
-  /** True when this would be the phone's first order but the phone is not verified on this browser, so the fee applies until it is. */
-  verification_required: boolean;
 }
 
 export interface StoreStatus {
@@ -413,11 +415,14 @@ export interface CustomerProfile {
   authenticated: boolean;
   /** An admin has blocked this customer; ordering, chat and profile changes are refused. */
   blocked: boolean;
-  /** The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard. */
+  /** The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram. */
   chat_open: boolean;
   name: string;
   phone: string;
+  /** Verified by a code in an earlier build. Nothing verifies phones any more. */
   phone_verified: boolean;
+  /** The account belongs to a Telegram account (signed in through the Mini App or the bot). */
+  telegram_linked: boolean;
   addresses: DeliveryAddress[];
 }
 
@@ -441,18 +446,49 @@ export interface TelegramSignInInput {
   init_data: string;
 }
 
+export interface TelegramSession {
+  profile: CustomerProfile;
+  /** The session's secret, also set as the cookie. The Mini App sends it as "Authorization: Bearer <token>" on every request, because a webview inside Telegram Web may refuse the cookie of a site in a frame. */
+  session_token: string;
+}
+
+export interface OrderFeedbackInput {
+  /**
+     * @minLength 1
+     * @maxLength 1000
+     */
+  text: string;
+}
+
+export interface OrderFeedbackReceipt {
+  sent: boolean;
+}
+
 export interface CustomerLoginLink {
   url: string;
 }
 
-export interface CustomerLoginInput {
-  /**
-     * @minLength 7
-     * @maxLength 32
-     */
-  phone: string;
-  /** @pattern ^[0-9]{6}$ */
-  code: string;
+export type CustomerSessionSource = typeof CustomerSessionSource[keyof typeof CustomerSessionSource];
+
+
+export const CustomerSessionSource = {
+  telegram: 'telegram',
+  browser: 'browser',
+} as const;
+
+export interface CustomerSession {
+  id: number;
+  source: CustomerSessionSource;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+  revoked_at: string | null;
+  blocked: boolean;
+  blocked_at: string | null;
+  blocked_by: string | null;
+  block_reason: string | null;
+  /** Still usable, neither revoked nor blocked. */
+  current: boolean;
 }
 
 export interface AdminCustomer {
@@ -465,6 +501,15 @@ export interface AdminCustomer {
   name: string;
   phone: string;
   phone_verified: boolean;
+  telegram_linked: boolean;
+  /** The name Telegram shows for the customer. */
+  telegram_name: string | null;
+  /** The customer's Telegram @username, without the @, if they have one. */
+  telegram_username: string | null;
+  /** Devices currently signed in (neither revoked nor blocked). */
+  active_sessions: number;
+  /** Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere. */
+  blocked_devices: number;
   order_count: number;
   total_spent: number;
   last_order_at: string | null;
@@ -584,6 +629,10 @@ export interface ChatMessageInput {
 
 export interface AdminChatThread {
   id: number;
+  /** The name Telegram shows for the customer. */
+  telegram_name: string | null;
+  /** The customer's Telegram @username, without the @, if they have one. */
+  telegram_username: string | null;
   /** The customer is blocked and cannot read replies. */
   customer_blocked: boolean;
   customer_name: string;
@@ -612,9 +661,11 @@ export const ListProductsSort = {
 
 export type GetDeliveryFeeEstimateParams = {
 /**
- * @minLength 7
+ * The address line an order would carry, "12-dom, 5-xonadon".
+ * @minLength 3
+ * @maxLength 200
  */
-phone: string;
+address: string;
 };
 
 export type ListAdminOrdersParams = {

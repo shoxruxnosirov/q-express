@@ -123,7 +123,9 @@ export const ListOrdersResponseItem = zod.object({
   "created_at": zod.coerce.date(),
   "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
-  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.'),
+  "telegram_name": zod.string().nullish().describe('The ordering customer\'s name in Telegram. Admin endpoints only.'),
+  "telegram_username": zod.string().nullish().describe('The ordering customer\'s Telegram @username, without the @. Admin endpoints only.')
 })
 export const ListOrdersResponse = zod.array(ListOrdersResponseItem)
 
@@ -193,26 +195,28 @@ export const CreateOrderResponse = zod.object({
   "created_at": zod.coerce.date(),
   "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
-  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.'),
+  "telegram_name": zod.string().nullish().describe('The ordering customer\'s name in Telegram. Admin endpoints only.'),
+  "telegram_username": zod.string().nullish().describe('The ordering customer\'s Telegram @username, without the @. Admin endpoints only.')
 })
 
 
 /**
- * @summary Estimate delivery fee for a customer phone number
+ * The first order to a flat (dom and xonadon) has free delivery, whoever places it and from whichever account.
+ * @summary Estimate the delivery fee for an address
  */
-export const getDeliveryFeeEstimateQueryPhoneMin = 7;
+export const getDeliveryFeeEstimateQueryAddressMin = 3;
+export const getDeliveryFeeEstimateQueryAddressMax = 200;
 
 
 
 export const GetDeliveryFeeEstimateQueryParams = zod.object({
-  "phone": zod.coerce.string().min(getDeliveryFeeEstimateQueryPhoneMin)
+  "address": zod.coerce.string().min(getDeliveryFeeEstimateQueryAddressMin).max(getDeliveryFeeEstimateQueryAddressMax).describe('The address line an order would carry, "12-dom, 5-xonadon".')
 })
 
 export const GetDeliveryFeeEstimateResponse = zod.object({
   "delivery_fee": zod.number(),
-  "previous_order_count": zod.number().int(),
-  "is_first_order": zod.boolean(),
-  "verification_required": zod.boolean().describe('True when this would be the phone\'s first order but the phone is not verified on this browser, so the fee applies until it is.')
+  "is_first_order": zod.boolean().describe('No order has gone to this address yet, so delivery is free.')
 })
 
 
@@ -255,7 +259,30 @@ export const GetOrderResponse = zod.object({
   "created_at": zod.coerce.date(),
   "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
-  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.'),
+  "telegram_name": zod.string().nullish().describe('The ordering customer\'s name in Telegram. Admin endpoints only.'),
+  "telegram_username": zod.string().nullish().describe('The ordering customer\'s Telegram @username, without the @. Admin endpoints only.')
+})
+
+
+/**
+ * Only the customer who placed the order, in the Mini App, once it is delivered. The comment is NOT stored: it goes straight to the admins through the Telegram bot, with the order and who wrote it. Three comments per order a day.
+ * @summary Send the admins a comment about a delivered order
+ */
+export const SendOrderFeedbackParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const sendOrderFeedbackBodyTextMax = 1000;
+
+
+
+export const SendOrderFeedbackBody = zod.object({
+  "text": zod.string().min(1).max(sendOrderFeedbackBodyTextMax)
+})
+
+export const SendOrderFeedbackResponse = zod.object({
+  "sent": zod.boolean()
 })
 
 
@@ -271,10 +298,11 @@ export const getCustomerProfileResponseAddressesItemXonadonMax = 10;
 export const GetCustomerProfileResponse = zod.object({
   "authenticated": zod.boolean(),
   "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
-  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
+  "chat_open": zod.boolean().describe('The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram.'),
   "name": zod.string(),
   "phone": zod.string(),
-  "phone_verified": zod.boolean(),
+  "phone_verified": zod.boolean().describe('Verified by a code in an earlier build. Nothing verifies phones any more.'),
+  "telegram_linked": zod.boolean().describe('The account belongs to a Telegram account (signed in through the Mini App or the bot).'),
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(getCustomerProfileResponseAddressesItemDomMax),
   "xonadon": zod.string().max(getCustomerProfileResponseAddressesItemXonadonMax)
@@ -305,10 +333,11 @@ export const updateCustomerProfileResponseAddressesItemXonadonMax = 10;
 export const UpdateCustomerProfileResponse = zod.object({
   "authenticated": zod.boolean(),
   "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
-  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
+  "chat_open": zod.boolean().describe('The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram.'),
   "name": zod.string(),
   "phone": zod.string(),
-  "phone_verified": zod.boolean(),
+  "phone_verified": zod.boolean().describe('Verified by a code in an earlier build. Nothing verifies phones any more.'),
+  "telegram_linked": zod.boolean().describe('The account belongs to a Telegram account (signed in through the Mini App or the bot).'),
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(updateCustomerProfileResponseAddressesItemDomMax),
   "xonadon": zod.string().max(updateCustomerProfileResponseAddressesItemXonadonMax)
@@ -343,10 +372,11 @@ export const replaceCustomerAddressesResponseAddressesItemXonadonMax = 10;
 export const ReplaceCustomerAddressesResponse = zod.object({
   "authenticated": zod.boolean(),
   "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
-  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
+  "chat_open": zod.boolean().describe('The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram.'),
   "name": zod.string(),
   "phone": zod.string(),
-  "phone_verified": zod.boolean(),
+  "phone_verified": zod.boolean().describe('Verified by a code in an earlier build. Nothing verifies phones any more.'),
+  "telegram_linked": zod.boolean().describe('The account belongs to a Telegram account (signed in through the Mini App or the bot).'),
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(replaceCustomerAddressesResponseAddressesItemDomMax),
   "xonadon": zod.string().max(replaceCustomerAddressesResponseAddressesItemXonadonMax)
@@ -355,7 +385,8 @@ export const ReplaceCustomerAddressesResponse = zod.object({
 
 
 /**
- * @summary The Telegram link that starts phone verification
+ * Accounts, the chat and the profile live in Telegram. A browser shows this link to send people there.
+ * @summary The bot, where the shop opens as the Mini App
  */
 export const GetCustomerLoginLinkResponse = zod.object({
   "url": zod.string()
@@ -363,42 +394,7 @@ export const GetCustomerLoginLinkResponse = zod.object({
 
 
 /**
- * If the verified phone already belongs to a customer (another device), this browser signs in as that customer and brings its orders, addresses and chat along.
- * @summary Verify the phone with the code the bot sent, and sign in
- */
-export const verifyCustomerLoginBodyPhoneMin = 7;
-export const verifyCustomerLoginBodyPhoneMax = 32;
-
-export const verifyCustomerLoginBodyCodeRegExp = new RegExp('^[0-9]{6}$');
-
-
-export const VerifyCustomerLoginBody = zod.object({
-  "phone": zod.string().min(verifyCustomerLoginBodyPhoneMin).max(verifyCustomerLoginBodyPhoneMax),
-  "code": zod.string().regex(verifyCustomerLoginBodyCodeRegExp)
-})
-
-export const verifyCustomerLoginResponseAddressesItemDomMax = 10;
-
-export const verifyCustomerLoginResponseAddressesItemXonadonMax = 10;
-
-
-
-export const VerifyCustomerLoginResponse = zod.object({
-  "authenticated": zod.boolean(),
-  "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
-  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
-  "name": zod.string(),
-  "phone": zod.string(),
-  "phone_verified": zod.boolean(),
-  "addresses": zod.array(zod.object({
-  "dom": zod.string().max(verifyCustomerLoginResponseAddressesItemDomMax),
-  "xonadon": zod.string().max(verifyCustomerLoginResponseAddressesItemXonadonMax)
-}))
-})
-
-
-/**
- * Takes the Mini App's signed initData. If that Telegram account belongs to a verified customer, this webview is signed in as them; otherwise nothing changes and authenticated stays false.
+ * Takes the Mini App's signed initData. The Telegram account is the customer: this webview is signed in as its account, which is created on first sight. A guest account the webview had before is folded in. Called on every launch, so a different Telegram account opening the Mini App on the same phone gets its own session.
  * @summary Sign in inside the Telegram Mini App
  */
 export const signInWithTelegramBodyInitDataMax = 4096;
@@ -409,23 +405,27 @@ export const SignInWithTelegramBody = zod.object({
   "init_data": zod.string().min(1).max(signInWithTelegramBodyInitDataMax)
 })
 
-export const signInWithTelegramResponseAddressesItemDomMax = 10;
+export const signInWithTelegramResponseProfileAddressesItemDomMax = 10;
 
-export const signInWithTelegramResponseAddressesItemXonadonMax = 10;
+export const signInWithTelegramResponseProfileAddressesItemXonadonMax = 10;
 
 
 
 export const SignInWithTelegramResponse = zod.object({
+  "profile": zod.object({
   "authenticated": zod.boolean(),
   "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
-  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
+  "chat_open": zod.boolean().describe('The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram.'),
   "name": zod.string(),
   "phone": zod.string(),
-  "phone_verified": zod.boolean(),
+  "phone_verified": zod.boolean().describe('Verified by a code in an earlier build. Nothing verifies phones any more.'),
+  "telegram_linked": zod.boolean().describe('The account belongs to a Telegram account (signed in through the Mini App or the bot).'),
   "addresses": zod.array(zod.object({
-  "dom": zod.string().max(signInWithTelegramResponseAddressesItemDomMax),
-  "xonadon": zod.string().max(signInWithTelegramResponseAddressesItemXonadonMax)
+  "dom": zod.string().max(signInWithTelegramResponseProfileAddressesItemDomMax),
+  "xonadon": zod.string().max(signInWithTelegramResponseProfileAddressesItemXonadonMax)
 }))
+}),
+  "session_token": zod.string().describe('The session\'s secret, also set as the cookie. The Mini App sends it as "Authorization: Bearer <token>" on every request, because a webview inside Telegram Web may refuse the cookie of a site in a frame.')
 })
 
 
@@ -441,10 +441,11 @@ export const customerLogoutResponseAddressesItemXonadonMax = 10;
 export const CustomerLogoutResponse = zod.object({
   "authenticated": zod.boolean(),
   "blocked": zod.boolean().describe('An admin has blocked this customer; ordering, chat and profile changes are refused.'),
-  "chat_open": zod.boolean().describe('The customer has placed an order, so the chat is open. It stays open after delivery; an admin deletes conversations from the dashboard.'),
+  "chat_open": zod.boolean().describe('The account belongs to a Telegram account, so the chat (shared with the bot) is open. Guests in a browser are sent to Telegram.'),
   "name": zod.string(),
   "phone": zod.string(),
-  "phone_verified": zod.boolean(),
+  "phone_verified": zod.boolean().describe('Verified by a code in an earlier build. Nothing verifies phones any more.'),
+  "telegram_linked": zod.boolean().describe('The account belongs to a Telegram account (signed in through the Mini App or the bot).'),
   "addresses": zod.array(zod.object({
   "dom": zod.string().max(customerLogoutResponseAddressesItemDomMax),
   "xonadon": zod.string().max(customerLogoutResponseAddressesItemXonadonMax)
@@ -470,6 +471,11 @@ export const ListAdminCustomersResponseItem = zod.object({
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "telegram_name": zod.string().nullable().describe('The name Telegram shows for the customer.'),
+  "telegram_username": zod.string().nullable().describe('The customer\'s Telegram @username, without the @, if they have one.'),
+  "active_sessions": zod.number().int().describe('Devices currently signed in (neither revoked nor blocked).'),
+  "blocked_devices": zod.number().int().describe('Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere.'),
   "order_count": zod.number().int(),
   "total_spent": zod.number(),
   "last_order_at": zod.coerce.date().nullable(),
@@ -513,6 +519,11 @@ export const BlockCustomerResponse = zod.object({
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "telegram_name": zod.string().nullable().describe('The name Telegram shows for the customer.'),
+  "telegram_username": zod.string().nullable().describe('The customer\'s Telegram @username, without the @, if they have one.'),
+  "active_sessions": zod.number().int().describe('Devices currently signed in (neither revoked nor blocked).'),
+  "blocked_devices": zod.number().int().describe('Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere.'),
   "order_count": zod.number().int(),
   "total_spent": zod.number(),
   "last_order_at": zod.coerce.date().nullable(),
@@ -546,6 +557,11 @@ export const UnblockCustomerResponse = zod.object({
   "name": zod.string(),
   "phone": zod.string(),
   "phone_verified": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "telegram_name": zod.string().nullable().describe('The name Telegram shows for the customer.'),
+  "telegram_username": zod.string().nullable().describe('The customer\'s Telegram @username, without the @, if they have one.'),
+  "active_sessions": zod.number().int().describe('Devices currently signed in (neither revoked nor blocked).'),
+  "blocked_devices": zod.number().int().describe('Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere.'),
   "order_count": zod.number().int(),
   "total_spent": zod.number(),
   "last_order_at": zod.coerce.date().nullable(),
@@ -554,6 +570,105 @@ export const UnblockCustomerResponse = zod.object({
   "dom": zod.string().max(unblockCustomerResponseAddressesItemDomMax),
   "xonadon": zod.string().max(unblockCustomerResponseAddressesItemXonadonMax)
 }))
+})
+
+
+/**
+ * @summary The devices a customer is or was signed in on
+ */
+export const ListCustomerSessionsParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const ListCustomerSessionsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "source": zod.enum(['telegram', 'browser']),
+  "user_agent": zod.string().nullable(),
+  "created_at": zod.coerce.date(),
+  "last_seen_at": zod.coerce.date(),
+  "revoked_at": zod.coerce.date().nullable(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable(),
+  "block_reason": zod.string().nullable(),
+  "current": zod.boolean().describe('Still usable, neither revoked nor blocked.')
+})
+export const ListCustomerSessionsResponse = zod.array(ListCustomerSessionsResponseItem)
+
+
+/**
+ * The device's cookie stops working at once. In the Mini App the customer is signed in again on the next launch, since Telegram still vouches for them; block the device or the customer to keep them out.
+ * @summary Sign one of a customer's devices out
+ */
+export const RevokeCustomerSessionParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const RevokeCustomerSessionResponse = zod.object({
+  "id": zod.number().int(),
+  "source": zod.enum(['telegram', 'browser']),
+  "user_agent": zod.string().nullable(),
+  "created_at": zod.coerce.date(),
+  "last_seen_at": zod.coerce.date(),
+  "revoked_at": zod.coerce.date().nullable(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable(),
+  "block_reason": zod.string().nullable(),
+  "current": zod.boolean().describe('Still usable, neither revoked nor blocked.')
+})
+
+
+/**
+ * The device keeps its cookie and is refused ordering, chat and profile changes. A Mini App session's Telegram account is refused on every later launch too. Clearing a browser's cookies escapes a device block; block the customer for that.
+ * @summary Block one device (super admins only)
+ */
+export const BlockCustomerSessionParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const blockCustomerSessionBodyReasonMax = 200;
+
+
+
+export const BlockCustomerSessionBody = zod.object({
+  "reason": zod.string().max(blockCustomerSessionBodyReasonMax).optional()
+})
+
+export const BlockCustomerSessionResponse = zod.object({
+  "id": zod.number().int(),
+  "source": zod.enum(['telegram', 'browser']),
+  "user_agent": zod.string().nullable(),
+  "created_at": zod.coerce.date(),
+  "last_seen_at": zod.coerce.date(),
+  "revoked_at": zod.coerce.date().nullable(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable(),
+  "block_reason": zod.string().nullable(),
+  "current": zod.boolean().describe('Still usable, neither revoked nor blocked.')
+})
+
+
+/**
+ * @summary Lift a device block (super admins only)
+ */
+export const UnblockCustomerSessionParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const UnblockCustomerSessionResponse = zod.object({
+  "id": zod.number().int(),
+  "source": zod.enum(['telegram', 'browser']),
+  "user_agent": zod.string().nullable(),
+  "created_at": zod.coerce.date(),
+  "last_seen_at": zod.coerce.date(),
+  "revoked_at": zod.coerce.date().nullable(),
+  "blocked": zod.boolean(),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable(),
+  "block_reason": zod.string().nullable(),
+  "current": zod.boolean().describe('Still usable, neither revoked nor blocked.')
 })
 
 
@@ -856,7 +971,9 @@ export const ListAdminOrdersResponseItem = zod.object({
   "created_at": zod.coerce.date(),
   "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
-  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.'),
+  "telegram_name": zod.string().nullish().describe('The ordering customer\'s name in Telegram. Admin endpoints only.'),
+  "telegram_username": zod.string().nullish().describe('The ordering customer\'s Telegram @username, without the @. Admin endpoints only.')
 })
 export const ListAdminOrdersResponse = zod.array(ListAdminOrdersResponseItem)
 
@@ -904,7 +1021,9 @@ export const UpdateAdminOrderStatusResponse = zod.object({
   "created_at": zod.coerce.date(),
   "scheduled_for": zod.coerce.date().nullish().describe('When a pre-order is to be delivered; null for as soon as possible.'),
   "status_changed_by": zod.string().nullish().describe('Admin who last changed the status. Admin endpoints only.'),
-  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.')
+  "status_changed_at": zod.coerce.date().nullish().describe('When the status last changed. Admin endpoints only.'),
+  "telegram_name": zod.string().nullish().describe('The ordering customer\'s name in Telegram. Admin endpoints only.'),
+  "telegram_username": zod.string().nullish().describe('The ordering customer\'s Telegram @username, without the @. Admin endpoints only.')
 })
 
 
@@ -1156,6 +1275,8 @@ export const SendChatMessageResponse = zod.object({
  */
 export const ListAdminChatsResponseItem = zod.object({
   "id": zod.number().int(),
+  "telegram_name": zod.string().nullable().describe('The name Telegram shows for the customer.'),
+  "telegram_username": zod.string().nullable().describe('The customer\'s Telegram @username, without the @, if they have one.'),
   "customer_blocked": zod.boolean().describe('The customer is blocked and cannot read replies.'),
   "customer_name": zod.string(),
   "phone": zod.string(),

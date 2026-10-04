@@ -17,6 +17,15 @@ export interface AdminCustomer {
   name: string;
   phone: string;
   phone_verified: boolean;
+  telegram_linked: boolean;
+  /** The name Telegram shows for the customer. */
+  telegram_name: string | null;
+  /** The customer's Telegram @username, without the @, if they have one. */
+  telegram_username: string | null;
+  /** Devices currently signed in (neither revoked nor blocked). */
+  active_sessions: number;
+  /** Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere. */
+  blocked_devices: number;
   order_count: number;
   total_spent: number;
   last_order_at: Date | null;

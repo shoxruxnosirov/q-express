@@ -1,13 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 
-// A customer has no account, so their conversation is owned by a secret their
-// browser holds rather than by their phone number. Keying on the phone number
-// would have let anyone who knows it read that customer's messages, and the
-// order list already leaks phone numbers.
-//
-// The cookie is httpOnly, so page scripts cannot read the secret and it never
-// appears in a URL, a log line or a Referer header.
+// Before customer accounts, a conversation was owned by a secret the browser
+// held in this cookie. A conversation now belongs to the account and is
+// reached through its session; the cookie is only read, once, to hand an old
+// thread to the account that browser signs in as, and is no longer issued.
+// The token helpers also make the customer session's secrets.
 
 export const CHAT_SESSION_COOKIE = "qorasuv_chat_session";
 // Long enough that a customer coming back next month still finds their

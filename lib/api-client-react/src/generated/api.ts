@@ -42,22 +42,25 @@ import type {
   ChatTranscript,
   CustomerAddressesInput,
   CustomerBlockInput,
-  CustomerLoginInput,
   CustomerLoginLink,
   CustomerProfile,
   CustomerProfileInput,
+  CustomerSession,
   DeliveryFeeEstimate,
   GetDeliveryFeeEstimateParams,
   HealthStatus,
   ListAdminOrdersParams,
   ListProductsParams,
   Order,
+  OrderFeedbackInput,
+  OrderFeedbackReceipt,
   OrderInput,
   OrderStatusInput,
   Product,
   StoreHoursInput,
   StoreStatus,
   TelegramLink,
+  TelegramSession,
   TelegramSignInInput,
   UploadTicket,
   WeeklyLeaderboardEntry
@@ -588,7 +591,8 @@ export const getGetDeliveryFeeEstimateUrl = (params: GetDeliveryFeeEstimateParam
 }
 
 /**
- * @summary Estimate delivery fee for a customer phone number
+ * The first order to a flat (dom and xonadon) has free delivery, whoever places it and from whichever account.
+ * @summary Estimate the delivery fee for an address
  */
 export const getDeliveryFeeEstimate = async (params: GetDeliveryFeeEstimateParams, options?: Parameters<typeof customFetch>[1]): Promise<DeliveryFeeEstimate> => {
 
@@ -635,7 +639,7 @@ export type GetDeliveryFeeEstimateQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Estimate delivery fee for a customer phone number
+ * @summary Estimate the delivery fee for an address
  */
 
 export function useGetDeliveryFeeEstimate<TData = Awaited<ReturnType<typeof getDeliveryFeeEstimate>>, TError = ErrorType<unknown>>(
@@ -732,6 +736,96 @@ export function useGetOrder<TData = Awaited<ReturnType<typeof getOrder>>, TError
 
 
 
+
+export const getSendOrderFeedbackUrl = (id: number,) => {
+
+
+
+
+  return `/api/orders/${id}/feedback`
+}
+
+/**
+ * Only the customer who placed the order, in the Mini App, once it is delivered. The comment is NOT stored: it goes straight to the admins through the Telegram bot, with the order and who wrote it. Three comments per order a day.
+ * @summary Send the admins a comment about a delivered order
+ */
+export const sendOrderFeedback = async (id: number,
+    orderFeedbackInput: OrderFeedbackInput, options?: Parameters<typeof customFetch>[1]): Promise<OrderFeedbackReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OrderFeedbackReceipt>(getSendOrderFeedbackUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(orderFeedbackInput)
+  }
+);}
+
+
+
+
+
+export const getSendOrderFeedbackMutationKey = () => ['sendOrderFeedback'] as const;
+
+export const getSendOrderFeedbackMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendOrderFeedback>>, TError,SendOrderFeedbackMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendOrderFeedback>>, TError,SendOrderFeedbackMutationVariables, TContext> => {
+
+const mutationKey = getSendOrderFeedbackMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendOrderFeedback>>, SendOrderFeedbackMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  sendOrderFeedback(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendOrderFeedbackMutationResult = NonNullable<Awaited<ReturnType<typeof sendOrderFeedback>>>
+    export type SendOrderFeedbackMutationBody = BodyType<OrderFeedbackInput>
+    export type SendOrderFeedbackMutationError = ErrorType<void>
+    export type SendOrderFeedbackMutationVariables = {id: number;data: BodyType<OrderFeedbackInput>}
+
+    /**
+ * @summary Send the admins a comment about a delivered order
+ */
+export const useSendOrderFeedback = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendOrderFeedback>>, TError,SendOrderFeedbackMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendOrderFeedback>>,
+        TError,
+        SendOrderFeedbackMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSendOrderFeedbackMutationOptions(options));
+    }
 
 export const getGetCustomerProfileUrl = () => {
 
@@ -995,7 +1089,8 @@ export const getGetCustomerLoginLinkUrl = () => {
 }
 
 /**
- * @summary The Telegram link that starts phone verification
+ * Accounts, the chat and the profile live in Telegram. A browser shows this link to send people there.
+ * @summary The bot, where the shop opens as the Mini App
  */
 export const getCustomerLoginLink = async ( options?: Parameters<typeof customFetch>[1]): Promise<CustomerLoginLink> => {
 
@@ -1042,7 +1137,7 @@ export type GetCustomerLoginLinkQueryError = ErrorType<void>
 
 
 /**
- * @summary The Telegram link that starts phone verification
+ * @summary The bot, where the shop opens as the Mini App
  */
 
 export function useGetCustomerLoginLink<TData = Awaited<ReturnType<typeof getCustomerLoginLink>>, TError = ErrorType<void>>(
@@ -1063,95 +1158,6 @@ export function useGetCustomerLoginLink<TData = Awaited<ReturnType<typeof getCus
 
 
 
-export const getVerifyCustomerLoginUrl = () => {
-
-
-
-
-  return `/api/customer/login`
-}
-
-/**
- * If the verified phone already belongs to a customer (another device), this browser signs in as that customer and brings its orders, addresses and chat along.
- * @summary Verify the phone with the code the bot sent, and sign in
- */
-export const verifyCustomerLogin = async (customerLoginInput: CustomerLoginInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return customFetch<CustomerProfile>(getVerifyCustomerLoginUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(customerLoginInput)
-  }
-);}
-
-
-
-
-
-export const getVerifyCustomerLoginMutationKey = () => ['verifyCustomerLogin'] as const;
-
-export const getVerifyCustomerLoginMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomerLogin>>, TError,VerifyCustomerLoginMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof verifyCustomerLogin>>, TError,VerifyCustomerLoginMutationVariables, TContext> => {
-
-const mutationKey = getVerifyCustomerLoginMutationKey();
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyCustomerLogin>>, VerifyCustomerLoginMutationVariables> = (props) => {
-          const {data} = props ?? {};
-
-          return  verifyCustomerLogin(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type VerifyCustomerLoginMutationResult = NonNullable<Awaited<ReturnType<typeof verifyCustomerLogin>>>
-    export type VerifyCustomerLoginMutationBody = BodyType<CustomerLoginInput>
-    export type VerifyCustomerLoginMutationError = ErrorType<void>
-    export type VerifyCustomerLoginMutationVariables = {data: BodyType<CustomerLoginInput>}
-
-    /**
- * @summary Verify the phone with the code the bot sent, and sign in
- */
-export const useVerifyCustomerLogin = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomerLogin>>, TError,VerifyCustomerLoginMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof verifyCustomerLogin>>,
-        TError,
-        VerifyCustomerLoginMutationVariables,
-        TContext
-      > => {
-      return useMutation(getVerifyCustomerLoginMutationOptions(options));
-    }
-
 export const getSignInWithTelegramUrl = () => {
 
 
@@ -1161,10 +1167,10 @@ export const getSignInWithTelegramUrl = () => {
 }
 
 /**
- * Takes the Mini App's signed initData. If that Telegram account belongs to a verified customer, this webview is signed in as them; otherwise nothing changes and authenticated stays false.
+ * Takes the Mini App's signed initData. The Telegram account is the customer: this webview is signed in as its account, which is created on first sight. A guest account the webview had before is folded in. Called on every launch, so a different Telegram account opening the Mini App on the same phone gets its own session.
  * @summary Sign in inside the Telegram Mini App
  */
-export const signInWithTelegram = async (telegramSignInInput: TelegramSignInInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerProfile> => {
+export const signInWithTelegram = async (telegramSignInInput: TelegramSignInInput, options?: Parameters<typeof customFetch>[1]): Promise<TelegramSession> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -1180,7 +1186,7 @@ export const signInWithTelegram = async (telegramSignInInput: TelegramSignInInpu
     }
     return headers;
   };
-return customFetch<CustomerProfile>(getSignInWithTelegramUrl(),
+return customFetch<TelegramSession>(getSignInWithTelegramUrl(),
   {
     ...options,
     method: 'POST',
@@ -1554,6 +1560,322 @@ export const useUnblockCustomer = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUnblockCustomerMutationOptions(options));
+    }
+
+export const getListCustomerSessionsUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/customers/${id}/sessions`
+}
+
+/**
+ * @summary The devices a customer is or was signed in on
+ */
+export const listCustomerSessions = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<CustomerSession[]> => {
+
+  return customFetch<CustomerSession[]>(getListCustomerSessionsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListCustomerSessionsQueryKey = (id: number,) => {
+    return [
+    `/api/admin/customers/${id}/sessions`
+    ] as const;
+    }
+
+
+export const getListCustomerSessionsQueryOptions = <TData = Awaited<ReturnType<typeof listCustomerSessions>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listCustomerSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListCustomerSessionsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listCustomerSessions>>> = ({ signal }) => listCustomerSessions(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listCustomerSessions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListCustomerSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof listCustomerSessions>>>
+export type ListCustomerSessionsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary The devices a customer is or was signed in on
+ */
+
+export function useListCustomerSessions<TData = Awaited<ReturnType<typeof listCustomerSessions>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listCustomerSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListCustomerSessionsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRevokeCustomerSessionUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/customer-sessions/${id}/revoke`
+}
+
+/**
+ * The device's cookie stops working at once. In the Mini App the customer is signed in again on the next launch, since Telegram still vouches for them; block the device or the customer to keep them out.
+ * @summary Sign one of a customer's devices out
+ */
+export const revokeCustomerSession = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<CustomerSession> => {
+
+  return customFetch<CustomerSession>(getRevokeCustomerSessionUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRevokeCustomerSessionMutationKey = () => ['revokeCustomerSession'] as const;
+
+export const getRevokeCustomerSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeCustomerSession>>, TError,RevokeCustomerSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeCustomerSession>>, TError,RevokeCustomerSessionMutationVariables, TContext> => {
+
+const mutationKey = getRevokeCustomerSessionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeCustomerSession>>, RevokeCustomerSessionMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  revokeCustomerSession(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeCustomerSessionMutationResult = NonNullable<Awaited<ReturnType<typeof revokeCustomerSession>>>
+
+    export type RevokeCustomerSessionMutationError = ErrorType<void>
+    export type RevokeCustomerSessionMutationVariables = {id: number}
+
+    /**
+ * @summary Sign one of a customer's devices out
+ */
+export const useRevokeCustomerSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeCustomerSession>>, TError,RevokeCustomerSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof revokeCustomerSession>>,
+        TError,
+        RevokeCustomerSessionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRevokeCustomerSessionMutationOptions(options));
+    }
+
+export const getBlockCustomerSessionUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/customer-sessions/${id}/block`
+}
+
+/**
+ * The device keeps its cookie and is refused ordering, chat and profile changes. A Mini App session's Telegram account is refused on every later launch too. Clearing a browser's cookies escapes a device block; block the customer for that.
+ * @summary Block one device (super admins only)
+ */
+export const blockCustomerSession = async (id: number,
+    customerBlockInput: CustomerBlockInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerSession> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CustomerSession>(getBlockCustomerSessionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(customerBlockInput)
+  }
+);}
+
+
+
+
+
+export const getBlockCustomerSessionMutationKey = () => ['blockCustomerSession'] as const;
+
+export const getBlockCustomerSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof blockCustomerSession>>, TError,BlockCustomerSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof blockCustomerSession>>, TError,BlockCustomerSessionMutationVariables, TContext> => {
+
+const mutationKey = getBlockCustomerSessionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof blockCustomerSession>>, BlockCustomerSessionMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  blockCustomerSession(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BlockCustomerSessionMutationResult = NonNullable<Awaited<ReturnType<typeof blockCustomerSession>>>
+    export type BlockCustomerSessionMutationBody = BodyType<CustomerBlockInput>
+    export type BlockCustomerSessionMutationError = ErrorType<void>
+    export type BlockCustomerSessionMutationVariables = {id: number;data: BodyType<CustomerBlockInput>}
+
+    /**
+ * @summary Block one device (super admins only)
+ */
+export const useBlockCustomerSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof blockCustomerSession>>, TError,BlockCustomerSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof blockCustomerSession>>,
+        TError,
+        BlockCustomerSessionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getBlockCustomerSessionMutationOptions(options));
+    }
+
+export const getUnblockCustomerSessionUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/customer-sessions/${id}/block`
+}
+
+/**
+ * @summary Lift a device block (super admins only)
+ */
+export const unblockCustomerSession = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<CustomerSession> => {
+
+  return customFetch<CustomerSession>(getUnblockCustomerSessionUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getUnblockCustomerSessionMutationKey = () => ['unblockCustomerSession'] as const;
+
+export const getUnblockCustomerSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unblockCustomerSession>>, TError,UnblockCustomerSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unblockCustomerSession>>, TError,UnblockCustomerSessionMutationVariables, TContext> => {
+
+const mutationKey = getUnblockCustomerSessionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unblockCustomerSession>>, UnblockCustomerSessionMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  unblockCustomerSession(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnblockCustomerSessionMutationResult = NonNullable<Awaited<ReturnType<typeof unblockCustomerSession>>>
+
+    export type UnblockCustomerSessionMutationError = ErrorType<void>
+    export type UnblockCustomerSessionMutationVariables = {id: number}
+
+    /**
+ * @summary Lift a device block (super admins only)
+ */
+export const useUnblockCustomerSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unblockCustomerSession>>, TError,UnblockCustomerSessionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unblockCustomerSession>>,
+        TError,
+        UnblockCustomerSessionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUnblockCustomerSessionMutationOptions(options));
     }
 
 export const getAdminLoginUrl = () => {

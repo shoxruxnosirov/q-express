@@ -9,6 +9,7 @@ import {
   useListAdminChats,
   useSendAdminChatMessage,
 } from '@workspace/api-client-react';
+import { telegramLabel, telegramProfileUrl } from '@/lib/telegram-label';
 
 // Same reasoning as the customer widget: the free instance sleeps, so the page
 // polls instead of holding a socket open.
@@ -148,6 +149,7 @@ export function AdminChat() {
                   <p className="mt-0.5 truncate text-[11px] text-[hsl(var(--muted-foreground))]">
                     {thread.phone || 'Telefon ko‘rsatilmagan'}
                   </p>
+                  {telegramLabel(thread) && <p data-testid={`text-chat-telegram-${thread.id}`} className="mt-0.5 truncate text-[11px] font-semibold text-[#136a93]">Telegram: {telegramProfileUrl(thread) ? <a href={telegramProfileUrl(thread)} target="_blank" rel="noreferrer" className="underline">{telegramLabel(thread)}</a> : telegramLabel(thread)}</p>}
                   <p className="mt-1 truncate text-xs text-[hsl(var(--muted-foreground))]">
                     {thread.last_message || 'Hali xabar yo‘q'}
                   </p>
@@ -178,6 +180,7 @@ export function AdminChat() {
                 <p className="min-w-0 truncate text-sm font-extrabold">
                   {selectedThread?.customer_name || 'Mijoz'}
                   {selectedThread?.phone ? <span className="ml-2 font-semibold text-[hsl(var(--muted-foreground))]">{selectedThread.phone}</span> : null}
+                  {selectedThread && telegramLabel(selectedThread) ? <span className="ml-2 font-semibold text-[#136a93]">{telegramLabel(selectedThread)}</span> : null}
                 </p>
                 <button
                   type="button"

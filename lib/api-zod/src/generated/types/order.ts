@@ -28,4 +28,8 @@ export interface Order {
   status_changed_by?: string | null;
   /** When the status last changed. Admin endpoints only. */
   status_changed_at?: Date | null;
+  /** The ordering customer's name in Telegram. Admin endpoints only. */
+  telegram_name?: string | null;
+  /** The ordering customer's Telegram @username, without the @. Admin endpoints only. */
+  telegram_username?: string | null;
 }

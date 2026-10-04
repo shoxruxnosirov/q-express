@@ -47,7 +47,7 @@ function configure(mode) {
   process.env.TELEGRAM_BOT_MODE = mode;
   process.env.TELEGRAM_BOT_TOKEN = "test-legacy-token";
   process.env.TELEGRAM_NEW_BOT_TOKEN = "test-new-token";
-  process.env.TELEGRAM_ADMIN_CHAT_ID = "test-chat";
+  process.env.TELEGRAM_ADMIN_CHAT_ID = "4440001";
 }
 
 test("new mode sends only through the new bot, with the existing recipient", async () => {
@@ -57,7 +57,7 @@ test("new mode sends only through the new bot, with the existing recipient", asy
     calls++;
     assert.equal(url, "https://api.telegram.org/bottest-new-token/sendMessage");
     const body = JSON.parse(options.body);
-    assert.equal(body.chat_id, "test-chat");
+    assert.equal(body.chat_id, "4440001");
     assert.match(body.text, /&lt;Test&gt;/);
     assert.ok(options.signal);
     return new Response(JSON.stringify({ ok: true }));
@@ -314,7 +314,7 @@ test("the webhook is registered at the API path with the secret", async () => {
   assert.equal(call.url, `https://api.telegram.org/bot${BOT_ID}:test-inbound-token/setWebhook`);
   assert.equal(call.body.url, "https://q-express.onrender.com/api/telegram/webhook");
   assert.equal(call.body.secret_token, webhookSecret());
-  assert.deepEqual(call.body.allowed_updates, ["message"]);
+  assert.deepEqual(call.body.allowed_updates, ["message", "my_chat_member"]);
 });
 
 test("a dashboard reply is copied to Telegram escaped, with its thread", async () => {
@@ -432,43 +432,57 @@ test("a /start link code is accepted from any chat, anything else from strangers
   assert.equal(parseAdminUpdate(start("salom", 5550001)).kind, "hint", "a known admin gets a hint");
 });
 
-// --- Customer phone verification --------------------------------------------
+// --- Customers in the bot ------------------------------------------------------
 
-test("the site's login link asks for the contact; a bare /start gets the shop", () => {
+test("every /start gets the shop, including the login links of earlier builds", () => {
   configureInbound();
+  const code = "0123456789abcdef0123456789abcdef";
   const msg = (text, chat = { id: 777, type: "private" }) => ({ message: { message_id: 1, chat, from: { id: 777 }, text } });
-  assert.deepEqual(parseAdminUpdate(msg("/start login")), { kind: "customer-start", chatId: "777" });
-  assert.deepEqual(parseAdminUpdate(msg("/start")), { kind: "welcome", chatId: "777" });
-  assert.equal(parseAdminUpdate(msg("/start login", { id: 5550001, type: "private" })).kind, "customer-start", "admins can verify too");
+  for (const text of ["/start", "/start login", `/start login_${code}`, "/start@Q_express_bot login"]) {
+    assert.deepEqual(parseAdminUpdate(msg(text)), { kind: "welcome", chatId: "777" }, text);
+  }
   assert.equal(parseAdminUpdate(msg("/start", { id: 5550001, type: "private" })).kind, "welcome", "admins get the shop too");
-  assert.equal(parseAdminUpdate(msg("/start login", { id: -100, type: "group" })).kind, "ignore", "never in a group");
+  assert.equal(parseAdminUpdate(msg("/start login", { id: -100, type: "group" })).kind, "leave", "never in a group");
+  assert.equal(parseAdminUpdate(msg("/start login_short")).kind, "ignore");
+  // An admin link code is still an admin link.
+  assert.equal(parseAdminUpdate(msg(`/start ${code}`)).kind, "link");
 });
 
-test("a shared contact says whether it is the sender's own number", () => {
+test("a contact sent with an old button is not a chat message", () => {
   configureInbound();
-  const contact = (userId, fromId = 777) => ({
-    message: { message_id: 2, chat: { id: 777, type: "private" }, from: { id: fromId }, contact: { phone_number: "+998901112233", user_id: userId } },
-  });
-  assert.deepEqual(parseAdminUpdate(contact(777)), {
-    kind: "contact", chatId: "777", telegramUserId: "777", phone: "+998901112233", ownContact: true,
-  });
-  assert.equal(parseAdminUpdate(contact(888)).ownContact, false, "a forwarded card is someone else's");
-  assert.equal(parseAdminUpdate(contact(undefined)).ownContact, false, "a contact with no account is not proof");
+  const update = { message: { message_id: 2, chat: { id: 777, type: "private" }, from: { id: 777 }, contact: { phone_number: "+998901112233", user_id: 777 } } };
+  assert.equal(parseAdminUpdate(update).kind, "customer-unsupported");
 });
 
-test("the contact button and the code message are well formed", async () => {
+test("the customer's own message is copied to the bot escaped, and notices drop the old keyboard", async () => {
   configureInbound();
-  const { sendContactRequest, sendLoginCode } = await import("../src/lib/telegram.ts");
+  const { customerEchoText, sendCustomerNotice } = await import("../src/lib/telegram.ts");
+  assert.ok(customerEchoText("<b>salom</b>").includes("&lt;b&gt;salom&lt;/b&gt;"));
+  assert.match(customerEchoText("x"), /Siz yozdingiz/);
   const bodies = [];
   globalThis.fetch = async (_url, init) => {
     bodies.push(JSON.parse(init.body));
     return new Response(JSON.stringify({ ok: true }));
   };
-  await sendContactRequest("777");
-  await sendLoginCode("777", "012345");
-  assert.equal(bodies[0].reply_markup.keyboard[0][0].request_contact, true);
-  assert.ok(bodies[1].text.includes("012345"));
-  assert.equal(bodies[1].reply_markup.remove_keyboard, true);
+  await sendCustomerNotice("777", "unsupported");
+  assert.equal(bodies[0].reply_markup.remove_keyboard, true);
+});
+
+test("the admins can tell a chat from an order, a buyer from a newcomer, and where it came from", async () => {
+  configureInbound();
+  const { chatNotificationText } = await import("../src/lib/telegram.ts");
+  const base = { threadId: 3, customerName: "Aziz", phone: "998901112233", body: "salom" };
+  const buyer = chatNotificationText({ ...base, orderCount: 2, via: "mini-app" });
+  assert.equal(buyer.split("\n")[0], "<b>💬 CHAT</b> · Suhbat #3");
+  assert.match(buyer, /Buyurtmachi \(2 ta buyurtma\)/);
+  assert.match(buyer, /Qayerdan:<\/b> Mini App/);
+  const newcomer = chatNotificationText({ ...base, orderCount: 0, via: "bot" });
+  assert.match(newcomer, /Hali buyurtma bermagan/);
+  assert.match(newcomer, /Telegram bot/);
+  // The header still routes a reply, with or without the emoji.
+  const reply = (text) => ({ message: { message_id: 9, chat: { id: 5550001 }, from: { id: 5550001 }, text: "javob", reply_to_message: { from: { id: BOT_ID, is_bot: true }, text } } });
+  assert.equal(parseAdminUpdate(reply(buyer.replace(/<[^>]+>/g, ""))).threadId, 3);
+  assert.equal(parseAdminUpdate(reply("YANGI XABAR · Suhbat #4")).threadId, 4, "notifications sent before this change");
 });
 
 test("phones in notifications are written for people, not as raw digits", async () => {
@@ -509,8 +523,12 @@ test("a customer's private message to the bot is taken as a chat message", () =>
   configureInbound();
   const own = (message) => parseAdminUpdate({ update_id: 5, message: { message_id: 11, chat: { id: 7001, type: "private" }, from: { id: 7001 }, ...message } });
   assert.deepEqual(own({ text: "  non kam keldi " }), {
-    kind: "customer-message", chatId: "7001", telegramUserId: "7001", body: "non kam keldi", messageId: 11, ref: "7001:11",
+    kind: "customer-message", chatId: "7001", telegramUserId: "7001", name: "", username: null, body: "non kam keldi", messageId: 11, ref: "7001:11",
   });
+  assert.equal(own({ text: "salom", from: { id: 7001, username: "vali_01" } }).username, "vali_01");
+  assert.equal(own({ text: "salom", from: { id: 7001, username: "<b>" } }).username, null, "only what Telegram allows");
+  // Telegram's name, for an account the message creates.
+  assert.equal(own({ text: "salom", from: { id: 7001, first_name: "Vali", last_name: "Aliyev" } }).name, "Vali Aliyev");
   // A reply to the bot's message is still just the customer's own message:
   // it can only ever land in their own conversation.
   const note = { from: { id: BOT_ID, is_bot: true }, text: "YANGI XABAR · Suhbat #1\n\nx" };
@@ -518,8 +536,8 @@ test("a customer's private message to the bot is taken as a chat message", () =>
   assert.equal(own({ photo: [{}] }).kind, "customer-unsupported");
   assert.equal(own({ text: "x".repeat(1001) }).kind, "customer-unsupported");
   assert.equal(own({ text: "/help" }).kind, "ignore");
-  // Groups, and a message whose sender is not the chat, are not customers.
-  assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: -100, type: "group" }, from: { id: 7001 }, text: "salom" } }).kind, "ignore");
+  // Groups are left; a message whose sender is not the chat is not a customer.
+  assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: -100, type: "group" }, from: { id: 7001 }, text: "salom" } }).kind, "leave");
   assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: 7002, type: "private" }, from: { id: 7001 }, text: "salom" } }).kind, "ignore");
   // The admin chat keeps its meaning.
   assert.equal(parseAdminUpdate({ message: { message_id: 1, chat: { id: 5550001, type: "private" }, from: { id: 5550001 }, text: "salom" } }).kind, "hint");
@@ -533,4 +551,120 @@ test("the shop's reply to a customer is escaped and the admin chats are recognis
   assert.equal(isAdminChat("5550001", []), true, "the owner's chat");
   assert.equal(isAdminChat("777", ["777"]), true, "a linked admin");
   assert.equal(isAdminChat("7001", ["777"]), false);
+});
+
+test("the bot works in private chats only: groups and channels are left, never written to", async () => {
+  configureInbound();
+  const { isPrivateChatId } = await import("../src/lib/telegram.ts");
+  const inChat = (chat, text = "salom") => parseAdminUpdate({ message: { message_id: 1, chat, from: { id: 7001 }, text } });
+  for (const type of ["group", "supergroup", "channel"]) {
+    assert.deepEqual(inChat({ id: -1001234, type }), { kind: "leave", chatId: "-1001234" }, type);
+  }
+  // Not even an admin link code or a reply is read in a group.
+  assert.equal(inChat({ id: -100, type: "group" }, "/start 0123456789abcdef0123456789abcdef").kind, "leave");
+  assert.equal(inChat({ id: -100 }).kind, "ignore", "a negative id is never a private chat");
+  assert.equal(isPrivateChatId("5448064497"), true);
+  assert.equal(isPrivateChatId("-1001234"), false);
+  assert.equal(isPrivateChatId("test-chat"), false);
+  // A group configured as the owner chat is not written to.
+  process.env.TELEGRAM_ADMIN_CHAT_ID = "-1001234";
+  const sent = [];
+  globalThis.fetch = async (_url, init) => {
+    sent.push(JSON.parse(init.body).chat_id);
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  await sendChatMessageNotification({ threadId: 1, customerName: "A", phone: "", body: "x" }, ["777"]);
+  assert.deepEqual(sent, ["777"]);
+  process.env.TELEGRAM_ADMIN_CHAT_ID = "5550001";
+});
+
+test("the admins see who the customer is in Telegram", async () => {
+  configureInbound();
+  const { chatNotificationText, telegramLabel } = await import("../src/lib/telegram.ts");
+  assert.equal(telegramLabel({ telegramName: "Aziz", telegramUsername: "aziz_k" }), "Aziz (@aziz_k)");
+  assert.equal(telegramLabel({ telegramName: "", telegramUsername: "aziz_k" }), "@aziz_k");
+  assert.equal(telegramLabel({ telegramName: null, telegramUsername: null }), undefined);
+  const text = chatNotificationText({ threadId: 2, customerName: "Aziz aka", phone: "", body: "x", telegramName: "<Aziz>", telegramUsername: "aziz_k" });
+  assert.match(text, /<b>Telegram:<\/b> &lt;Aziz&gt; \(@aziz_k\)/, "escaped");
+});
+
+test("added to a group or channel, the bot leaves at once", () => {
+  configureInbound();
+  const added = (type, status = "administrator") => parseAdminUpdate({ update_id: 1, my_chat_member: { chat: { id: -1005555, type }, new_chat_member: { status } } });
+  assert.deepEqual(added("channel"), { kind: "leave", chatId: "-1005555" });
+  assert.deepEqual(added("supergroup", "member"), { kind: "leave", chatId: "-1005555" });
+  assert.equal(added("group", "left").kind, "ignore", "already gone");
+  assert.equal(added("private", "member").kind, "ignore", "a customer starting the bot");
+});
+
+test("a comment on a delivered order tells the admins whose it is, escaped, and is not a chat", async () => {
+  configureInbound();
+  const { orderFeedbackText } = await import("../src/lib/telegram.ts");
+  const text = orderFeedbackText({
+    orderNumber: "QE-0000042",
+    customerName: "Aziz <aka>",
+    phone: "998901112233",
+    address: "12-dom, 5-xonadon",
+    total: "45000",
+    telegramName: "Aziz",
+    telegramUsername: "aziz_k",
+    text: "Non <b>sovuq</b> keldi · Suhbat #3",
+  });
+  assert.equal(text.split("\n")[0], "⭐ <b>IZOH · Buyurtma #QE-0000042</b>");
+  assert.match(text, /Mijoz:<\/b> Aziz &lt;aka&gt;/);
+  assert.match(text, /\+998 90 111 22 33/);
+  assert.match(text, /Telegram:<\/b> Aziz \(@aziz_k\)/);
+  assert.match(text, /12-dom, 5-xonadon/);
+  assert.match(text, /Non &lt;b&gt;sovuq&lt;\/b&gt; keldi/);
+  // An admin replying to it is given the usual hint: it names no conversation.
+  const reply = { message: { message_id: 9, chat: { id: 5550001 }, from: { id: 5550001 }, text: "rahmat", reply_to_message: { from: { id: BOT_ID, is_bot: true }, text: text.replace(/<[^>]+>/g, "") } } };
+  assert.equal(parseAdminUpdate(reply).kind, "hint");
+});
+
+test("every order line tells the admins how many, at what price, for how much", async () => {
+  configureInbound();
+  const { formatQuantity, orderLineText } = await import("../src/lib/telegram.ts");
+  assert.equal(formatQuantity(3, "dona"), "3 dona");
+  assert.equal(formatQuantity(2.9999999, "qadoq"), "3 qadoq", "pieces and packs are whole");
+  assert.equal(formatQuantity(0.1 + 0.2, "kg"), "0.3 kg", "no floating-point noise");
+  assert.equal(formatQuantity(1.25, "litr"), "1.25 litr");
+  const plainLine = (item) => orderLineText(item).replace(/<[^>]+>/g, "").replace(/\s/g, " ");
+  assert.equal(plainLine({ name: "Non", quantity: 3, unit: "dona", price: 4000, total: 12000 }), "• Non — 3 dona × 4 000 so'm = 12 000 so'm");
+  assert.equal(plainLine({ name: "Olma", quantity: 0.5, unit: "kg", price: 6000, total: 3000, purchase_mode: "quantity" }), "• Olma — 0.5 kg × 6 000 so'm = 3 000 so'm");
+  assert.equal(plainLine({ name: "Go‘sht", quantity: 0.25, unit: "kg", price: 120000, total: 30000, purchase_mode: "amount", requested_amount: 30000 }), "• Go‘sht — 30 000 so'mlik (~0.25 kg)");
+  assert.match(orderLineText({ name: "<b>x</b>", quantity: 1, unit: "dona", price: 1, total: 1 }), /&lt;b&gt;x&lt;\/b&gt;/, "names are escaped");
+});
+
+test("the order notification lists every line with its count, and the payment in Uzbek", async () => {
+  configureInbound();
+  let text;
+  globalThis.fetch = async (_url, init) => {
+    text = JSON.parse(init.body).text.replace(/<[^>]+>/g, "").replace(/\s/g, " ");
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  await sendNewOrderNotification({
+    ...order,
+    paymentMethod: "cash",
+    items: [
+      { name: "Non", quantity: 3, unit: "dona", price: 4000, total: 12000, purchase_mode: "quantity" },
+      { name: "Sut", quantity: 2, unit: "qadoq", price: 9000, total: 18000, purchase_mode: "quantity" },
+    ],
+  });
+  assert.match(text, /Mahsulotlar \(2 xil\):/);
+  assert.match(text, /• Non — 3 dona × 4 000 so'm = 12 000 so'm/);
+  assert.match(text, /• Sut — 2 qadoq × 9 000 so'm = 18 000 so'm/);
+  assert.match(text, /Mahsulotlar summasi:/);
+  assert.match(text, /To‘lov: Naqd/);
+});
+
+test("a very long order still reaches the admins, its list cut short and counted", async () => {
+  configureInbound();
+  const { itemsWithinLimit } = await import("../src/lib/telegram.ts");
+  const lines = Array.from({ length: 200 }, (_, i) => `• Mahsulot ${i} — 1 dona × 1 000 so'm = 1 000 so'm`);
+  const text = itemsWithinLimit(lines);
+  assert.ok(text.length < 3000);
+  assert.match(text, /… va yana <b>\d+<\/b> ta mahsulot/);
+  const shown = text.split("\n").length - 1;
+  assert.match(text, new RegExp(`yana <b>${200 - shown}</b>`));
+  assert.equal(itemsWithinLimit(lines.slice(0, 3)), lines.slice(0, 3).join("\n"), "a short list is left whole");
 });

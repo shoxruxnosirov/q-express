@@ -40,7 +40,54 @@ function sessionStore() {
   }
 }
 
-let initData = typeof window === 'undefined' ? '' : captureInitData(window.location, sessionStore());
+// Launch data counts only inside Telegram: its apps inject
+// TelegramWebviewProxy (or external.notify), and Telegram Web runs the shop in
+// a frame. A plain browser tab opened from a link carrying somebody's
+// #tgWebAppData is neither, so it is not signed in as that somebody, and what
+// the visitor types cannot end up in a stranger's account.
+type TelegramHost = { TelegramWebviewProxy?: unknown; external?: { notify?: unknown }; parent?: unknown; self?: unknown };
+function insideTelegram(host: TelegramHost) {
+  return Boolean(host.TelegramWebviewProxy) || typeof host.external?.notify === 'function' || (host.parent !== undefined && host.parent !== host.self);
+}
+
+let initData = typeof window === 'undefined' || !insideTelegram(window as unknown as TelegramHost)
+  ? ''
+  : captureInitData(window.location, sessionStore());
+
+// The session the server gave this Mini App, sent as "Authorization: Bearer"
+// on every API call. Inside Telegram Web the shop runs in a frame of another
+// site, where the browser may refuse the session cookie; the header always
+// arrives. Kept for the tab's life, like the launch data, because a reload
+// inside Telegram keeps the tab. Outside Telegram nothing is sent and the
+// cookie alone is used.
+const SESSION_TOKEN_KEY = 'qorasuv-tg-session';
+const SESSION_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+
+function readSessionToken(storage: Pick<Storage, 'getItem'> | undefined) {
+  try {
+    const token = storage?.getItem(SESSION_TOKEN_KEY) ?? '';
+    return SESSION_TOKEN_PATTERN.test(token) ? token : '';
+  } catch {
+    return '';
+  }
+}
+
+let sessionToken = typeof window === 'undefined' ? '' : readSessionToken(sessionStore());
+
+export function setSessionToken(token: string) {
+  if (!SESSION_TOKEN_PATTERN.test(token)) return;
+  sessionToken = token;
+  try {
+    sessionStore()?.setItem(SESSION_TOKEN_KEY, token);
+  } catch {
+    // Storage may be unavailable; the token still works until the tab closes.
+  }
+}
+
+// What custom-fetch attaches as the bearer token: only inside the Mini App.
+export function miniAppSessionToken() {
+  return isMiniApp() && sessionToken ? sessionToken : null;
+}
 
 // The signed launch data, or '' outside Telegram.
 export function telegramInitData() {
@@ -95,5 +142,7 @@ export function openTelegramLink(url: string) {
 // For tests only.
 export const __test = {
   captureInitData,
+  insideTelegram,
+  readSessionToken,
   setInitData: (value: string) => { initData = value; },
 };

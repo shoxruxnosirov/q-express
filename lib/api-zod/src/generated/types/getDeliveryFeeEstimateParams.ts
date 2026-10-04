@@ -8,7 +8,9 @@
 
 export type GetDeliveryFeeEstimateParams = {
 /**
- * @minLength 7
+ * The address line an order would carry, "12-dom, 5-xonadon".
+ * @minLength 3
+ * @maxLength 200
  */
-phone: string;
+address: string;
 };
