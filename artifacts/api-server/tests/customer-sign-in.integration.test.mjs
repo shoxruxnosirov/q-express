@@ -282,8 +282,8 @@ test("a cancelled first order gives the flat its free delivery back", async () =
 test("the admins are told it is an order, and who placed it in Telegram", async () => {
   const orders = messagesTo(OWNER_CHAT).filter((m) => m.text.includes("YANGI BUYURTMA"));
   assert.ok(orders.length >= 5);
-  assert.ok(orders.every((m) => m.text.startsWith("🛒 ")));
-  assert.ok(orders.some((m) => plain(m.text).includes("Telegram: Aziz Karimov (@aziz_k)")));
+  assert.ok(orders.every((m) => m.text.startsWith("🟢🛒 ") || m.text.startsWith("🟠⏰ ")), "an order is green, a pre-order orange");
+  assert.ok(orders.some((m) => plain(m.text).includes("✈️ Aziz Karimov (@aziz_k)")));
   // Each order keeps what was typed for it; the dashboard adds the Telegram identity.
   const list = (await admin.call("GET", "/admin/orders")).body;
   const aziz = list.find((o) => o.customer_name === "Aziz aka" && o.address === "12-dom, 5-xonadon");
@@ -316,12 +316,13 @@ test("writing in the Mini App reaches the admins as a chat and the customer's bo
   assert.equal((await newcomer.call("POST", "/chat/session", {})).status, 200);
   assert.equal((await newcomer.call("POST", "/chat/messages", { body: "Non bormi?" })).status, 201);
   const note = lastTo(OWNER_CHAT);
-  assert.match(plain(note.text), /^💬 CHAT · Suhbat #\d+/);
+  assert.match(plain(note.text), /^🔵💬 CHAT · Suhbat #\d+/);
   assert.match(plain(note.text), /Hali buyurtma bermagan/);
-  assert.match(plain(note.text), /Qayerdan: Mini App/);
+  assert.match(plain(note.text), /📱 Mini App orqali yozdi/);
   const echo = lastTo(5004);
-  assert.doesNotMatch(plain(note.text), /Telegram: @/, "no @username, none shown");
-  assert.match(plain(echo.text), /Siz yozdingiz:\s+Non bormi\?/);
+  assert.doesNotMatch(plain(note.text), /@\w/, "no @username, none shown");
+  assert.match(plain(echo.text), /Siz yozdingiz\s+Non bormi\?/);
+  assert.match(echo.text, /<blockquote>Non bormi\?<\/blockquote>/, "the customer's words in a quote");
   assert.equal(echo.disable_notification, true, "a copy of their own words does not ring");
 
   const opened = await miniA.call("POST", "/chat/session", {});
@@ -329,16 +330,16 @@ test("writing in the Mini App reaches the admins as a chat and the customer's bo
   assert.equal(miniA.cookies.has("qorasuv_chat_session"), false, "no separate chat cookie");
   assert.equal((await miniA.call("POST", "/chat/messages", { body: "Buyurtmam qachon keladi?" })).status, 201);
   const buyerNote = plain(lastTo(OWNER_CHAT).text);
-  assert.match(buyerNote, /Buyurtmachi \(\d+ ta buyurtma\)/);
-  assert.match(buyerNote, /Telegram: Aziz Karimov \(@aziz_k\)/);
-  assert.match(buyerNote, /Mijoz: Aziz aka/, "the account's current name");
+  assert.match(buyerNote, /🛍 Buyurtmachi · \d+ ta buyurtma/);
+  assert.match(buyerNote, /✈️ Aziz Karimov \(@aziz_k\)/);
+  assert.match(buyerNote, /👤 Aziz aka/, "the account's current name");
   const [row] = await q(`select m.session_id, s.user_agent from chat_messages m join customer_sessions s on s.id = m.session_id order by m.id desc limit 1`);
   assert.match(row.user_agent, /miniA/);
 });
 
 test("writing to the bot lands in the same conversation, and the answer reaches both", async () => {
   await writeToBot(5001, "Botdan ham yozaman");
-  assert.match(plain(lastTo(OWNER_CHAT).text), /Qayerdan: Telegram bot/);
+  assert.match(plain(lastTo(OWNER_CHAT).text), /🤖 Telegram bot orqali yozdi/);
   const reply = await admin.call("POST", `/admin/chats/${threadA}/messages`, { body: "10 daqiqada yetadi" });
   assert.equal(reply.status, 201, JSON.stringify(reply.body));
   assert.match(plain(lastTo(5001).text), /10 daqiqada yetadi/, "the answer reaches the bot");
@@ -354,7 +355,7 @@ test("a Telegram user who only ever wrote to the bot becomes a customer", async 
   const chats = (await admin.call("GET", "/admin/chats")).body;
   const theirs = chats.find((c) => c.telegram_username === "dilshod_uz");
   assert.equal(theirs.telegram_name, "Dilshod");
-  assert.match(plain(lastTo(OWNER_CHAT).text), /Mijoz: Dilshod/);
+  assert.match(plain(lastTo(OWNER_CHAT).text), /👤 Dilshod/);
   // Opening the shop later shows the same account and conversation.
   const later = new Device("dilshod");
   assert.equal((await later.launch({ id: 6001, first_name: "Dilshod" })).status, 200);
@@ -495,11 +496,10 @@ test("a comment on a delivered order reaches the admins through the bot and is k
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
   assert.deepEqual(sent.body, { sent: true });
   const note = plain(lastTo(OWNER_CHAT).text);
-  assert.match(note, new RegExp(`^⭐ IZOH · Buyurtma #${order.body.order_number}`));
-  assert.match(note, /Mijoz: Aziz aka/);
-  assert.match(note, /Telefon: \+998 90 111 22 33/);
-  assert.match(note, /Telegram: Aziz Karimov \(@aziz_k\)/);
-  assert.match(note, /Manzil: 33-dom, 3-xonadon/);
+  assert.match(note, new RegExp(`^🟡⭐ IZOH · Buyurtma #${order.body.order_number}`));
+  assert.match(note, /👤 Aziz aka · \+998 90 111 22 33/);
+  assert.match(note, /✈️ Aziz Karimov \(@aziz_k\)/);
+  assert.match(note, /📍 33-dom, 3-xonadon/);
   assert.ok(note.includes("Non issiq keldi, kuryer juda xushmuomala &lt;rahmat&gt;"), "the comment itself, escaped for Telegram");
 
   // Nothing of it is in the database.
@@ -528,8 +528,8 @@ test("a piece order tells the admins how many, in Telegram and on the dashboard"
   });
   assert.equal(order.status, 201, JSON.stringify(order.body));
   const note = plain(lastTo(OWNER_CHAT).text).replace(/\s/g, " ");
-  assert.ok(note.includes(`• ${product.name} — 3 ${product.unit} × `), note);
-  assert.match(note, /To‘lov: Naqd/);
+  assert.ok(note.includes(`▫️ ${product.name} — 3 ${product.unit} × `), note);
+  assert.match(note, /To‘lov: 💵 Naqd/);
   const listed = (await admin.call("GET", "/admin/orders")).body.find((o) => o.id === order.body.id);
   assert.equal(listed.items[0].quantity, 3);
   assert.equal(listed.items[0].unit, product.unit);

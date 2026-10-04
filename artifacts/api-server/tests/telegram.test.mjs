@@ -397,7 +397,9 @@ test("a reply's copy goes to everyone except the admin who wrote it", async () =
   };
   assert.deepEqual(await sendOperatorReplyNotification(message, ["111", "222"], "111"), { sent: true });
   assert.deepEqual(chats.sort(), ["222", "5550001"]);
-  assert.ok(text.includes("&lt;Ali&gt; Telegram'dan yozdi"), "the author's name is escaped");
+  assert.ok(text.includes("<b>&lt;Ali&gt;</b> Telegram'dan javob berdi"), "the author's name is escaped");
+  assert.equal(text.split("\n")[0], "<b>🔵↩️ OPERATOR JAVOBI</b> · Suhbat #4", "a copy can be replied to as well");
+  assert.ok(text.includes("<blockquote>Yo‘lda</blockquote>"));
 
   chats.length = 0;
   delete process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -473,12 +475,13 @@ test("the admins can tell a chat from an order, a buyer from a newcomer, and whe
   const { chatNotificationText } = await import("../src/lib/telegram.ts");
   const base = { threadId: 3, customerName: "Aziz", phone: "998901112233", body: "salom" };
   const buyer = chatNotificationText({ ...base, orderCount: 2, via: "mini-app" });
-  assert.equal(buyer.split("\n")[0], "<b>💬 CHAT</b> · Suhbat #3");
-  assert.match(buyer, /Buyurtmachi \(2 ta buyurtma\)/);
-  assert.match(buyer, /Qayerdan:<\/b> Mini App/);
+  assert.equal(buyer.split("\n")[0], "<b>🔵💬 CHAT</b> · Suhbat #3");
+  assert.match(buyer, /🛍 Buyurtmachi · 2 ta buyurtma/);
+  assert.match(buyer, /📱 Mini App orqali yozdi/);
+  assert.match(buyer, /<blockquote>salom<\/blockquote>/, "the customer's words stand apart");
   const newcomer = chatNotificationText({ ...base, orderCount: 0, via: "bot" });
-  assert.match(newcomer, /Hali buyurtma bermagan/);
-  assert.match(newcomer, /Telegram bot/);
+  assert.match(newcomer, /🆕 Hali buyurtma bermagan/);
+  assert.match(newcomer, /🤖 Telegram bot orqali yozdi/);
   // The header still routes a reply, with or without the emoji.
   const reply = (text) => ({ message: { message_id: 9, chat: { id: 5550001 }, from: { id: 5550001 }, text: "javob", reply_to_message: { from: { id: BOT_ID, is_bot: true }, text } } });
   assert.equal(parseAdminUpdate(reply(buyer.replace(/<[^>]+>/g, ""))).threadId, 3);
@@ -497,7 +500,7 @@ test("phones in notifications are written for people, not as raw digits", async 
   await sendChatMessageNotification({ threadId: 1, customerName: "A", phone: "998901112233", body: "x" });
   assert.ok(text.includes("+998 90 111 22 33"));
   await sendNewOrderNotification({ ...order, phone: "odd" });
-  assert.ok(text.includes("<b>Telefon:</b> odd"), "anything else is shown as stored");
+  assert.ok(text.includes("</b> · odd"), "anything else is shown as stored");
 });
 
 
@@ -512,7 +515,8 @@ test("a pre-order reminder says how long is left, or that the time has come", ()
   };
   const soon = preorderReminderText({ ...base, minutesLeft: 15 });
   assert.match(soon, /OLDINDAN BUYURTMA · 15 daqiqa qoldi/);
-  assert.match(soon, /Yetkazish vaqti:<\/b> 27\.09 09:00/);
+  assert.match(soon, /🗓 <b>Yetkazish: 27\.09 09:00<\/b> · #QE-1/);
+  assert.ok(soon.startsWith("🟠⏰ "), "a pre-order is orange");
   assert.ok(soon.includes("&lt;Ali&gt;"), "names are escaped");
   assert.ok(soon.includes("+998 90 111 22 33"));
   assert.match(preorderReminderText({ ...base, minutesLeft: 0 }), /vaqti keldi/);
@@ -585,7 +589,9 @@ test("the admins see who the customer is in Telegram", async () => {
   assert.equal(telegramLabel({ telegramName: "", telegramUsername: "aziz_k" }), "@aziz_k");
   assert.equal(telegramLabel({ telegramName: null, telegramUsername: null }), undefined);
   const text = chatNotificationText({ threadId: 2, customerName: "Aziz aka", phone: "", body: "x", telegramName: "<Aziz>", telegramUsername: "aziz_k" });
-  assert.match(text, /<b>Telegram:<\/b> &lt;Aziz&gt; \(@aziz_k\)/, "escaped");
+  assert.match(text, /✈️ <a href="https:\/\/t\.me\/aziz_k">&lt;Aziz&gt; \(@aziz_k\)<\/a>/, "escaped, and a link to their Telegram");
+  const noUsername = chatNotificationText({ threadId: 2, customerName: "A", phone: "", body: "x", telegramName: "Vali", telegramUsername: null });
+  assert.match(noUsername, /✈️ Vali\n/, "without a @username, just the name");
 });
 
 test("added to a group or channel, the bot leaves at once", () => {
@@ -610,12 +616,11 @@ test("a comment on a delivered order tells the admins whose it is, escaped, and 
     telegramUsername: "aziz_k",
     text: "Non <b>sovuq</b> keldi · Suhbat #3",
   });
-  assert.equal(text.split("\n")[0], "⭐ <b>IZOH · Buyurtma #QE-0000042</b>");
-  assert.match(text, /Mijoz:<\/b> Aziz &lt;aka&gt;/);
-  assert.match(text, /\+998 90 111 22 33/);
-  assert.match(text, /Telegram:<\/b> Aziz \(@aziz_k\)/);
-  assert.match(text, /12-dom, 5-xonadon/);
-  assert.match(text, /Non &lt;b&gt;sovuq&lt;\/b&gt; keldi/);
+  assert.equal(text.split("\n")[0], "🟡⭐ <b>IZOH</b> · Buyurtma <b>#QE-0000042</b>");
+  assert.match(text, /👤 <b>Aziz &lt;aka&gt;<\/b> · \+998 90 111 22 33/);
+  assert.match(text, /✈️ <a href="https:\/\/t\.me\/aziz_k">Aziz \(@aziz_k\)<\/a>/);
+  assert.match(text, /📍 12-dom, 5-xonadon/);
+  assert.match(text, /<blockquote>Non &lt;b&gt;sovuq&lt;\/b&gt; keldi · Suhbat #3<\/blockquote>/);
   // An admin replying to it is given the usual hint: it names no conversation.
   const reply = { message: { message_id: 9, chat: { id: 5550001 }, from: { id: 5550001 }, text: "rahmat", reply_to_message: { from: { id: BOT_ID, is_bot: true }, text: text.replace(/<[^>]+>/g, "") } } };
   assert.equal(parseAdminUpdate(reply).kind, "hint");
@@ -629,9 +634,10 @@ test("every order line tells the admins how many, at what price, for how much", 
   assert.equal(formatQuantity(0.1 + 0.2, "kg"), "0.3 kg", "no floating-point noise");
   assert.equal(formatQuantity(1.25, "litr"), "1.25 litr");
   const plainLine = (item) => orderLineText(item).replace(/<[^>]+>/g, "").replace(/\s/g, " ");
-  assert.equal(plainLine({ name: "Non", quantity: 3, unit: "dona", price: 4000, total: 12000 }), "• Non — 3 dona × 4 000 so'm = 12 000 so'm");
-  assert.equal(plainLine({ name: "Olma", quantity: 0.5, unit: "kg", price: 6000, total: 3000, purchase_mode: "quantity" }), "• Olma — 0.5 kg × 6 000 so'm = 3 000 so'm");
-  assert.equal(plainLine({ name: "Go‘sht", quantity: 0.25, unit: "kg", price: 120000, total: 30000, purchase_mode: "amount", requested_amount: 30000 }), "• Go‘sht — 30 000 so'mlik (~0.25 kg)");
+  assert.equal(plainLine({ name: "Non", quantity: 3, unit: "dona", price: 4000, total: 12000 }), "▫️ Non — 3 dona × 4 000 = 12 000");
+  assert.equal(plainLine({ name: "Olma", quantity: 0.5, unit: "kg", price: 6000, total: 3000, purchase_mode: "quantity" }), "▫️ Olma — 0.5 kg × 6 000 = 3 000");
+  assert.equal(plainLine({ name: "Go‘sht", quantity: 0.25, unit: "kg", price: 120000, total: 30000, purchase_mode: "amount", requested_amount: 30000 }), "▫️ Go‘sht — 30 000 so'mlik (~0.25 kg)");
+  assert.match(orderLineText({ name: "Non", quantity: 3, unit: "dona", price: 4000, total: 12000 }), /<b>3 dona<\/b>/, "the count stands out");
   assert.match(orderLineText({ name: "<b>x</b>", quantity: 1, unit: "dona", price: 1, total: 1 }), /&lt;b&gt;x&lt;\/b&gt;/, "names are escaped");
 });
 
@@ -650,11 +656,13 @@ test("the order notification lists every line with its count, and the payment in
       { name: "Sut", quantity: 2, unit: "qadoq", price: 9000, total: 18000, purchase_mode: "quantity" },
     ],
   });
-  assert.match(text, /Mahsulotlar \(2 xil\):/);
-  assert.match(text, /• Non — 3 dona × 4 000 so'm = 12 000 so'm/);
-  assert.match(text, /• Sut — 2 qadoq × 9 000 so'm = 18 000 so'm/);
-  assert.match(text, /Mahsulotlar summasi:/);
-  assert.match(text, /To‘lov: Naqd/);
+  assert.match(text, /^🟢🛒 YANGI BUYURTMA · #/);
+  assert.match(text, /📦 Mahsulotlar · 2 xil/);
+  assert.match(text, /▫️ Non — 3 dona × 4 000 = 12 000/);
+  assert.match(text, /▫️ Sut — 2 qadoq × 9 000 = 18 000/);
+  assert.match(text, /💰 Jami:/);
+  assert.match(text, /🚚 Yetkazish: bepul 🎁/);
+  assert.match(text, /To‘lov: 💵 Naqd/);
 });
 
 test("a very long order still reaches the admins, its list cut short and counted", async () => {

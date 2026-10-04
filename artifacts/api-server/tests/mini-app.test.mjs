@@ -101,12 +101,12 @@ test("a pre-order notification leads with its delivery time", async () => {
     const order = { id: 1, orderNumber: "QE-1", customerName: "A", phone: "998901112233", address: "x", items: [], paymentMethod: "cash", subtotal: 0, deliveryFee: 0, total: 0 };
     await sendNewOrderNotification({ ...order, scheduledLabel: "28-sentabr, 06:00" });
     const [first, second] = text.split("\n");
-    assert.equal(first, "🛒 <b>YANGI BUYURTMA · OLDINDAN</b>");
-    assert.equal(second, "⏰ <b>Yetkazish vaqti:</b> 28-sentabr, 06:00");
+    assert.equal(first, "🟠⏰ <b>OLDINDAN BUYURTMA</b> · <b>#QE-1</b>");
+    assert.equal(second, "🗓 <b>Yetkazish: 28-sentabr, 06:00</b>");
     await sendNewOrderNotification(order);
-    assert.equal(text.split("\n")[0], "🛒 <b>YANGI BUYURTMA</b>", "an order for now looks as before");
+    assert.equal(text.split("\n")[0], "🟢🛒 <b>YANGI BUYURTMA</b> · <b>#QE-1</b>", "an order for now");
     await sendNewOrderNotification({ ...order, telegramName: "Aziz", telegramUsername: "aziz_k" });
-    assert.match(text, /<b>Telegram:<\/b> Aziz \(@aziz_k\)/);
+    assert.match(text, /✈️ <a href="https:\/\/t\.me\/aziz_k">Aziz \(@aziz_k\)<\/a>/);
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.TELEGRAM_ADMIN_CHAT_ID;

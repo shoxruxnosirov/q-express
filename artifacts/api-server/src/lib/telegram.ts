@@ -71,6 +71,56 @@ function formatMoney(value: string | number | null) {
   return `${Number(value ?? 0).toLocaleString("ru-RU")} so'm`;
 }
 
+// "12 000": an amount inside a line, where "so'm" would only be noise.
+function formatNumber(value: string | number | null | undefined) {
+  return Number(value ?? 0).toLocaleString("ru-RU");
+}
+
+// ---------------------------------------------------------------------------
+// Message design
+//
+// Telegram has no coloured text, so every kind of message is told apart by
+// its first line: a coloured mark and an emoji, then the title in capitals
+// (🟢🛒 order, 🟠⏰ pre-order, 🔵💬 chat, 🟡⭐ comment). Sections inside are
+// separated by a rule and lead with their own emoji, and whatever a customer
+// wrote sits in a quote block, apart from what the shop wrote around it.
+// ---------------------------------------------------------------------------
+
+const RULE = "━━━━━━━━━━━━━━";
+
+// The customer's text, in Telegram's quote block. Escaped: it is theirs.
+function quote(text: string) {
+  return `<blockquote>${escapeHtml(text)}</blockquote>`;
+}
+
+// "✈️ Aziz Karimov (@aziz)", a link to their Telegram when they have a
+// @username, so an admin reaches them in one tap.
+function telegramLine(profile: { telegramName?: string | null; telegramUsername?: string | null }) {
+  const label = telegramLabel(profile);
+  if (!label) return undefined;
+  const text = escapeHtml(label);
+  return profile.telegramUsername ? `✈️ <a href="https://t.me/${profile.telegramUsername}">${text}</a>` : `✈️ ${text}`;
+}
+
+// Who the customer is: what they typed, then who they are in Telegram, then
+// where to deliver.
+function customerLines(customer: {
+  name: string;
+  phone?: string;
+  telegramName?: string | null;
+  telegramUsername?: string | null;
+  address?: string;
+}) {
+  const name = escapeHtml(customer.name.trim() || "Noma’lum mijoz");
+  const phone = customer.phone?.trim() ? ` · ${escapeHtml(formatUzPhone(customer.phone.trim()))}` : "";
+  const telegram = telegramLine(customer);
+  return [
+    `👤 <b>${name}</b>${phone}`,
+    ...(telegram ? [telegram] : []),
+    ...(customer.address ? [`📍 ${escapeHtml(customer.address)}`] : []),
+  ];
+}
+
 // "3 dona", "0.5 kg": what the courier has to bring. Pieces and packs are
 // whole; weight and volume keep up to three decimals, without the noise of
 // floating point (0.30000000000000004).
@@ -98,10 +148,10 @@ export function orderLineText(item: unknown) {
   const name = escapeHtml(line.name ?? "Mahsulot");
   const quantity = escapeHtml(formatQuantity(line.quantity, line.unit));
   if (line.purchase_mode === "amount" && line.requested_amount != null) {
-    return `• ${name} — ${formatMoney(line.requested_amount)}lik (~${quantity})`;
+    return `▫️ ${name} — <b>${formatMoney(line.requested_amount)}lik</b> (~${quantity})`;
   }
-  const price = typeof line.price === "number" ? ` × ${formatMoney(line.price)}` : "";
-  return `• ${name} — <b>${quantity}</b>${price} = ${formatMoney(line.total ?? 0)}`;
+  const price = typeof line.price === "number" ? ` × ${formatNumber(line.price)}` : "";
+  return `▫️ ${name} — <b>${quantity}</b>${price} = <b>${formatNumber(line.total ?? 0)}</b>`;
 }
 
 // Telegram refuses a message over 4096 characters, and then no admin hears of
@@ -122,7 +172,7 @@ export function itemsWithinLimit(lines: string[]) {
   return shown.join("\n");
 }
 
-const PAYMENT_LABELS: Record<string, string> = { cash: "Naqd", click: "Click", payme: "Payme", uzcard: "Uzcard", humo: "Humo" };
+const PAYMENT_LABELS: Record<string, string> = { cash: "💵 Naqd", click: "💳 Click", payme: "💳 Payme", uzcard: "💳 Uzcard", humo: "💳 Humo" };
 
 function paymentLabel(method: string) {
   return PAYMENT_LABELS[method] ?? method;
@@ -435,10 +485,10 @@ export async function acknowledgeAdminReply(chatId: string, messageId: number): 
 
 export async function sendReplyHint(chatId: string, messageId: number, reason: "unroutable" | "missing-thread" | "customer-blocked") {
   const text = reason === "missing-thread"
-    ? "Bu suhbat topilmadi, javob yuborilmadi."
+    ? "⚠️ Bu suhbat topilmadi, javob yuborilmadi."
     : reason === "customer-blocked"
-      ? "Bu mijoz bloklangan, javob yuborilmadi."
-      : `Mijozga javob berish uchun uning xabariga <b>Reply</b> qilib yozing (matn ${MAX_REPLY_LENGTH} belgidan oshmasin).`;
+      ? "⛔️ Bu mijoz bloklangan, javob yuborilmadi."
+      : `ℹ️ Mijozga javob berish uchun uning <b>💬 CHAT</b> xabariga <b>Reply</b> qilib yozing (matn ${MAX_REPLY_LENGTH} belgidan oshmasin).`;
   return sendToChat(chatId, text, messageId);
 }
 
@@ -455,7 +505,7 @@ function webAppButton(text: string, baseUrl: string, path: string) {
 }
 
 export function customerReplyText(body: string) {
-  return ["💬 <b>Q express javobi:</b>", "", escapeHtml(body), "", "<i>Javob yozish uchun shu yerga yozing.</i>"].join("\n");
+  return ["💬 <b>Q express javobi</b>", RULE, quote(body), "", "<i>✍️ Javob yozish uchun shu yerga yozing</i>"].join("\n");
 }
 
 // Whether a chat is an admin's: the owner's chat or one linked to an admin.
@@ -472,11 +522,11 @@ export type CustomerNotice = "blocked" | "unsupported" | "too-many";
 export function customerNoticeText(reason: CustomerNotice) {
   switch (reason) {
     case "blocked":
-      return "Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
+      return "⛔️ Hisobingiz do‘kon tomonidan bloklangan. Buyurtma berish va yozish imkoni yo‘q.";
     case "unsupported":
-      return `Faqat matnli xabar qabul qilinadi (${MAX_REPLY_LENGTH} belgigacha).`;
+      return `ℹ️ Faqat matnli xabar qabul qilinadi (${MAX_REPLY_LENGTH} belgigacha).`;
     case "too-many":
-      return "Juda ko‘p xabar yuborildi. Biroz kuting.";
+      return "⏳ Juda ko‘p xabar yuborildi. Bir daqiqadan keyin yozing.";
   }
 }
 
@@ -489,7 +539,7 @@ export function sendCustomerNotice(chatId: string, reason: CustomerNotice) {
 // What the customer wrote in the Mini App's chat, copied into their chat with
 // the bot, so the bot holds the whole conversation. Silent: they wrote it.
 export function customerEchoText(body: string) {
-  return ["✉️ <b>Siz yozdingiz:</b>", "", escapeHtml(body)].join("\n");
+  return ["✉️ <b>Siz yozdingiz</b>", quote(body)].join("\n");
 }
 
 export async function sendCustomerEcho(telegramUserId: string, body: string) {
@@ -540,19 +590,19 @@ export function welcomeMessage(
     .slice(0, 3)
     .map((offer) => {
       const percent = Math.round((1 - offer.price / offer.oldPrice!) * 100);
-      return `🔥 ${escapeHtml(offer.name)}: <b>${formatSum(offer.price)}</b> <s>${formatSum(offer.oldPrice!)}</s> (−${percent}%)`;
+      return `▫️ ${escapeHtml(offer.name)}: <b>${formatSum(offer.price)}</b> <s>${formatSum(offer.oldPrice!)}</s> (−${percent}%)`;
     });
   const caption = [
-    "<b>Q express'ga xush kelibsiz!</b> 🛒",
+    "🛒 <b>Q express'ga xush kelibsiz!</b>",
     "Qorasuvda oziq-ovqat eshigingizgacha.",
-    "",
+    RULE,
     "⚡ <b>15–19 daqiqada</b> yetkazamiz",
     ...(hours ? [`🕕 Ish vaqti: <b>${escapeHtml(hours.openTime)}–${escapeHtml(hours.closeTime)}</b>, yopiq paytda oldindan buyurtma bering`] : []),
     "🎁 <b>Har bir xonadonga birinchi yetkazish bepul</b>",
     "💵 Naqd, Click, Payme, Uzcard yoki Humo",
-    ...(deals.length ? ["", "<b>Bugungi chegirmalar:</b>", ...deals] : []),
-    "",
-    "Pastdagi tugmani bosing, do‘kon shu yerning o‘zida ochiladi 👇",
+    ...(deals.length ? [RULE, "🔥 <b>Bugungi chegirmalar</b>", ...deals] : []),
+    RULE,
+    "👇 Pastdagi tugmani bosing, do‘kon shu yerning o‘zida ochiladi",
   ].join("\n");
   const app = (text: string, path: string) => ({ text, web_app: { url: `${root}${path}` } });
   return {
@@ -695,26 +745,23 @@ export async function sendChatMessageNotification(
 }
 
 export function chatNotificationText(message: Parameters<typeof sendChatMessageNotification>[0]) {
-  const who = message.customerName.trim() || "Noma’lum mijoz";
-  const phone = message.phone.trim();
-  const where = message.via === "bot" ? "Telegram bot" : message.via === "mini-app" ? "Mini App" : message.via === "site" ? "Sayt" : undefined;
+  const where = message.via === "bot" ? "🤖 Telegram bot orqali yozdi" : message.via === "mini-app" ? "📱 Mini App orqali yozdi" : message.via === "site" ? "🌐 Saytdan yozdi" : undefined;
   const status = message.orderCount === undefined
     ? undefined
     : message.orderCount > 0
-      ? `Buyurtmachi (${message.orderCount} ta buyurtma)`
-      : "Hali buyurtma bermagan";
+      ? `🛍 Buyurtmachi · ${message.orderCount} ta buyurtma`
+      : "🆕 Hali buyurtma bermagan";
+  // The first line is the thread header a reply is routed by; it stays first.
   const lines = [
-    threadHeader("💬 CHAT", message.threadId),
+    threadHeader("🔵💬 CHAT", message.threadId),
+    RULE,
+    ...customerLines({ name: message.customerName, phone: message.phone, telegramName: message.telegramName, telegramUsername: message.telegramUsername }),
+    ...(status ? [status] : []),
+    ...(where ? [where] : []),
     "",
-    "<b>Mijoz:</b> " + escapeHtml(who),
-    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(formatUzPhone(phone))] : []),
-    ...(telegramLabel(message) ? ["<b>Telegram:</b> " + escapeHtml(telegramLabel(message)!)] : []),
-    ...(status ? ["<b>Holat:</b> " + status] : []),
-    ...(where ? ["<b>Qayerdan:</b> " + where] : []),
+    quote(message.body),
     "",
-    escapeHtml(message.body),
-    "",
-    "<i>Javob berish uchun shu xabarga Reply qiling.</i>",
+    "<i>↩️ Javob berish uchun shu xabarga Reply qiling</i>",
   ];
   return lines.join("\n");
 }
@@ -734,17 +781,16 @@ export async function sendOperatorReplyNotification(
   linkedChatIds: readonly string[] = [],
   excludeChatId?: string,
 ): Promise<TelegramResult> {
-  const who = message.customerName.trim() || "Noma’lum mijoz";
-  const phone = message.phone.trim();
+  const who = escapeHtml(message.customerName.trim() || "Noma’lum mijoz");
+  const phone = message.phone.trim() ? ` · ${escapeHtml(formatUzPhone(message.phone.trim()))}` : "";
   const where = message.via === "panel" ? "admin paneldan" : "Telegram'dan";
   const lines = [
-    threadHeader("💬 OPERATOR JAVOBI", message.threadId),
-    `<i>${escapeHtml(message.authorName)} ${where} yozdi</i>`,
+    threadHeader("🔵↩️ OPERATOR JAVOBI", message.threadId),
+    RULE,
+    `✍️ <b>${escapeHtml(message.authorName)}</b> ${where} javob berdi`,
+    `👤 Kimga: <b>${who}</b>${phone}`,
     "",
-    "<b>Kimga:</b> " + escapeHtml(who),
-    ...(phone ? ["<b>Telefon:</b> " + escapeHtml(formatUzPhone(phone))] : []),
-    "",
-    escapeHtml(message.body),
+    quote(message.body),
   ];
   const chats = recipientChats(linkedChatIds, excludeChatId);
   // Nobody else to tell is not a failure.
@@ -766,14 +812,11 @@ export function preorderReminderText(order: {
 }) {
   const when = order.minutesLeft > 0 ? `${order.minutesLeft} daqiqa qoldi` : "vaqti keldi";
   return [
-    `⏰ <b>OLDINDAN BUYURTMA · ${when}</b>`,
-    "",
-    `<b>Order:</b> #${escapeHtml(order.orderNumber)}`,
-    `<b>Yetkazish vaqti:</b> ${escapeHtml(order.scheduledLabel)}`,
-    `<b>Mijoz:</b> ${escapeHtml(order.customerName)}`,
-    `<b>Telefon:</b> ${escapeHtml(formatUzPhone(order.phone))}`,
-    `<b>Manzil:</b> ${escapeHtml(order.address)}`,
-    `<b>Jami:</b> ${formatMoney(order.total)}`,
+    `🟠⏰ <b>OLDINDAN BUYURTMA · ${when}</b>`,
+    `🗓 <b>Yetkazish: ${escapeHtml(order.scheduledLabel)}</b> · #${escapeHtml(order.orderNumber)}`,
+    RULE,
+    ...customerLines({ name: order.customerName, phone: order.phone, address: order.address }),
+    `💰 Jami: <b>${formatMoney(order.total)}</b>`,
   ].join("\n");
 }
 
@@ -793,17 +836,19 @@ export type OrderFeedback = {
 };
 
 export function orderFeedbackText(feedback: OrderFeedback) {
-  const telegram = telegramLabel(feedback);
   return [
-    `⭐ <b>IZOH · Buyurtma #${escapeHtml(feedback.orderNumber)}</b>`,
+    `🟡⭐ <b>IZOH</b> · Buyurtma <b>#${escapeHtml(feedback.orderNumber)}</b>`,
+    RULE,
+    ...customerLines({
+      name: feedback.customerName,
+      phone: feedback.phone,
+      telegramName: feedback.telegramName,
+      telegramUsername: feedback.telegramUsername,
+      address: feedback.address,
+    }),
+    `💰 Buyurtma: ${formatMoney(feedback.total)}`,
     "",
-    `<b>Mijoz:</b> ${escapeHtml(feedback.customerName.trim() || "Noma’lum mijoz")}`,
-    `<b>Telefon:</b> ${escapeHtml(formatUzPhone(feedback.phone))}`,
-    ...(telegram ? [`<b>Telegram:</b> ${escapeHtml(telegram)}`] : []),
-    `<b>Manzil:</b> ${escapeHtml(feedback.address)}`,
-    `<b>Jami:</b> ${formatMoney(feedback.total)}`,
-    "",
-    escapeHtml(feedback.text),
+    quote(feedback.text),
   ].join("\n");
 }
 
@@ -825,24 +870,26 @@ export async function sendNewOrderNotification(
   const lines = Array.isArray(order.items) ? order.items : [];
   const items = lines.length > 0 ? itemsWithinLimit(lines.map(orderLineText)) : "• Mahsulotlar ro‘yxati mavjud emas";
 
+  const number = `<b>#${escapeHtml(order.orderNumber)}</b>`;
+  const free = Number(order.deliveryFee ?? 0) === 0;
   const text = [
-    order.scheduledLabel ? "🛒 <b>YANGI BUYURTMA · OLDINDAN</b>" : "🛒 <b>YANGI BUYURTMA</b>",
-    ...(order.scheduledLabel ? [`⏰ <b>Yetkazish vaqti:</b> ${escapeHtml(order.scheduledLabel)}`] : []),
+    order.scheduledLabel ? `🟠⏰ <b>OLDINDAN BUYURTMA</b> · ${number}` : `🟢🛒 <b>YANGI BUYURTMA</b> · ${number}`,
+    ...(order.scheduledLabel ? [`🗓 <b>Yetkazish: ${escapeHtml(order.scheduledLabel)}</b>`] : []),
+    RULE,
+    ...customerLines({
+      name: order.customerName,
+      phone: order.phone,
+      telegramName: order.telegramName,
+      telegramUsername: order.telegramUsername,
+      address: order.address,
+    }),
     "",
-    `<b>Order:</b> #${escapeHtml(order.orderNumber)}`,
-    `<b>Mijoz:</b> ${escapeHtml(order.customerName)}`,
-    `<b>Telefon:</b> ${escapeHtml(formatUzPhone(order.phone))}`,
-    ...(telegramLabel(order) ? [`<b>Telegram:</b> ${escapeHtml(telegramLabel(order)!)}`] : []),
-    "",
-    `<b>Mahsulotlar (${lines.length} xil):</b>`,
+    `📦 <b>Mahsulotlar · ${lines.length} xil</b>`,
     items,
-    "",
-    `<b>Mahsulotlar summasi:</b> ${formatMoney(order.subtotal)}`,
-    `<b>Yetkazib berish:</b> ${formatMoney(order.deliveryFee)}`,
-    `<b>Jami:</b> ${formatMoney(order.total)}`,
-    `<b>To‘lov:</b> ${escapeHtml(paymentLabel(order.paymentMethod))}`,
-    "",
-    `<b>Manzil:</b> ${escapeHtml(order.address)}`,
+    RULE,
+    `💰 <b>Jami: ${formatMoney(order.total)}</b>`,
+    `🧾 Mahsulotlar: ${formatMoney(order.subtotal)} · 🚚 Yetkazish: ${free ? "bepul 🎁" : formatMoney(order.deliveryFee)}`,
+    `💳 To‘lov: ${escapeHtml(paymentLabel(order.paymentMethod))}`,
   ].join("\n");
 
   return sendToChats(recipientChats(linkedChatIds), text);
