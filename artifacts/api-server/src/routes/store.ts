@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, ilike, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, sql } from "drizzle-orm";
 import {
   CreateOrderBody,
   CreateAdminCategoryBody,
@@ -1176,7 +1176,13 @@ router.get("/leaderboard/weekly", async (_req, res, next) => {
     // A blocked customer's orders are off the leaderboard, so prank orders
     // can neither rank nor win the weekly prize. By account, not by number:
     // a number a blocked prankster typed may be a stranger's.
-    const blocked = await db.select({ id: usersTable.id }).from(usersTable).where(isNotNull(usersTable.blockedAt));
+    // Blocked on the account, or through a blocked device of its Telegram
+    // account, which refuses them everywhere.
+    const blocked = await db
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(sql`${usersTable.blockedAt} is not null or exists (select 1 from customer_sessions b
+        where b.telegram_id = ${usersTable.telegramId} and b.blocked_at is not null)`);
     const blockedIds = new Set(blocked.map((row) => row.id));
     const eligible = orders.filter((order) => !(order.userId !== null && blockedIds.has(order.userId)));
     res.json(weeklyLeaderboard(eligible));
@@ -1648,6 +1654,8 @@ router.get("/admin/chats", async (_req, res, next) => {
           order by m.id desc limit 1
         )`,
         customerBlocked: sql<boolean>`coalesce((select u.blocked_at is not null from users u where u.id = ${chatThreadsTable.userId}), false)`,
+        deviceBlocked: sql<boolean>`exists (select 1 from users u join customer_sessions b on b.telegram_id = u.telegram_id
+          where u.id = ${chatThreadsTable.userId} and b.blocked_at is not null)`,
         unreadCount: sql<number>`(
           select count(*) from chat_messages m
           where m.thread_id = ${chatThreadsTable.id}
@@ -1673,6 +1681,7 @@ router.get("/admin/chats", async (_req, res, next) => {
         last_message_at: row.lastMessageAt.toISOString(),
         unread_count: Number(row.unreadCount),
         customer_blocked: Boolean(row.customerBlocked),
+        device_blocked: Boolean(row.deviceBlocked),
       })),
     );
   } catch (error) {

@@ -71,6 +71,14 @@ function formatMoney(value: string | number | null) {
   return `${Number(value ?? 0).toLocaleString("ru-RU")} so'm`;
 }
 
+// Text an admin or a customer chose, cut to fit: a Telegram message holds
+// 4096 characters and a photo caption 1024, and one over the limit is not
+// sent at all. Cut before escaping, so an entity is never split.
+export function shorten(text: string, max: number) {
+  const chars = [...text];
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : text;
+}
+
 // "12 000": an amount inside a line, where "so'm" would only be noise.
 function formatNumber(value: string | number | null | undefined) {
   return Number(value ?? 0).toLocaleString("ru-RU");
@@ -81,7 +89,7 @@ function formatNumber(value: string | number | null | undefined) {
 //
 // Telegram has no coloured text, so every kind of message is told apart by
 // its first line: a coloured mark and an emoji, then the title in capitals
-// (🟢🛒 order, 🟠⏰ pre-order, 🔵💬 chat, 🟡⭐ comment). Sections inside are
+// (🟢🛒 order, 🟠⏰ pre-order, 🔔 pre-order reminder, 🔵💬 chat, 🟡⭐ comment). Sections inside are
 // separated by a rule and lead with their own emoji, and whatever a customer
 // wrote sits in a quote block, apart from what the shop wrote around it.
 // ---------------------------------------------------------------------------
@@ -117,7 +125,7 @@ function customerLines(customer: {
   return [
     `👤 <b>${name}</b>${phone}`,
     ...(telegram ? [telegram] : []),
-    ...(customer.address ? [`📍 ${escapeHtml(customer.address)}`] : []),
+    ...(customer.address ? [`📍 ${escapeHtml(shorten(customer.address, 200))}`] : []),
   ];
 }
 
@@ -145,7 +153,7 @@ export function orderLineText(item: unknown) {
     purchase_mode?: "quantity" | "amount";
     requested_amount?: number | null;
   };
-  const name = escapeHtml(line.name ?? "Mahsulot");
+  const name = escapeHtml(shorten(line.name ?? "Mahsulot", 120));
   const quantity = escapeHtml(formatQuantity(line.quantity, line.unit));
   if (line.purchase_mode === "amount" && line.requested_amount != null) {
     return `▫️ ${name} — <b>${formatMoney(line.requested_amount)}lik</b> (~${quantity})`;
@@ -590,7 +598,7 @@ export function welcomeMessage(
     .slice(0, 3)
     .map((offer) => {
       const percent = Math.round((1 - offer.price / offer.oldPrice!) * 100);
-      return `▫️ ${escapeHtml(offer.name)}: <b>${formatSum(offer.price)}</b> <s>${formatSum(offer.oldPrice!)}</s> (−${percent}%)`;
+      return `▫️ ${escapeHtml(shorten(offer.name, 60))}: <b>${formatSum(offer.price)}</b> <s>${formatSum(offer.oldPrice!)}</s> (−${percent}%)`;
     });
   const caption = [
     "🛒 <b>Q express'ga xush kelibsiz!</b>",
@@ -684,6 +692,10 @@ export function telegramLabel(profile: { telegramName?: string | null; telegramU
   const username = profile.telegramUsername ? `@${profile.telegramUsername}` : "";
   if (name && username) return `${name} (${username})`;
   return name || username || undefined;
+}
+
+export function botConfigured() {
+  return "token" in resolveBotToken();
 }
 
 export function verifyWebAppInitData(initData: string, now = Date.now()): string | undefined {
@@ -812,7 +824,7 @@ export function preorderReminderText(order: {
 }) {
   const when = order.minutesLeft > 0 ? `${order.minutesLeft} daqiqa qoldi` : "vaqti keldi";
   return [
-    `🟠⏰ <b>OLDINDAN BUYURTMA · ${when}</b>`,
+    `🔔 <b>ESLATMA · OLDINDAN BUYURTMA · ${when}</b>`,
     `🗓 <b>Yetkazish: ${escapeHtml(order.scheduledLabel)}</b> · #${escapeHtml(order.orderNumber)}`,
     RULE,
     ...customerLines({ name: order.customerName, phone: order.phone, address: order.address }),

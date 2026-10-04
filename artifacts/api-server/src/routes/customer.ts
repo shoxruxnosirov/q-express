@@ -37,7 +37,7 @@ import {
 import { CHAT_SESSION_COOKIE } from "../lib/chat-session";
 import { clearCustomerCookie } from "../lib/customer-session";
 import { normalizeUzPhone } from "../lib/phone";
-import { getBotUsername, verifyWebAppInitData, webAppUser } from "../lib/telegram";
+import { botConfigured, getBotUsername, verifyWebAppInitData, webAppUser } from "../lib/telegram";
 
 const router: IRouter = Router();
 
@@ -125,6 +125,7 @@ router.get("/customer/login", async (_req, res, next) => {
 router.post("/customer/telegram", async (req, res, next) => {
   try {
     const { init_data } = SignInWithTelegramBody.parse(req.body);
+    if (!botConfigured()) return res.status(503).json({ error: "Telegram bot sozlanmagan" });
     const telegramUserId = verifyWebAppInitData(init_data);
     if (!telegramUserId) return res.status(401).json({ error: "Telegram ma’lumoti tasdiqlanmadi" });
     if (await telegramIsBlocked(telegramUserId)) return res.status(403).json({ error: BLOCKED_MESSAGE, blocked: true });
@@ -169,8 +170,9 @@ async function adminCustomers(onlyId?: number) {
           where s.user_id = ${usersTable.id} and s.revoked_at is null and s.blocked_at is null)`,
         // Devices an admin blocked: their Telegram account is refused everywhere.
         blockedDevices: sql<number>`(select count(*) from customer_sessions s
-          where s.blocked_at is not null and (s.user_id = ${usersTable.id}
-            or (${usersTable.telegramId} is not null and s.telegram_id = ${usersTable.telegramId})))`,
+          where s.blocked_at is not null and (
+            case when ${usersTable.telegramId} is null then s.user_id = ${usersTable.id}
+                 else s.telegram_id = ${usersTable.telegramId} end))`,
         orderCount: sql<number>`count(${ordersTable.id}) filter (where ${ordersTable.status} <> 'cancelled')`,
         // What the customer has actually paid for: delivered orders only.
         totalSpent: sql<string>`coalesce(sum(${ordersTable.total}) filter (where ${ordersTable.status} = 'delivered'), 0)`,

@@ -516,7 +516,7 @@ test("a pre-order reminder says how long is left, or that the time has come", ()
   const soon = preorderReminderText({ ...base, minutesLeft: 15 });
   assert.match(soon, /OLDINDAN BUYURTMA · 15 daqiqa qoldi/);
   assert.match(soon, /🗓 <b>Yetkazish: 27\.09 09:00<\/b> · #QE-1/);
-  assert.ok(soon.startsWith("🟠⏰ "), "a pre-order is orange");
+  assert.ok(soon.startsWith("🔔 <b>ESLATMA"), "a reminder does not look like a new order");
   assert.ok(soon.includes("&lt;Ali&gt;"), "names are escaped");
   assert.ok(soon.includes("+998 90 111 22 33"));
   assert.match(preorderReminderText({ ...base, minutesLeft: 0 }), /vaqti keldi/);
@@ -675,4 +675,22 @@ test("a very long order still reaches the admins, its list cut short and counted
   const shown = text.split("\n").length - 1;
   assert.match(text, new RegExp(`yana <b>${200 - shown}</b>`));
   assert.equal(itemsWithinLimit(lines.slice(0, 3)), lines.slice(0, 3).join("\n"), "a short list is left whole");
+});
+
+test("text that would push a message past Telegram's limits is cut, never dropped", async () => {
+  configureInbound();
+  const { shorten, welcomeMessage, orderLineText, preorderReminderText } = await import("../src/lib/telegram.ts");
+  assert.equal(shorten("Non", 60), "Non");
+  assert.equal(shorten("x".repeat(100), 60), `${"x".repeat(59)}…`);
+  assert.equal([...shorten("🍞".repeat(100), 10)].length, 10, "counted in characters, emoji included");
+  // Three discounted products with absurd names still leave the caption under 1024.
+  const offers = [1, 2, 3].map((i) => ({ name: `<${"Juda uzun mahsulot nomi ".repeat(12)}${i}>`, price: 1000, oldPrice: 2000 }));
+  const caption = welcomeMessage("https://x", offers, { openTime: "06:00", closeTime: "23:00" }).caption;
+  assert.ok(caption.replace(/<[^>]+>/g, "").length < 1024, `${caption.length}`);
+  assert.ok(!/<Juda/.test(caption), "names stay escaped after cutting");
+  // A product name never takes the whole order list.
+  assert.ok(orderLineText({ name: "x".repeat(5000), quantity: 1, unit: "dona", price: 1, total: 1 }).length < 250);
+  // An old order with a long address is printed short.
+  const reminder = preorderReminderText({ orderNumber: "QE-1", customerName: "A", phone: "998901112233", address: "y".repeat(3000), total: "1", scheduledLabel: "09:00", minutesLeft: 5 });
+  assert.ok(reminder.length < 600);
 });

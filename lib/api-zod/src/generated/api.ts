@@ -144,6 +144,7 @@ export const createOrderBodyItemsItemAmountMultipleOf = 0.01;
 
 
 export const createOrderBodyAddressMin = 3;
+export const createOrderBodyAddressMax = 200;
 
 export const createOrderBodyPhoneMin = 7;
 
@@ -157,7 +158,7 @@ export const CreateOrderBody = zod.object({
   "purchase_mode": zod.enum(['quantity', 'amount']).optional(),
   "amount": zod.number().gt(createOrderBodyItemsItemAmountExclusiveMin).multipleOf(createOrderBodyItemsItemAmountMultipleOf).optional()
 })).min(1),
-  "address": zod.string().min(createOrderBodyAddressMin),
+  "address": zod.string().min(createOrderBodyAddressMin).max(createOrderBodyAddressMax).describe('The flat, as "12-dom, 5-xonadon". Capped so every notification about the order fits in one Telegram message.'),
   "phone": zod.string().min(createOrderBodyPhoneMin),
   "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
   "scheduled_for": zod.coerce.date().nullish().describe('A delivery slot from StoreStatus.slots for an order placed ahead. Omitted or null means as soon as possible, which needs the shop to be open now.')
@@ -1278,6 +1279,7 @@ export const ListAdminChatsResponseItem = zod.object({
   "telegram_name": zod.string().nullable().describe('The name Telegram shows for the customer.'),
   "telegram_username": zod.string().nullable().describe('The customer\'s Telegram @username, without the @, if they have one.'),
   "customer_blocked": zod.boolean().describe('The customer is blocked and cannot read replies.'),
+  "device_blocked": zod.boolean().describe('A device of the customer\'s Telegram account is blocked, which refuses them everywhere; admins can still answer.'),
   "customer_name": zod.string(),
   "phone": zod.string(),
   "last_message": zod.string(),

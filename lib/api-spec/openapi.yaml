@@ -1190,6 +1190,8 @@ components:
         address:
           type: string
           minLength: 3
+          maxLength: 200
+          description: The flat, as "12-dom, 5-xonadon". Capped so every notification about the order fits in one Telegram message.
         phone:
           type: string
           minLength: 7
@@ -1808,7 +1810,7 @@ components:
           maxLength: 1000
     AdminChatThread:
       type: object
-      required: [id, customer_name, phone, telegram_name, telegram_username, last_message, last_message_at, unread_count, customer_blocked]
+      required: [id, customer_name, phone, telegram_name, telegram_username, last_message, last_message_at, unread_count, customer_blocked, device_blocked]
       properties:
         id:
           type: integer
@@ -1824,6 +1826,9 @@ components:
         customer_blocked:
           type: boolean
           description: The customer is blocked and cannot read replies.
+        device_blocked:
+          type: boolean
+          description: A device of the customer's Telegram account is blocked, which refuses them everywhere; admins can still answer.
         customer_name:
           type: string
         phone:

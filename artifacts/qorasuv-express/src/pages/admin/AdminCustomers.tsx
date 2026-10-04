@@ -128,7 +128,7 @@ Sabab (ixtiyoriy):`, '');
               </div>
               {customer.blocked && (
                 <p className="mt-2 text-xs text-[#8c1d18]">
-                  Bloklangan{customer.blocked_by ? `: ${customer.blocked_by}` : ''}{customer.blocked_at ? `, ${date(customer.blocked_at)}` : ''}{customer.block_reason ? `. Sabab: ${customer.block_reason}` : ''}
+                  {customer.blocked_at ? 'Bloklangan' : `Qurilmasi bloklangan (${customer.blocked_devices} ta) — Telegram akkaunti hamma joyda to‘xtatilgan`}{customer.blocked_by ? `: ${customer.blocked_by}` : ''}{customer.blocked_at ? `, ${date(customer.blocked_at)}` : ''}{customer.block_reason ? `. Sabab: ${customer.block_reason}` : ''}
                 </p>
               )}
               <div className="mt-3 flex items-center justify-between gap-2">

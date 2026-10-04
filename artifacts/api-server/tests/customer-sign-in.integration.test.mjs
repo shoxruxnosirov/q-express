@@ -547,12 +547,21 @@ test("a device block holds the Telegram account on its other devices, shows on t
   const card = (await admin.call("GET", "/admin/customers")).body.find((c) => c.id === customerId);
   assert.equal(card.blocked, true, "the card says so");
   assert.equal(card.blocked_devices, 1);
+  // The chat list says so too, without stopping the admins from answering.
+  const thread = (await admin.call("GET", "/admin/chats")).body.find((c) => c.id === threadA);
+  assert.equal(thread.device_blocked, true);
+  assert.equal(thread.customer_blocked, false);
+  // And the weekly leaderboard leaves them out.
+  const board = (await new Device("board").call("GET", "/leaderboard/weekly")).body;
+  assert.ok(!board.some((entry) => entry.phone_masked.endsWith("22 33") || entry.phone_masked.endsWith("2233")), JSON.stringify(board));
   // "Blokdan chiqarish" on the card lifts the device block too.
   assert.equal((await admin.call("DELETE", `/admin/customers/${customerId}/block`)).status, 200);
   const after = (await admin.call("GET", "/admin/customers")).body.find((c) => c.id === customerId);
   assert.equal(after.blocked, false);
   assert.equal(after.blocked_devices, 0);
   assert.equal((await tabletA.call("GET", "/customer/me")).body.blocked, false);
+  const boardAfter = (await new Device("board2").call("GET", "/leaderboard/weekly")).body;
+  assert.ok(boardAfter.some((entry) => entry.phone_masked.endsWith("2233")), "back on the leaderboard: " + JSON.stringify(boardAfter));
 });
 
 test("leading zeros do not make a flat new again", async () => {
@@ -560,4 +569,10 @@ test("leading zeros do not make a flat new again", async () => {
   assert.equal(Number(first.body.delivery_fee), 0);
   const padded = await placeOrder(miniA, "036-dom, 06-xonadon", "+998 90 111 22 33", "Aziz aka");
   assert.equal(Number(padded.body.delivery_fee), 4590);
+});
+
+test("an address too long for one Telegram message is refused", async () => {
+  const long = `12-dom, 5-xonadon ${"x".repeat(300)}`;
+  const r = await placeOrder(miniA, long, "+998 90 111 22 33", "Aziz aka");
+  assert.equal(r.status, 400);
 });

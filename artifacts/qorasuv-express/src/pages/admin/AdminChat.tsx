@@ -136,7 +136,7 @@ export function AdminChat() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-bold">{thread.customer_name || 'Noma’lum mijoz'}{thread.customer_blocked && <span data-testid={`badge-chat-blocked-${thread.id}`} className="shrink-0 rounded-full bg-[#fdecea] px-1.5 py-0.5 text-[9px] font-bold text-[#8c1d18]">bloklangan</span>}</p>
+                    <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-bold">{thread.customer_name || 'Noma’lum mijoz'}{thread.customer_blocked && <span data-testid={`badge-chat-blocked-${thread.id}`} className="shrink-0 rounded-full bg-[#fdecea] px-1.5 py-0.5 text-[9px] font-bold text-[#8c1d18]">bloklangan</span>}{!thread.customer_blocked && thread.device_blocked && <span data-testid={`badge-chat-device-blocked-${thread.id}`} title="Telegram akkauntining qurilmasi bloklangan: mijoz buyurtma bera olmaydi va yoza olmaydi, lekin javob yozish mumkin" className="shrink-0 rounded-full bg-[#fdecea] px-1.5 py-0.5 text-[9px] font-bold text-[#8c1d18]">qurilmasi bloklangan</span>}</p>
                     {thread.unread_count > 0 && (
                       <span
                         data-testid={`badge-chat-unread-${thread.id}`}

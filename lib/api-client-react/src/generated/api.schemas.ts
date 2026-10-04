@@ -156,7 +156,11 @@ export interface OrderInput {
   customer_name: string;
   /** @minItems 1 */
   items: OrderInputItemsItem[];
-  /** @minLength 3 */
+  /**
+     * The flat, as "12-dom, 5-xonadon". Capped so every notification about the order fits in one Telegram message.
+     * @minLength 3
+     * @maxLength 200
+     */
   address: string;
   /** @minLength 7 */
   phone: string;
@@ -635,6 +639,8 @@ export interface AdminChatThread {
   telegram_username: string | null;
   /** The customer is blocked and cannot read replies. */
   customer_blocked: boolean;
+  /** A device of the customer's Telegram account is blocked, which refuses them everywhere; admins can still answer. */
+  device_blocked: boolean;
   customer_name: string;
   phone: string;
   last_message: string;
