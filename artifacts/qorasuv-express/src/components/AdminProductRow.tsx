@@ -5,8 +5,8 @@ import {
   useDeleteAdminProduct,
   useUpdateAdminProduct,
   type AdminProduct,
-  type Category,
 } from '@workspace/api-client-react';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 const money = (value: number) => `${Math.round(value).toLocaleString('ru-RU')} so'm`;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -137,16 +137,20 @@ const fieldClass =
 export function AdminProductRow({
   product,
   categories,
+  categoryHidden = false,
   onDone,
   onError,
 }: {
   product: AdminProduct;
-  categories: Category[];
+  categories: Array<{ id: number; name: string }>;
+  // The product is out of the shop whatever its own switch says.
+  categoryHidden?: boolean;
   onDone: (message: string) => void;
   onError: (message: string) => void;
 }) {
   const updateProduct = useUpdateAdminProduct();
   const deleteProduct = useDeleteAdminProduct();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -173,8 +177,11 @@ export function AdminProductRow({
   };
   const soldOut = product.stock <= 0;
 
-  const markSoldOut = () => {
-    if (!window.confirm(`"${product.name}" tugab qoldimi? Qoldiq 0 bo‘ladi va mijozlarga "Tugagan" deb ko‘rinadi.`)) return;
+  const markSoldOut = async () => {
+    if (!(await confirm({
+      message: `"${product.name}" tugab qoldimi? Qoldiq 0 bo‘ladi va mijozlarga "Tugagan" deb ko‘rinadi.`,
+      confirmLabel: 'Ha, tugadi',
+    }))) return;
     updateProduct.mutate(
       { id: product.id, data: { stock: 0 } },
       {
@@ -278,6 +285,11 @@ export function AdminProductRow({
               {!product.active && (
                 <span className="shrink-0 rounded-full bg-[hsl(var(--muted-foreground)/.18)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide">
                   Yashirin
+                </span>
+              )}
+              {product.active && categoryHidden && (
+                <span title="Kategoriyasi yashirilgan, shuning uchun saytda ko‘rinmaydi" className="shrink-0 rounded-full bg-[hsl(var(--muted-foreground)/.18)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide">
+                  Kategoriya yashirin
                 </span>
               )}
               {product.is_popular && <Star size={12} className="shrink-0 text-[#c98a08]" />}

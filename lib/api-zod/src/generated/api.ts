@@ -1035,6 +1035,21 @@ export const UpdateAdminOrderStatusResponse = zod.object({
 
 
 /**
+ * @summary List every category, hidden ones included
+ */
+export const ListAdminCategoriesResponseItem = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "icon": zod.string(),
+  "sort_order": zod.number().int(),
+  "active": zod.boolean(),
+  "product_count": zod.number().int().describe('Every product in the category, hidden ones included')
+})
+export const ListAdminCategoriesResponse = zod.array(ListAdminCategoriesResponseItem)
+
+
+/**
  * @summary Create a product category
  */
 export const createAdminCategoryBodyNameMin = 2;
@@ -1060,8 +1075,57 @@ export const CreateAdminCategoryResponse = zod.object({
   "name": zod.string(),
   "slug": zod.string(),
   "icon": zod.string(),
-  "product_count": zod.number().int()
+  "sort_order": zod.number().int(),
+  "active": zod.boolean(),
+  "product_count": zod.number().int().describe('Every product in the category, hidden ones included')
 })
+
+
+/**
+ * @summary Update a category
+ */
+export const UpdateAdminCategoryParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const updateAdminCategoryBodyNameMin = 2;
+
+export const updateAdminCategoryBodySlugMin = 2;
+
+
+export const updateAdminCategoryBodySlugRegExp = new RegExp('^[a-z0-9-]+$');
+
+export const updateAdminCategoryBodySortOrderMin = 0;
+
+
+
+export const UpdateAdminCategoryBody = zod.object({
+  "name": zod.string().min(updateAdminCategoryBodyNameMin).optional(),
+  "slug": zod.string().min(updateAdminCategoryBodySlugMin).regex(updateAdminCategoryBodySlugRegExp).optional(),
+  "icon": zod.string().min(1).optional(),
+  "sort_order": zod.number().int().min(updateAdminCategoryBodySortOrderMin).optional(),
+  "active": zod.boolean().optional()
+})
+
+export const UpdateAdminCategoryResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "icon": zod.string(),
+  "sort_order": zod.number().int(),
+  "active": zod.boolean(),
+  "product_count": zod.number().int().describe('Every product in the category, hidden ones included')
+})
+
+
+/**
+ * @summary Delete an empty category
+ */
+export const DeleteAdminCategoryParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteAdminCategoryResponse = zod.void()
 
 
 /**

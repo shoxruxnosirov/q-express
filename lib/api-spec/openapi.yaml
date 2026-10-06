@@ -756,6 +756,19 @@ paths:
         "409":
           description: That status cannot follow the current one
   /admin/categories:
+    get:
+      operationId: listAdminCategories
+      tags: [admin]
+      summary: List every category, hidden ones included
+      responses:
+        "200":
+          description: All categories with their visibility and product count
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminCategory"
     post:
       operationId: createAdminCategory
       tags: [admin]
@@ -772,7 +785,58 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Category"
+                $ref: "#/components/schemas/AdminCategory"
+        "400":
+          description: The name is shorter than two letters once trimmed, or the icon is empty
+        "409":
+          description: Another category already has this slug or this name
+  /admin/categories/{id}:
+    patch:
+      operationId: updateAdminCategory
+      tags: [admin]
+      summary: Update a category
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCategoryUpdateInput"
+      responses:
+        "200":
+          description: Updated category
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCategory"
+        "400":
+          description: No changes, a name shorter than two letters once trimmed, or an empty icon
+        "404":
+          description: Category not found
+        "409":
+          description: Another category already has this slug or this name
+    delete:
+      operationId: deleteAdminCategory
+      tags: [admin]
+      summary: Delete an empty category
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Category deleted
+        "404":
+          description: Category not found
+        "409":
+          description: The category still has products, or it is the last one
   /admin/products:
     get:
       operationId: listAdminProducts
@@ -1335,6 +1399,43 @@ components:
         sort_order:
           type: integer
           minimum: 0
+    AdminCategoryUpdateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+        slug:
+          type: string
+          minLength: 2
+          pattern: "^[a-z0-9-]+$"
+        icon:
+          type: string
+          minLength: 1
+        sort_order:
+          type: integer
+          minimum: 0
+        active:
+          type: boolean
+    AdminCategory:
+      type: object
+      required: [id, name, slug, icon, sort_order, active, product_count]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        icon:
+          type: string
+        sort_order:
+          type: integer
+        active:
+          type: boolean
+        product_count:
+          type: integer
+          description: Every product in the category, hidden ones included
     AdminProductInput:
       type: object
       required: [category_id, name, description, image_url, price, unit, stock]

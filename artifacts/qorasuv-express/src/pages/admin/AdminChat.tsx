@@ -10,6 +10,7 @@ import {
   useSendAdminChatMessage,
 } from '@workspace/api-client-react';
 import { telegramLabel, telegramProfileUrl } from '@/lib/telegram-label';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 // Same reasoning as the customer widget: the free instance sleeps, so the page
 // polls instead of holding a socket open.
@@ -40,6 +41,7 @@ export function AdminChat() {
   });
   const reply = useSendAdminChatMessage();
   const remove = useDeleteAdminChat();
+  const confirm = useConfirm();
 
   const rows = threads.data ?? [];
   // A blocked customer cannot read replies, so the page says so instead of
@@ -67,10 +69,14 @@ export function AdminChat() {
 
   // Deleting is final: the thread and every message in it are gone, and the
   // customer's next message opens a new, empty conversation.
-  const deleteSelected = () => {
+  const deleteSelected = async () => {
     if (selected === null || remove.isPending) return;
     const who = selectedThread?.customer_name || 'mijoz';
-    if (!window.confirm(`${who} bilan suhbat va undagi barcha xabarlar butunlay o‘chirilsinmi?`)) return;
+    if (!(await confirm({
+      message: `${who} bilan suhbat va undagi barcha xabarlar butunlay o‘chirilsinmi?`,
+      confirmLabel: 'O‘chirish',
+      danger: true,
+    }))) return;
     const id = selected;
     remove.mutate(
       { id },

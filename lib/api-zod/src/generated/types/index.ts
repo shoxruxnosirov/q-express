@@ -8,7 +8,9 @@
 
 export * from './adminAccount';
 export * from './adminAccountRole';
+export * from './adminCategory';
 export * from './adminCategoryInput';
+export * from './adminCategoryUpdateInput';
 export * from './adminChatThread';
 export * from './adminCreateInput';
 export * from './adminCreateInputRole';

@@ -303,6 +303,32 @@ export interface AdminCategoryInput {
   sort_order?: number;
 }
 
+export interface AdminCategoryUpdateInput {
+  /** @minLength 2 */
+  name?: string;
+  /**
+     * @minLength 2
+     * @pattern ^[a-z0-9-]+$
+     */
+  slug?: string;
+  /** @minLength 1 */
+  icon?: string;
+  /** @minimum 0 */
+  sort_order?: number;
+  active?: boolean;
+}
+
+export interface AdminCategory {
+  id: number;
+  name: string;
+  slug: string;
+  icon: string;
+  sort_order: number;
+  active: boolean;
+  /** Every product in the category, hidden ones included */
+  product_count: number;
+}
+
 export type AdminProductInputUnit = typeof AdminProductInputUnit[keyof typeof AdminProductInputUnit];
 
 

@@ -13,6 +13,7 @@ import {
 import { Check, KeyRound, LoaderCircle, Send, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { apiErrorMessage } from './AdminLogin';
 import { roleLabel } from './AdminProfile';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 const input = 'h-11 w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 text-sm outline-none focus:border-[hsl(var(--primary))]';
 const noAutoFix = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;
@@ -30,19 +31,27 @@ function AdminRow({ admin, isSelf, onMessage }: { admin: AdminAccount; isSelf: b
   const qc = useQueryClient();
   const reset = useResetAdminPassword();
   const remove = useDeleteAdmin();
+  const confirm = useConfirm();
   const [newTemp, setNewTemp] = useState<string | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: getListAdminsQueryKey() });
 
-  const resetPassword = () => {
+  const resetPassword = async () => {
     const temp = temporaryPassword();
-    if (!window.confirm(`${admin.display_name} uchun yangi vaqtinchalik parol berilsinmi? U hamma qurilmalardan chiqariladi.`)) return;
+    if (!(await confirm({
+      message: `${admin.display_name} uchun yangi vaqtinchalik parol berilsinmi? U hamma qurilmalardan chiqariladi.`,
+      confirmLabel: 'Parol berish',
+    }))) return;
     reset.mutate({ id: admin.id, data: { temporary_password: temp } }, {
       onSuccess: () => { setNewTemp(temp); refresh(); },
       onError: err => onMessage(apiErrorMessage(err, 'Parolni tiklab bo‘lmadi.'), true),
     });
   };
-  const deleteAdmin = () => {
-    if (!window.confirm(`${admin.display_name} (@${admin.username}) o‘chirilsinmi? U darhol tizimdan chiqariladi.`)) return;
+  const deleteAdmin = async () => {
+    if (!(await confirm({
+      message: `${admin.display_name} (@${admin.username}) o‘chirilsinmi? U darhol tizimdan chiqariladi.`,
+      confirmLabel: 'O‘chirish',
+      danger: true,
+    }))) return;
     remove.mutate({ id: admin.id }, {
       onSuccess: () => {
         onMessage(`${admin.display_name} o‘chirildi.`);

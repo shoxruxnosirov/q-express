@@ -11,6 +11,7 @@ import {
 } from '@workspace/api-client-react';
 import { Ban, Globe, LogOut, Send } from 'lucide-react';
 import { apiErrorMessage } from './AdminLogin';
+import { useAsk, useConfirm } from '@/components/ConfirmDialog';
 
 const date = (value: string) =>
   new Intl.DateTimeFormat('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
@@ -40,6 +41,8 @@ export function CustomerDevices({ customerId, canBlock }: { customerId: number; 
   const revoke = useRevokeCustomerSession();
   const block = useBlockCustomerSession();
   const unblock = useUnblockCustomerSession();
+  const confirm = useConfirm();
+  const ask = useAsk();
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const busy = revoke.isPending || block.isPending || unblock.isPending;
 
@@ -51,21 +54,27 @@ export function CustomerDevices({ customerId, canBlock }: { customerId: number; 
   };
   const failed = (err: unknown, fallback: string) => setMessage({ text: apiErrorMessage(err, fallback), error: true });
 
-  const signOut = (session: CustomerSession) => {
+  const signOut = async (session: CustomerSession) => {
     const hint = session.source === 'telegram'
       ? ' Mini App’ni qayta ochsa, Telegram uni yana kiritadi; butunlay to‘xtatish uchun bloklang.'
       : '';
-    if (!window.confirm(`${deviceLabel(session)} qurilmasidan chiqarilsinmi?${hint}`)) return;
+    if (!(await confirm({ message: `${deviceLabel(session)} qurilmasidan chiqarilsinmi?${hint}`, confirmLabel: 'Chiqarish' }))) return;
     revoke.mutate({ id: session.id }, {
       onSuccess: updated => put(updated, 'Qurilmadan chiqarildi.'),
       onError: err => failed(err, 'Chiqarib bo‘lmadi.'),
     });
   };
-  const blockSession = (session: CustomerSession) => {
+  const blockSession = async (session: CustomerSession) => {
     const scope = session.source === 'telegram'
       ? 'Bu Telegram akkaunt do‘konga boshqa kira olmaydi.'
       : 'Bu brauzer buyurtma bera olmaydi va yoza olmaydi (cookie tozalansa, blok ham ketadi: butunlay to‘xtatish uchun mijozni bloklang).';
-    const reason = window.prompt(`${deviceLabel(session)} bloklansinmi? ${scope}\n\nSabab (ixtiyoriy):`, '');
+    const reason = await ask({
+      message: `${deviceLabel(session)} bloklansinmi? ${scope}`,
+      inputLabel: 'Sabab (ixtiyoriy)',
+      maxLength: 200,
+      confirmLabel: 'Bloklash',
+      danger: true,
+    });
     if (reason === null) return;
     if (reason.trim().length > 200) return setMessage({ text: 'Sabab 200 belgidan oshmasin.', error: true });
     block.mutate({ id: session.id, data: { reason: reason.trim() } }, {
@@ -73,8 +82,8 @@ export function CustomerDevices({ customerId, canBlock }: { customerId: number; 
       onError: err => failed(err, 'Bloklab bo‘lmadi.'),
     });
   };
-  const unblockSession = (session: CustomerSession) => {
-    if (!window.confirm(`${deviceLabel(session)} blokdan chiqarilsinmi?`)) return;
+  const unblockSession = async (session: CustomerSession) => {
+    if (!(await confirm({ message: `${deviceLabel(session)} blokdan chiqarilsinmi?`, confirmLabel: 'Blokdan chiqarish' }))) return;
     unblock.mutate({ id: session.id }, {
       onSuccess: updated => put(updated, 'Qurilma blokdan chiqarildi.'),
       onError: err => failed(err, 'Blokdan chiqarib bo‘lmadi.'),

@@ -1,9 +1,10 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import {
   CreateOrderBody,
   CreateAdminCategoryBody,
   CreateAdminProductBody,
+  DeleteAdminCategoryParams,
   DeleteAdminProductParams,
   GetAdminChatTranscriptParams,
   SendAdminChatMessageBody,
@@ -19,6 +20,8 @@ import {
   GetProductParams,
   ListAdminOrdersQueryParams,
   ListProductsQueryParams,
+  UpdateAdminCategoryBody,
+  UpdateAdminCategoryParams,
   UpdateAdminProductBody,
   UpdateAdminProductParams,
   UpdateAdminOrderStatusBody,
@@ -66,6 +69,7 @@ import {
 } from "../lib/telegram";
 import { linkedTelegramChatIds, linkedTelegramRecipients, signedInAdmin } from "../lib/admin-directory";
 import { telegramLinkHash } from "./admins";
+import { isForeignKeyViolation, isUniqueViolation } from "../lib/pg-error";
 import {
   blockedMessage,
   chatIsOpen,
@@ -805,7 +809,8 @@ router.get("/products", async (req, res, next) => {
   try {
     await ensureSeedData();
     const query = ListProductsQueryParams.parse(req.query);
-    const filters = [eq(productsTable.active, true)];
+    // A hidden category hides everything in it, whatever each product says.
+    const filters = [eq(productsTable.active, true), eq(categoriesTable.active, true)];
     if (query.search) {
       // Names are written in Uzbek Latin; a customer reading the shop in
       // Cyrillic searches in Cyrillic, so that is looked for in Latin too.
@@ -846,8 +851,9 @@ router.get("/products/:id", async (req, res, next) => {
       .select({ product: productsTable, category: categoriesTable.name })
       .from(productsTable)
       .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
-      // A hidden product is gone from the storefront, direct links included.
-      .where(and(eq(productsTable.id, id), eq(productsTable.active, true)))
+      // A hidden product is gone from the storefront, direct links included,
+      // and so is every product of a hidden category.
+      .where(and(eq(productsTable.id, id), eq(productsTable.active, true), eq(categoriesTable.active, true)))
       .limit(1);
     if (!row) return res.status(404).json({ error: translate(catalogMessages, requestLang(req), "productNotFound") });
     return res.json(productDto(row.product, row.category));
@@ -1014,7 +1020,7 @@ router.post("/orders", async (req, res, next) => {
       const deliveryFeeCents = key !== undefined && (await ordersToAddress(tx, key)) === 0 ? 0 : DELIVERY_FEE_CENTS;
       const productIds = [...new Set(input.items.map((item) => item.product_id))].sort((a, b) => a - b);
       const products = await tx
-        .select({ product: productsTable, category: categoriesTable.name })
+        .select({ product: productsTable, category: categoriesTable.name, categoryActive: categoriesTable.active })
         .from(productsTable)
         .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
         .where(sql`${productsTable.id} in (${sql.join(productIds.map((id) => sql`${id}`), sql`, `)})`)
@@ -1022,8 +1028,9 @@ router.post("/orders", async (req, res, next) => {
         .for("update");
       const productById = new Map(products.map((row) => [row.product.id, row]));
       if (products.length !== productIds.length) invalidOrder("productNotFound");
-      // A cart can outlive a product being hidden; the shop no longer sells it.
-      const hidden = products.find((row) => !row.product.active);
+      // A cart can outlive a product, or its category, being hidden; the shop
+      // no longer sells it.
+      const hidden = products.find((row) => !row.product.active || !row.categoryActive);
       if (hidden) invalidOrder("productUnavailable", { name: hidden.product.name });
 
       const aggregates = new Map<number, {
@@ -1407,7 +1414,8 @@ router.post("/telegram/webhook", async (req, res, next) => {
       const offers = await db
         .select({ name: productsTable.name, price: productsTable.price, oldPrice: productsTable.oldPrice })
         .from(productsTable)
-        .where(and(eq(productsTable.active, true), sql`${productsTable.stock} > 0`, sql`${productsTable.oldPrice} > ${productsTable.price}`))
+        .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
+        .where(and(eq(productsTable.active, true), eq(categoriesTable.active, true), sql`${productsTable.stock} > 0`, sql`${productsTable.oldPrice} > ${productsTable.price}`))
         .orderBy(desc(sql`(${productsTable.oldPrice} - ${productsTable.price}) / ${productsTable.oldPrice}`))
         .limit(3);
       // The language saved on their account, or their Telegram's.
@@ -1537,20 +1545,155 @@ router.post("/telegram/webhook", async (req, res, next) => {
   }
 });
 
+function adminCategoryDto(category: typeof categoriesTable.$inferSelect, productCount: number) {
+  return { ...categoryDto(category, productCount), sort_order: category.sortOrder, active: category.active };
+}
+
+// Every product counts here, hidden ones too: they are what blocks a delete.
+async function loadAdminCategories(where?: SQL) {
+  const rows = await db
+    .select({ category: categoriesTable, productCount: sql<number>`count(${productsTable.id})` })
+    .from(categoriesTable)
+    .leftJoin(productsTable, eq(productsTable.categoryId, categoriesTable.id))
+    .where(where)
+    .groupBy(categoriesTable.id)
+    .orderBy(asc(categoriesTable.sortOrder), asc(categoriesTable.id));
+  return rows.map(({ category, productCount }) => adminCategoryDto(category, Number(productCount)));
+}
+
+// Two categories with one name would look the same in every list and picker.
+async function categoryNameTaken(name: string, exceptId?: number) {
+  const [row] = await db
+    .select({ id: categoriesTable.id })
+    .from(categoriesTable)
+    .where(and(sql`lower(${categoriesTable.name}) = lower(${name})`, exceptId === undefined ? undefined : ne(categoriesTable.id, exceptId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+const CATEGORY_NOT_FOUND = "Kategoriya topilmadi";
+const SLUG_TAKEN = "Bu slug boshqa kategoriyada bor";
+const NAME_TAKEN = "Bu nomli kategoriya allaqachon bor";
+// The schema counts characters before trimming, so "   " would pass it.
+const NAME_TOO_SHORT = "Kategoriya nomi kamida 2 harf bo‘lsin";
+const ICON_MISSING = "Kategoriya uchun ikonka tanlang";
+
+router.get("/admin/categories", async (_req, res, next) => {
+  try {
+    await ensureSeedData();
+    res.json(await loadAdminCategories());
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/admin/categories", async (req, res, next) => {
   try {
+    await ensureSeedData();
     const input = CreateAdminCategoryBody.parse(req.body);
+    const name = input.name.trim();
+    if (name.length < 2) return res.status(400).json({ error: NAME_TOO_SHORT });
+    if (input.icon.trim() === "") return res.status(400).json({ error: ICON_MISSING });
+    if (await categoryNameTaken(name)) return res.status(409).json({ error: NAME_TAKEN });
+    // Without an explicit place a new category goes last, not first.
+    const [{ last }] = await db
+      .select({ last: sql<number | null>`max(${categoriesTable.sortOrder})` })
+      .from(categoriesTable);
     const [category] = await db
       .insert(categoriesTable)
       .values({
-        name: input.name.trim(),
+        name,
         slug: input.slug.trim().toLowerCase(),
         icon: input.icon.trim(),
-        sortOrder: input.sort_order ?? 0,
+        sortOrder: input.sort_order ?? (last === null ? 1 : Number(last) + 1),
       })
       .returning();
-    return res.status(201).json(categoryDto(category));
+    return res.status(201).json(adminCategoryDto(category, 0));
   } catch (error) {
+    if (isUniqueViolation(error)) return res.status(409).json({ error: SLUG_TAKEN });
+    return next(error);
+  }
+});
+
+router.patch("/admin/categories/:id", async (req, res, next) => {
+  try {
+    const { id } = UpdateAdminCategoryParams.parse(req.params);
+    const input = UpdateAdminCategoryBody.parse(req.body);
+    const update: Partial<typeof categoriesTable.$inferInsert> = {};
+    if (input.name !== undefined) update.name = input.name.trim();
+    if (update.name !== undefined && update.name.length < 2) return res.status(400).json({ error: NAME_TOO_SHORT });
+    if (input.slug !== undefined) update.slug = input.slug.trim().toLowerCase();
+    if (input.icon !== undefined) update.icon = input.icon.trim();
+    if (update.icon === "") return res.status(400).json({ error: ICON_MISSING });
+    if (input.sort_order !== undefined) update.sortOrder = input.sort_order;
+    if (input.active !== undefined) update.active = input.active;
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: "O‘zgarish yo‘q" });
+    const [existing] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id)).limit(1);
+    if (!existing) return res.status(404).json({ error: CATEGORY_NOT_FOUND });
+    // Only a new name is checked, so two categories that already share one
+    // can still be edited, renamed apart or hidden.
+    const name = update.name;
+    if (name !== undefined && name.toLowerCase() !== existing.name.toLowerCase() && (await categoryNameTaken(name, id))) {
+      return res.status(409).json({ error: NAME_TAKEN });
+    }
+    const [category] = await db
+      .update(categoriesTable)
+      .set(update)
+      .where(eq(categoriesTable.id, id))
+      .returning({ id: categoriesTable.id });
+    if (!category) return res.status(404).json({ error: CATEGORY_NOT_FOUND });
+    const [updated] = await loadAdminCategories(eq(categoriesTable.id, id));
+    // Deleted by another admin between the update and this read.
+    if (!updated) return res.status(404).json({ error: CATEGORY_NOT_FOUND });
+    return res.json(updated);
+  } catch (error) {
+    if (isUniqueViolation(error)) return res.status(409).json({ error: SLUG_TAKEN });
+    return next(error);
+  }
+});
+
+router.delete("/admin/categories/:id", async (req, res, next) => {
+  try {
+    const { id } = DeleteAdminCategoryParams.parse(req.params);
+    const outcome = await db.transaction(async (tx) => {
+      // Deletes take turns, so two at once cannot both see a second category
+      // left and together empty the table; an empty table is what makes
+      // ensureSeedData put the demo catalog back. Only the row being deleted
+      // is locked: an order locks the categories of its products, and locking
+      // every row here could deadlock against it.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('categories:delete'))`);
+      const [target] = await tx
+        .select({ id: categoriesTable.id })
+        .from(categoriesTable)
+        .where(eq(categoriesTable.id, id))
+        .for("update");
+      if (!target) return { status: 404, error: CATEGORY_NOT_FOUND } as const;
+      const [{ total }] = await tx.select({ total: sql<number>`count(*)` }).from(categoriesTable);
+      if (Number(total) <= 1) {
+        return { status: 409, error: "Oxirgi kategoriyani o‘chirib bo‘lmaydi. Uni yashirib qo‘yishingiz mumkin." } as const;
+      }
+      // Deleting products along with their category would be one click too
+      // easy; they are moved or deleted one by one first.
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(productsTable)
+        .where(eq(productsTable.categoryId, id));
+      if (Number(count) > 0) {
+        return {
+          status: 409,
+          error: `Kategoriyada ${Number(count)} ta mahsulot bor. Avval ularni boshqa kategoriyaga o‘tkazing yoki o‘chiring.`,
+        } as const;
+      }
+      await tx.delete(categoriesTable).where(eq(categoriesTable.id, id));
+      return { status: 204 } as const;
+    });
+    if (outcome.status !== 204) return res.status(outcome.status).json({ error: outcome.error });
+    return res.status(204).send();
+  } catch (error) {
+    // A product saved into this category while it was being deleted.
+    if (isForeignKeyViolation(error)) {
+      return res.status(409).json({ error: "Kategoriyaga hozirgina mahsulot qo‘shildi. Sahifani yangilang." });
+    }
     return next(error);
   }
 });
@@ -1579,7 +1722,7 @@ router.post("/admin/products", async (req, res, next) => {
       .from(categoriesTable)
       .where(eq(categoriesTable.id, input.category_id))
       .limit(1);
-    if (!category) return res.status(400).json({ error: "Category not found" });
+    if (!category) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
 
     const [product] = await db
       .insert(productsTable)
@@ -1603,6 +1746,8 @@ router.post("/admin/products", async (req, res, next) => {
     if (error instanceof OrderValidationError) {
       return res.status(400).json({ error: error.text("uz") });
     }
+    // The category was deleted between the check above and the write.
+    if (isForeignKeyViolation(error)) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
     return next(error);
   }
 });
@@ -1650,7 +1795,7 @@ router.patch("/admin/products/:id", async (req, res, next) => {
         .from(categoriesTable)
         .where(eq(categoriesTable.id, input.category_id))
         .limit(1);
-      if (!category) return res.status(400).json({ error: "Category not found" });
+      if (!category) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
     }
 
     const [product] = await db
@@ -1675,6 +1820,8 @@ router.patch("/admin/products/:id", async (req, res, next) => {
     if (error instanceof OrderValidationError) {
       return res.status(400).json({ error: error.text("uz") });
     }
+    // The category was deleted between the check above and the write.
+    if (isForeignKeyViolation(error)) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
     return next(error);
   }
 });
@@ -1875,8 +2022,10 @@ router.get("/admin/dashboard", async (_req, res, next) => {
     const [{ count: lowStockCount }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(productsTable)
-      // A hidden product is not for sale, so it is not a restocking signal.
-      .where(and(sql`${productsTable.stock} <= 5`, eq(productsTable.active, true)));
+      .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
+      // A hidden product is not for sale, so it is not a restocking signal;
+      // nor is one whose category is hidden.
+      .where(and(sql`${productsTable.stock} <= 5`, eq(productsTable.active, true), eq(categoriesTable.active, true)));
     res.json({
       today_orders: recent.length,
       new_orders: statuses("new"),

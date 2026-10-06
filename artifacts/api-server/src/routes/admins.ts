@@ -24,6 +24,7 @@ import {
   verifyPassword,
 } from "../lib/admin-auth";
 import { adminAccountDto, signedInAdmin, type AdminRow } from "../lib/admin-directory";
+import { isUniqueViolation } from "../lib/pg-error";
 import { createRateLimiter } from "../lib/rate-window";
 import { getBotUsername } from "../lib/telegram";
 
@@ -74,11 +75,6 @@ async function loadSessionAdmin(req: Request) {
   const [admin] = await db.select().from(adminsTable).where(eq(adminsTable.id, claim.adminId)).limit(1);
   if (!admin || admin.sessionVersion !== claim.version || admin.passwordHash === null) return undefined;
   return admin;
-}
-
-function isUniqueViolation(error: unknown) {
-  const codeOf = (value: unknown) => (value as { code?: unknown } | undefined)?.code;
-  return codeOf(error) === "23505" || codeOf((error as { cause?: unknown } | undefined)?.cause) === "23505";
 }
 
 router.post("/admin/auth", async (req, res, next) => {

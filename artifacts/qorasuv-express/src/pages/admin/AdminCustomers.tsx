@@ -15,6 +15,7 @@ import { formatAddress } from '@/lib/address';
 import { formatUzPhone } from '@/lib/phone';
 import { CustomerDevices } from './CustomerDevices';
 import { telegramLabel, telegramProfileUrl } from '@/lib/telegram-label';
+import { useAsk, useConfirm } from '@/components/ConfirmDialog';
 
 const money = (value: number) => `${Math.round(value).toLocaleString('ru-RU')} so'm`;
 const date = (value: string) =>
@@ -36,13 +37,19 @@ export function AdminCustomers() {
   const canBlock = session.data?.admin?.role === 'super_admin';
   const block = useBlockCustomer();
   const unblock = useUnblockCustomer();
+  const confirm = useConfirm();
+  const ask = useAsk();
   // Replaces the one row in the cached list, so the page need not refetch all.
   const put = (updated: AdminCustomer) =>
     qc.setQueryData<AdminCustomer[]>(getListAdminCustomersQueryKey(), list => list?.map(item => (item.id === updated.id ? updated : item)));
-  const blockCustomer = (customer: AdminCustomer) => {
-    const reason = window.prompt(`${customer.name || 'Mijoz'} bloklansinmi? U buyurtma bera olmaydi, yoza olmaydi va Telegram orqali kira olmaydi. Blok telefon raqamiga ham qo‘yiladi.
-
-Sabab (ixtiyoriy):`, '');
+  const blockCustomer = async (customer: AdminCustomer) => {
+    const reason = await ask({
+      message: `${customer.name || 'Mijoz'} bloklansinmi? U buyurtma bera olmaydi, yoza olmaydi va Telegram orqali kira olmaydi. Blok telefon raqamiga ham qo‘yiladi.`,
+      inputLabel: 'Sabab (ixtiyoriy)',
+      maxLength: 200,
+      confirmLabel: 'Bloklash',
+      danger: true,
+    });
     if (reason === null) return;
     if (reason.trim().length > 200) {
       setMessage({ text: 'Sabab 200 belgidan oshmasin. Qisqaroq yozib, qaytadan bloklang.', error: true });
@@ -53,8 +60,8 @@ Sabab (ixtiyoriy):`, '');
       onError: err => setMessage({ text: apiErrorMessage(err, 'Bloklab bo‘lmadi.'), error: true }),
     });
   };
-  const unblockCustomer = (customer: AdminCustomer) => {
-    if (!window.confirm(`${customer.name || 'Mijoz'} blokdan chiqarilsinmi?`)) return;
+  const unblockCustomer = async (customer: AdminCustomer) => {
+    if (!(await confirm({ message: `${customer.name || 'Mijoz'} blokdan chiqarilsinmi?`, confirmLabel: 'Blokdan chiqarish' }))) return;
     unblock.mutate({ id: customer.id }, {
       onSuccess: updated => { put(updated); setMessage({ text: `${updated.name || 'Mijoz'} blokdan chiqarildi.` }); },
       onError: err => setMessage({ text: apiErrorMessage(err, 'Blokdan chiqarib bo‘lmadi.'), error: true }),
