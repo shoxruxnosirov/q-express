@@ -12,7 +12,4 @@ export type OrderInputPaymentMethod = typeof OrderInputPaymentMethod[keyof typeo
 export const OrderInputPaymentMethod = {
   cash: 'cash',
   click: 'click',
-  payme: 'payme',
-  uzcard: 'uzcard',
-  humo: 'humo',
 } as const;

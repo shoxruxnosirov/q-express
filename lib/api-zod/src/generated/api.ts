@@ -116,7 +116,7 @@ export const ListOrdersResponseItem = zod.object({
   "requested_amount": zod.number().min(listOrdersResponseItemsItemRequestedAmountMin).nullish()
 })),
   "status": zod.enum(['new', 'preparing', 'courier', 'delivered', 'cancelled']),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "payment_method": zod.enum(['cash', 'click']),
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
@@ -160,7 +160,7 @@ export const CreateOrderBody = zod.object({
 })).min(1),
   "address": zod.string().min(createOrderBodyAddressMin).max(createOrderBodyAddressMax).describe('The flat, as "12-dom, 5-xonadon". Capped so every notification about the order fits in one Telegram message.'),
   "phone": zod.string().min(createOrderBodyPhoneMin),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "payment_method": zod.enum(['cash', 'click']),
   "scheduled_for": zod.coerce.date().nullish().describe('A delivery slot from StoreStatus.slots for an order placed ahead. Omitted or null means as soon as possible, which needs the shop to be open now.')
 })
 
@@ -189,7 +189,7 @@ export const CreateOrderResponse = zod.object({
   "requested_amount": zod.number().min(createOrderResponseItemsItemRequestedAmountMin).nullish()
 })),
   "status": zod.enum(['new', 'preparing', 'courier', 'delivered', 'cancelled']),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "payment_method": zod.enum(['cash', 'click']),
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
@@ -253,7 +253,7 @@ export const GetOrderResponse = zod.object({
   "requested_amount": zod.number().min(getOrderResponseItemsItemRequestedAmountMin).nullish()
 })),
   "status": zod.enum(['new', 'preparing', 'courier', 'delivered', 'cancelled']),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "payment_method": zod.enum(['cash', 'click']),
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
@@ -971,7 +971,7 @@ export const ListAdminOrdersResponseItem = zod.object({
   "requested_amount": zod.number().min(listAdminOrdersResponseItemsItemRequestedAmountMin).nullish()
 })),
   "status": zod.enum(['new', 'preparing', 'courier', 'delivered', 'cancelled']),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "payment_method": zod.enum(['cash', 'click']),
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),
@@ -1021,7 +1021,7 @@ export const UpdateAdminOrderStatusResponse = zod.object({
   "requested_amount": zod.number().min(updateAdminOrderStatusResponseItemsItemRequestedAmountMin).nullish()
 })),
   "status": zod.enum(['new', 'preparing', 'courier', 'delivered', 'cancelled']),
-  "payment_method": zod.enum(['cash', 'click', 'payme', 'uzcard', 'humo']),
+  "payment_method": zod.enum(['cash', 'click']),
   "subtotal": zod.number(),
   "delivery_fee": zod.number(),
   "total": zod.number(),

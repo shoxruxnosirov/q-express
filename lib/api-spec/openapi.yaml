@@ -1191,7 +1191,7 @@ components:
           enum: [new, preparing, courier, delivered, cancelled]
         payment_method:
           type: string
-          enum: [cash, click, payme, uzcard, humo]
+          enum: [cash, click]
         subtotal:
           type: number
         delivery_fee:
@@ -1261,7 +1261,7 @@ components:
           minLength: 7
         payment_method:
           type: string
-          enum: [cash, click, payme, uzcard, humo]
+          enum: [cash, click]
         scheduled_for:
           type: string
           format: date-time

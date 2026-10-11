@@ -12,7 +12,4 @@ export type OrderPaymentMethod = typeof OrderPaymentMethod[keyof typeof OrderPay
 export const OrderPaymentMethod = {
   cash: 'cash',
   click: 'click',
-  payme: 'payme',
-  uzcard: 'uzcard',
-  humo: 'humo',
 } as const;

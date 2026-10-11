@@ -709,7 +709,7 @@ function orderDto(order: typeof ordersTable.$inferSelect) {
     address: order.address,
     items: order.items,
     status: order.status as "new" | "preparing" | "courier" | "delivered" | "cancelled",
-    payment_method: order.paymentMethod as "cash" | "click" | "payme" | "uzcard" | "humo",
+    payment_method: order.paymentMethod as "cash" | "click",
     subtotal: money(order.subtotal)!,
     delivery_fee: money(order.deliveryFee)!,
     total: money(order.total)!,

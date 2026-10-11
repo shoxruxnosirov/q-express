@@ -182,7 +182,7 @@ export function itemsWithinLimit(lines: string[]) {
   return shown.join("\n");
 }
 
-const PAYMENT_LABELS: Record<string, string> = { cash: "💵 Naqd", click: "💳 Click", payme: "💳 Payme", uzcard: "💳 Uzcard", humo: "💳 Humo" };
+const PAYMENT_LABELS: Record<string, string> = { cash: "💵 Naqd", click: "💳 Click" };
 
 function paymentLabel(method: string) {
   return PAYMENT_LABELS[method] ?? method;
