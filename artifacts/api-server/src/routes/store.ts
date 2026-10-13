@@ -35,9 +35,22 @@ import {
   chatThreadsTable,
   ordersTable,
   productsTable,
-  storeSettingsTable,
+  shopsTable,
   usersTable,
 } from "@workspace/db/schema";
+import {
+  deliveryFeeCents,
+  forgetShops,
+  isArchived,
+  publicBaseUrl,
+  listShops,
+  loadShop,
+  PLATFORM_SHOP_ID,
+  requestShop,
+  shopBot,
+  shopHours,
+  type ShopRow,
+} from "../lib/shops";
 import {
   deliverySlots,
   earliestAcceptedAt,
@@ -66,17 +79,25 @@ import {
   sendWelcome,
   webhookSecretMatches,
   registerMenuButton,
+  withBot,
 } from "../lib/telegram";
-import { linkedTelegramChatIds, linkedTelegramRecipients, signedInAdmin } from "../lib/admin-directory";
+import {
+  adminShopId,
+  isPlatformSuperAdmin,
+  linkedTelegramChatIds,
+  linkedTelegramRecipients,
+  signedInAdmin,
+} from "../lib/admin-directory";
 import { telegramLinkHash } from "./admins";
 import { isForeignKeyViolation, isUniqueViolation } from "../lib/pg-error";
 import {
+  blockedByShop,
   blockedMessage,
   chatIsOpen,
-  customerIsBlocked,
+  customerBlockedInShop,
   isVerified,
+  telegramBlockedInShop,
   telegramCustomer,
-  telegramIsBlocked,
   rememberOrderAddress,
   resolveCustomer,
 } from "../lib/customer-accounts";
@@ -116,7 +137,6 @@ import {
 } from "../lib/quantity";
 
 const router: IRouter = Router();
-const DELIVERY_FEE_CENTS = 4590 * 100;
 const THOUSANDTH_SCALE = 1_000;
 // numeric(12,2) is used by prices and order totals.
 const MAX_MONEY_CENTS = 999_999_999_999;
@@ -246,14 +266,24 @@ async function ensureSeedData() {
       // Keyed on categories, not products: an operator who deletes every
       // product must get an empty catalog, not a reseed that collides with
       // the category slugs still there and fails every request after it.
-      const existing = await db.select({ id: categoriesTable.id }).from(categoriesTable).limit(1);
+      // Only Q express's demo catalog: another shop starts empty and fills
+      // its own.
+      const existing = await db
+        .select({ id: categoriesTable.id })
+        .from(categoriesTable)
+        .where(eq(categoriesTable.shopId, PLATFORM_SHOP_ID))
+        .limit(1);
       if (existing.length > 0) return;
 
-      const categories = await db.insert(categoriesTable).values(seedCategories).returning();
+      const categories = await db
+        .insert(categoriesTable)
+        .values(seedCategories.map((category) => ({ ...category, shopId: PLATFORM_SHOP_ID })))
+        .returning();
       const categoryBySlug = new Map(categories.map((category) => [category.slug, category.id]));
       await db.insert(productsTable).values(
         seedProducts.map(({ categorySlug, ...product }) => ({
           ...product,
+          shopId: PLATFORM_SHOP_ID,
           categoryId: categoryBySlug.get(categorySlug)!,
         })),
       );
@@ -413,6 +443,7 @@ function weeklyLeaderboard(orders: Array<typeof ordersTable.$inferSelect>, lang:
 function productDto(product: typeof productsTable.$inferSelect, category: string) {
   return {
     id: product.id,
+    shop_id: product.shopId,
     category_id: product.categoryId,
     category,
     name: product.name,
@@ -437,17 +468,40 @@ function resolveImagePublicId(
 ) {
   if (imagePublicId === undefined) return undefined;
   if (imagePublicId === null) return null;
-  if (!imageUrl || !isOwnImageUrl(imageUrl)) {
+  if (!imageUrl || !isOwnImageUrl(imageUrl) || !urlNamesPublicId(imageUrl, imagePublicId)) {
     invalidOrder("imageUrlMismatch");
   }
   return imagePublicId;
 }
 
+// A Cloudinary delivery URL ends in "/<public id>.<format>" (after any
+// transformations and version). The id claimed must be that very file, not
+// some other file of the same account.
+function urlNamesPublicId(imageUrl: string, publicId: string) {
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(imageUrl).pathname);
+  } catch {
+    return false;
+  }
+  const withoutFormat = path.replace(/\.[A-Za-z0-9]+$/, "");
+  return publicId !== "" && (path.endsWith(`/${publicId}`) || withoutFormat.endsWith(`/${publicId}`));
+}
+
 // Deleting the stored file is best effort and never fails the request. The
 // database row is already written by the time this runs, so a failure leaves
 // an unreferenced file in Cloudinary rather than a product whose image is gone.
+// Shops share one Cloudinary account, and one file may be claimed by several
+// products (another shop pointing at the same file): it goes only once no
+// product at all still uses it.
 async function discardStoredImage(req: Request, publicId: string | null | undefined) {
   if (!publicId) return;
+  const [stillUsed] = await db
+    .select({ id: productsTable.id })
+    .from(productsTable)
+    .where(eq(productsTable.imagePublicId, publicId))
+    .limit(1);
+  if (stillUsed) return;
   const outcome = await deleteImage(publicId);
   if (!outcome.deleted) {
     req.log.warn({ publicId, reason: outcome.reason }, "Stored image delete failed");
@@ -497,9 +551,9 @@ async function loadThreadByToken(token: string | undefined) {
 // reaches nothing, and a blocked one (or a blocked customer) can neither read
 // nor write. A thread a browser's old chat cookie opened before accounts is
 // adopted by the account once, unless it already belongs to someone else.
-async function resolveThread(req: Request, res: Response) {
-  const found = await findThread(req, res);
-  const blocked = customerIsBlocked(found.customer);
+async function resolveThread(req: Request, res: Response, shopId: number) {
+  const found = await findThread(req, res, shopId);
+  const blocked = await customerBlockedInShop(found.customer, shopId);
   // The chat is shared with the bot, so it is for customers who belong to a
   // Telegram account; a browser guest is sent to Telegram.
   const closed = !found.customer || !chatIsOpen(found.customer.user);
@@ -529,18 +583,32 @@ async function telegramUserLang(telegramUserId: string, languageCode: string | u
 
 // Orders a customer has placed and not cancelled, so the admins can tell a
 // buyer from someone who has only written.
-async function activeOrderCount(userId: number | null) {
+async function activeOrderCount(userId: number | null, shopId: number) {
   if (userId === null) return 0;
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(ordersTable)
-    .where(and(eq(ordersTable.userId, userId), sql`${ordersTable.status} <> 'cancelled'`));
+    .where(and(eq(ordersTable.userId, userId), eq(ordersTable.shopId, shopId), sql`${ordersTable.status} <> 'cancelled'`));
   return Number(row.count);
+}
+
+// Whether a customer has ordered in a shop (any order, cancelled too). The
+// account is shared by every shop, but its name and phone reach a shop's
+// admins only once the customer has ordered there (the owner's rule); until
+// then a chat shows what the customer typed into it and their Telegram name.
+async function orderedInShop(userId: number | null, shopId: number) {
+  if (userId === null) return false;
+  const [row] = await db
+    .select({ id: ordersTable.id })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.userId, userId), eq(ordersTable.shopId, shopId)))
+    .limit(1);
+  return row !== undefined;
 }
 
 // A customer's message reaches every admin chat as a chat (not an order),
 // with who they are now: the account's current name and phone, which the
-// thread only copied when it opened.
+// thread only copied when it opened, once they are the shop's customer.
 async function notifyAdminsOfChat(
   req: Request,
   thread: typeof chatThreadsTable.$inferSelect,
@@ -548,20 +616,27 @@ async function notifyAdminsOfChat(
   via: ChatSource,
   linkedChatIds: readonly string[],
 ) {
-  const [owner] = thread.userId === null
+  const known = await orderedInShop(thread.userId, thread.shopId);
+  const [account] = thread.userId === null
     ? []
     : await db
         .select({ name: usersTable.name, phone: usersTable.phone, telegramName: usersTable.telegramName, telegramUsername: usersTable.telegramUsername })
         .from(usersTable)
         .where(eq(usersTable.id, thread.userId))
         .limit(1);
+  const owner = account && {
+    name: known ? account.name : "",
+    phone: known ? account.phone : null,
+    telegramName: account.telegramName,
+    telegramUsername: account.telegramUsername,
+  };
   const notified = await sendChatMessageNotification(
     {
       threadId: thread.id,
       customerName: owner?.name || thread.customerName,
       phone: owner?.phone || thread.phone,
       body,
-      orderCount: await activeOrderCount(thread.userId),
+      orderCount: await activeOrderCount(thread.userId, thread.shopId),
       via,
       telegramName: owner?.telegramName,
       telegramUsername: owner?.telegramUsername,
@@ -571,26 +646,34 @@ async function notifyAdminsOfChat(
   if (!notified.sent) req.log.warn({ reason: notified.error }, "Telegram chat notification failed");
 }
 
-async function findThread(req: Request, res: Response) {
+// The lock that keeps a customer to one conversation per shop.
+function threadLock(userId: number, shopId: number) {
+  return sql`select pg_advisory_xact_lock(hashtext(${`chat-thread:${shopId}:${userId}`}))`;
+}
+
+async function findThread(req: Request, res: Response, shopId: number) {
   const customer = await resolveCustomer(req, res);
   if (!customer) return { thread: undefined, customer };
+  const mine = and(eq(chatThreadsTable.userId, customer.user.id), eq(chatThreadsTable.shopId, shopId));
   const [own] = await db
     .select()
     .from(chatThreadsTable)
-    .where(eq(chatThreadsTable.userId, customer.user.id))
+    .where(mine)
     .orderBy(desc(chatThreadsTable.lastMessageAt))
     .limit(1);
   if (own) return { thread: own, customer };
+  // Only Q express existed when chats had cookies of their own.
+  if (shopId !== PLATFORM_SHOP_ID) return { thread: undefined, customer };
   const cookieThread = await loadThreadByToken(readChatToken(req));
   if (!cookieThread || cookieThread.userId !== null) return { thread: undefined, customer };
   // Under the same lock as customerThread, so a bot message opening a thread
   // at this moment cannot leave the customer with two.
   const adopted = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-thread:${customer.user.id}`}))`);
+    await tx.execute(threadLock(customer.user.id, shopId));
     const [mine] = await tx
       .select()
       .from(chatThreadsTable)
-      .where(eq(chatThreadsTable.userId, customer.user.id))
+      .where(and(eq(chatThreadsTable.userId, customer.user.id), eq(chatThreadsTable.shopId, shopId)))
       .orderBy(desc(chatThreadsTable.lastMessageAt))
       .limit(1);
     if (mine) return mine;
@@ -604,31 +687,36 @@ async function findThread(req: Request, res: Response) {
   return { thread: adopted, customer };
 }
 
-// A customer has one conversation. Finding it, and opening it when there is
-// none, happen under a per-customer lock: Telegram delivers webhook updates in
-// parallel, and two messages arriving together must not open two threads.
+// A customer has one conversation with each shop. Finding it, and opening it
+// when there is none, happen under a per-customer lock: Telegram delivers
+// webhook updates in parallel, and two messages arriving together must not
+// open two threads.
 async function customerThread(
   user: { id: number; name: string; phone: string | null },
+  shopId: number,
   details: { name?: string; phone?: string } = {},
 ) {
   // Reached through the account; the hash is a random one nobody holds, only
   // there because threads from before accounts were owned by a chat cookie.
   const tokenHash = hashChatToken(createChatToken());
+  // The account's name and phone only for a shop the customer has ordered in.
+  const known = await orderedInShop(user.id, shopId);
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-thread:${user.id}`}))`);
+    await tx.execute(threadLock(user.id, shopId));
     const [own] = await tx
       .select()
       .from(chatThreadsTable)
-      .where(eq(chatThreadsTable.userId, user.id))
+      .where(and(eq(chatThreadsTable.userId, user.id), eq(chatThreadsTable.shopId, shopId)))
       .orderBy(desc(chatThreadsTable.lastMessageAt))
       .limit(1);
     if (own) return { thread: own, created: false };
     const [thread] = await tx
       .insert(chatThreadsTable)
       .values({
+        shopId,
         tokenHash,
-        customerName: details.name || user.name || "",
-        phone: details.phone || user.phone || "",
+        customerName: details.name || (known ? user.name : "") || "",
+        phone: details.phone || (known ? user.phone : "") || "",
         userId: user.id,
       })
       .returning();
@@ -637,10 +725,12 @@ async function customerThread(
 }
 
 // An admin's reply also goes to the customer's own Telegram when the
-// account belongs to one: they opened the shop from the bot or shared their
-// number with it, so the bot may write to them. Not to a blocked customer, and not when that Telegram
-// account is itself an admin chat, where it would read as an admin message.
-// Best effort: the reply is stored for the site either way.
+// account belongs to one, through the bot of the shop the conversation is
+// with (the caller runs this inside that bot): a customer who never opened
+// that bot simply does not get it there, and reads it in the Mini App. Not to
+// a blocked customer, and not when that Telegram account is itself an admin
+// chat, where it would read as an admin message. Best effort: the reply is
+// stored for the site either way.
 async function deliverReplyToCustomerTelegram(
   req: Request,
   userId: number | null,
@@ -655,12 +745,13 @@ async function deliverReplyToCustomerTelegram(
   if (!sent.sent) req.log.warn({ reason: sent.error }, "Telegram reply to customer failed");
 }
 
-// Whether the customer a conversation belongs to is blocked. They cannot read
-// replies, so neither the dashboard nor Telegram should send them any.
-async function threadOwnerBlocked(userId: number | null) {
+// Whether the customer a conversation belongs to is blocked, everywhere or by
+// this shop. They cannot read replies, so neither the dashboard nor Telegram
+// should send them any.
+async function threadOwnerBlocked(userId: number | null, shopId: number) {
   if (userId === null) return false;
   const [owner] = await db.select({ blockedAt: usersTable.blockedAt }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-  return Boolean(owner?.blockedAt);
+  return Boolean(owner?.blockedAt) || (await blockedByShop(userId, shopId));
 }
 
 async function chatTranscript(threadId: number) {
@@ -700,9 +791,11 @@ function categoryDto(
   };
 }
 
-function orderDto(order: typeof ordersTable.$inferSelect) {
+function orderDto(order: typeof ordersTable.$inferSelect, shopName: string) {
   return {
     id: order.id,
+    shop_id: order.shopId,
+    shop_name: shopName,
     order_number: order.orderNumber,
     customer_name: order.customerName,
     phone: order.phone,
@@ -718,13 +811,23 @@ function orderDto(order: typeof ordersTable.$inferSelect) {
   };
 }
 
-async function loadStoreHours(): Promise<StoreHours> {
-  const [row] = await db.select().from(storeSettingsTable).where(eq(storeSettingsTable.id, 1)).limit(1);
-  // The migration inserts the row; the defaults only cover a database that
-  // has not run it yet.
-  return row
-    ? { openTime: row.openTime, closeTime: row.closeTime, acceptingOrders: row.acceptingOrders }
-    : { openTime: "06:00", closeTime: "23:00", acceptingOrders: true };
+// Every shop's name, for orders that list several shops' together.
+async function shopNames() {
+  return new Map((await listShops()).map((shop) => [shop.id, shop.name]));
+}
+
+// The shop a storefront request names (?shop=<slug>), or a 404 already sent.
+async function storefrontShop(req: Request, res: Response): Promise<ShopRow | undefined> {
+  const shop = await requestShop(req.query.shop);
+  if (!shop) res.status(404).json({ error: translate(catalogMessages, requestLang(req), "shopNotFound") });
+  return shop;
+}
+
+// The shop an admin request acts in, as the /admin guard loaded it.
+async function adminShop(res: Response): Promise<ShopRow> {
+  const shop = res.locals.shop as ShopRow | undefined;
+  if (!shop || shop.id !== adminShopId(res)) throw new Error("adminShop used outside the /admin guard");
+  return shop;
 }
 
 function storeStatusDto(hours: StoreHours, now = new Date()) {
@@ -743,11 +846,12 @@ function storeStatusDto(hours: StoreHours, now = new Date()) {
 // The dashboard's view adds who last moved the status. Customers never see it.
 function adminOrderDto(
   order: typeof ordersTable.$inferSelect,
+  shopName: string,
   changedBy: string | null,
   telegram: { name: string | null; username: string | null } = { name: null, username: null },
 ) {
   return {
-    ...orderDto(order),
+    ...orderDto(order, shopName),
     status_changed_by: changedBy,
     status_changed_at: order.statusChangedAt ? order.statusChangedAt.toISOString() : null,
     telegram_name: telegram.name,
@@ -765,24 +869,30 @@ async function orderTelegram(userId: number | null) {
   return row;
 }
 
-// The first delivery to a flat is free, once: whoever orders, from whichever
-// account or number. A phone or an account can be swapped for a new one at
-// will; the flat stays where it is. An address the shop did not write has no
-// key and pays.
-async function ordersToAddress(executor: Pick<typeof db, "select">, key: string) {
+// The first delivery to a flat is free, once per shop that offers it: whoever
+// orders, from whichever account or number. A phone or an account can be
+// swapped for a new one at will; the flat stays where it is. An address the
+// shop did not write has no key and pays.
+async function ordersToAddress(executor: Pick<typeof db, "select">, key: string, shopId: number) {
   const [row] = await executor
     .select({ count: sql<number>`count(*)` })
     .from(ordersTable)
-    .where(and(eq(ordersTable.addressKey, key), sql`${ordersTable.status} <> 'cancelled'`));
+    .where(and(eq(ordersTable.shopId, shopId), eq(ordersTable.addressKey, key), sql`${ordersTable.status} <> 'cancelled'`));
   return Number(row.count);
+}
+
+async function freeDelivery(executor: Pick<typeof db, "select">, shop: ShopRow, key: string | undefined) {
+  return shop.freeFirstDelivery && key !== undefined && (await ordersToAddress(executor, key, shop.id)) === 0;
 }
 // Anybody can write to the bot. Someone who may not chat is told why a few
 // times, then ignored, so a flood costs one lookup per message and no replies.
 const customerNoticeLimiter = createRateLimiter<string>({ windowMs: 10 * 60 * 1000, max: 3 });
 
-router.get("/categories", async (_req, res, next) => {
+router.get("/categories", async (req, res, next) => {
   try {
     await ensureSeedData();
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
     const categories = await db
       .select({
         id: categoriesTable.id,
@@ -796,7 +906,7 @@ router.get("/categories", async (_req, res, next) => {
         productsTable,
         and(eq(productsTable.categoryId, categoriesTable.id), eq(productsTable.active, true)),
       )
-      .where(eq(categoriesTable.active, true))
+      .where(and(eq(categoriesTable.shopId, shop.id), eq(categoriesTable.active, true)))
       .groupBy(categoriesTable.id)
       .orderBy(asc(categoriesTable.sortOrder));
     res.json(categories.map((category) => categoryDto(category, Number(category.product_count))));
@@ -809,8 +919,10 @@ router.get("/products", async (req, res, next) => {
   try {
     await ensureSeedData();
     const query = ListProductsQueryParams.parse(req.query);
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
     // A hidden category hides everything in it, whatever each product says.
-    const filters = [eq(productsTable.active, true), eq(categoriesTable.active, true)];
+    const filters = [eq(productsTable.shopId, shop.id), eq(productsTable.active, true), eq(categoriesTable.active, true)];
     if (query.search) {
       // Names are written in Uzbek Latin; a customer reading the shop in
       // Cyrillic searches in Cyrillic, so that is looked for in Latin too.
@@ -851,9 +963,10 @@ router.get("/products/:id", async (req, res, next) => {
       .select({ product: productsTable, category: categoriesTable.name })
       .from(productsTable)
       .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
+      .innerJoin(shopsTable, eq(productsTable.shopId, shopsTable.id))
       // A hidden product is gone from the storefront, direct links included,
-      // and so is every product of a hidden category.
-      .where(and(eq(productsTable.id, id), eq(productsTable.active, true), eq(categoriesTable.active, true)))
+      // and so is every product of a hidden category or a hidden shop.
+      .where(and(eq(productsTable.id, id), eq(productsTable.active, true), eq(categoriesTable.active, true), eq(shopsTable.active, true)))
       .limit(1);
     if (!row) return res.status(404).json({ error: translate(catalogMessages, requestLang(req), "productNotFound") });
     return res.json(productDto(row.product, row.category));
@@ -865,9 +978,10 @@ router.get("/products/:id", async (req, res, next) => {
 router.get("/orders/delivery-fee", async (req, res, next) => {
   try {
     const { address } = GetDeliveryFeeEstimateQueryParams.parse(req.query);
-    const key = addressKey(address);
-    const free = key !== undefined && (await ordersToAddress(db, key)) === 0;
-    res.json({ delivery_fee: free ? 0 : DELIVERY_FEE_CENTS / 100, is_first_order: free });
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
+    const free = await freeDelivery(db, shop, addressKey(address));
+    res.json({ delivery_fee: free ? 0 : deliveryFeeCents(shop) / 100, is_first_order: free });
   } catch (error) {
     return next(error);
   }
@@ -877,12 +991,14 @@ router.get("/orders", async (req, res, next) => {
   try {
     const customer = await resolveCustomer(req, res);
     if (!customer) return res.json([]);
+    // Every shop's: one checkout may have placed an order in each.
     const orders = await db
       .select()
       .from(ordersTable)
       .where(eq(ordersTable.userId, customer.user.id))
       .orderBy(desc(ordersTable.createdAt));
-    res.json(orders.map(orderDto));
+    const names = await shopNames();
+    res.json(orders.map((order) => orderDto(order, names.get(order.shopId) ?? "")));
   } catch (error) {
     return next(error);
   }
@@ -902,7 +1018,8 @@ router.get("/orders/:id", async (req, res, next) => {
       .where(and(eq(ordersTable.id, id), eq(ordersTable.userId, customer.user.id)))
       .limit(1);
     if (!order) return res.status(404).json({ error: orderText(lang, "notFound") });
-    return res.json(orderDto(order));
+    const shop = await loadShop(order.shopId);
+    return res.json(orderDto(order, shop?.name ?? ""));
   } catch (error) {
     return next(error);
   }
@@ -922,7 +1039,6 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
     if (!body) return res.status(400).json({ error: orderText(requestLang(req), "feedbackEmpty") });
     const customer = await resolveCustomer(req, res);
     const lang = requestLang(req, customer?.user);
-    if (customerIsBlocked(customer)) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     if (!customer || customer.session.source !== "telegram" || customer.user.telegramId === null) {
       return res.status(403).json({ error: orderText(lang, "telegramRequired"), telegram_required: true });
     }
@@ -933,6 +1049,11 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
       .where(and(eq(ordersTable.id, id), eq(ordersTable.userId, customer.user.id)))
       .limit(1);
     if (!order) return res.status(404).json({ error: orderText(lang, "notFound") });
+    if (await customerBlockedInShop(customer, order.shopId)) {
+      return res.status(403).json({ error: blockedMessage(lang), blocked: true });
+    }
+    const shop = await loadShop(order.shopId);
+    if (!shop) return res.status(404).json({ error: orderText(lang, "notFound") });
     if (order.status !== "delivered") {
       return res.status(409).json({ error: orderText(lang, "feedbackNotDelivered") });
     }
@@ -940,7 +1061,9 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
     if (feedbackLimiter.isExhausted(order.id)) {
       return res.status(429).json({ error: orderText(lang, "feedbackLimit") });
     }
-    const sent = await sendOrderFeedback(
+    // To the admins of the shop the order was placed with, through its bot.
+    const chats = await linkedTelegramChatIds(shop.id);
+    const sent = await withBot(await shopBot(shop), () => sendOrderFeedback(
       {
         orderNumber: order.orderNumber,
         customerName: order.customerName,
@@ -951,8 +1074,8 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
         telegramUsername: customer.user.telegramUsername,
         text: body,
       },
-      await linkedTelegramChatIds(),
-    );
+      chats,
+    ));
     // Nothing was kept, so the customer must know to try again. The text
     // itself is never logged.
     if (!sent.sent) {
@@ -982,9 +1105,20 @@ router.post("/orders", async (req, res, next) => {
       res.status(400).json({ error: translate(accountMessages, lang, "phoneInvalid") });
       return;
     }
+    // An order belongs to one shop: the shop of its products. A cart holding
+    // several shops' products is placed as one order per shop.
+    const requestedIds = [...new Set(input.items.map((item) => item.product_id))];
+    const owners = await db
+      .selectDistinct({ shopId: productsTable.shopId })
+      .from(productsTable)
+      .where(sql`${productsTable.id} in (${sql.join(requestedIds.map((id) => sql`${id}`), sql`, `)})`);
+    if (owners.length > 1) invalidOrder("mixedShops");
+    const shop = owners.length === 1 ? await loadShop(owners[0].shopId) : undefined;
+    if (!shop) invalidOrder("productNotFound");
+    if (!shop.active) invalidOrder("productUnavailable", { name: shop.name });
     // Right now only while open; ahead of time only for a slot inside the
     // hours. Checked before anything is written or reserved.
-    const hours = await loadStoreHours();
+    const hours = shopHours(shop);
     const scheduledFor = input.scheduled_for ? new Date(input.scheduled_for) : null;
     if (!hours.acceptingOrders) {
       res.status(409).json({ error: orderText(lang, "notAcceptingNow") });
@@ -1005,7 +1139,7 @@ router.post("/orders", async (req, res, next) => {
     // block, so it is sent to Telegram instead.
     const customer = await resolveCustomer(req, res);
     lang = requestLang(req, customer?.user);
-    if (customerIsBlocked(customer)) {
+    if (await customerBlockedInShop(customer, shop.id)) {
       res.status(403).json({ error: blockedMessage(lang), blocked: true });
       return;
     }
@@ -1016,8 +1150,10 @@ router.post("/orders", async (req, res, next) => {
     const key = addressKey(input.address);
     const order = await db.transaction(async (tx) => {
       // Two orders to one flat at the same moment must not both go free.
-      if (key) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`address:${key}`}))`);
-      const deliveryFeeCents = key !== undefined && (await ordersToAddress(tx, key)) === 0 ? 0 : DELIVERY_FEE_CENTS;
+      if (key && shop.freeFirstDelivery) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`address:${shop.id}:${key}`}))`);
+      }
+      const feeCents = (await freeDelivery(tx, shop, key)) ? 0 : deliveryFeeCents(shop);
       const productIds = [...new Set(input.items.map((item) => item.product_id))].sort((a, b) => a - b);
       const products = await tx
         .select({ product: productsTable, category: categoriesTable.name, categoryActive: categoriesTable.active })
@@ -1028,6 +1164,9 @@ router.post("/orders", async (req, res, next) => {
         .for("update");
       const productById = new Map(products.map((row) => [row.product.id, row]));
       if (products.length !== productIds.length) invalidOrder("productNotFound");
+      // Checked again under the lock: products never move between shops, but
+      // the order must not take stock from another shop all the same.
+      if (products.some((row) => row.product.shopId !== shop.id)) invalidOrder("mixedShops");
       // A cart can outlive a product, or its category, being hidden; the shop
       // no longer sells it.
       const hidden = products.find((row) => !row.product.active || !row.categoryActive);
@@ -1133,7 +1272,7 @@ router.post("/orders", async (req, res, next) => {
       if (!Number.isSafeInteger(subtotalCents) || subtotalCents > MAX_MONEY_CENTS) {
         invalidOrder("orderSumOutOfRange");
       }
-      if (subtotalCents + deliveryFeeCents > MAX_MONEY_CENTS) {
+      if (subtotalCents + feeCents > MAX_MONEY_CENTS) {
         invalidOrder("orderTotalOutOfRange");
       }
       // Numbered from the id sequence, so two orders can never share a number.
@@ -1143,7 +1282,7 @@ router.post("/orders", async (req, res, next) => {
       const { rows: [{ id: orderId }] } = await tx.execute<{ id: string }>(
         sql`select nextval(pg_get_serial_sequence('orders', 'id')) as id`,
       );
-      const orderNumber = `QE-${String(orderId).padStart(7, "0")}`;
+      const orderNumber = `${shop.orderPrefix}-${String(orderId).padStart(7, "0")}`;
       // The latest details the customer typed win on their account; each
       // order keeps its own copy of the name, phone and address.
       const userId = customer.user.id;
@@ -1156,6 +1295,7 @@ router.post("/orders", async (req, res, next) => {
         .insert(ordersTable)
         .values({
           id: Number(orderId),
+          shopId: shop.id,
           orderNumber,
           userId,
           scheduledFor,
@@ -1167,8 +1307,8 @@ router.post("/orders", async (req, res, next) => {
           status: "new",
           paymentMethod: input.payment_method,
           subtotal: (subtotalCents / 100).toFixed(2),
-          deliveryFee: (deliveryFeeCents / 100).toFixed(2),
-          total: ((subtotalCents + deliveryFeeCents) / 100).toFixed(2),
+          deliveryFee: (feeCents / 100).toFixed(2),
+          total: ((subtotalCents + feeCents) / 100).toFixed(2),
         })
         .returning();
       for (const item of items) {
@@ -1180,19 +1320,21 @@ router.post("/orders", async (req, res, next) => {
       return created;
     });
     if (order.userId) await rememberOrderAddress(order.userId, order.address);
-    const notification = await sendNewOrderNotification(
+    // To the shop's own admins, through the shop's own bot.
+    const chats = await linkedTelegramChatIds(shop.id);
+    const notification = await withBot(await shopBot(shop), () => sendNewOrderNotification(
       {
         ...order,
         scheduledLabel: order.scheduledFor ? formatTashkent(order.scheduledFor) : undefined,
         telegramName: customer.user.telegramName,
         telegramUsername: customer.user.telegramUsername,
       },
-      await linkedTelegramChatIds(),
-    );
+      chats,
+    ));
     if (!notification.sent) {
-      req.log.error({ error: notification.error, orderId: order.id }, "Telegram order notification failed");
+      req.log.error({ error: notification.error, orderId: order.id, shopId: shop.id }, "Telegram order notification failed");
     }
-    return res.status(201).json(orderDto(order));
+    return res.status(201).json(orderDto(order, shop.name));
   } catch (error) {
     if (error instanceof OrderValidationError) {
       return res.status(400).json({ error: error.text(lang) });
@@ -1201,34 +1343,41 @@ router.post("/orders", async (req, res, next) => {
   }
 });
 
-router.get("/store/status", async (_req, res, next) => {
+router.get("/store/status", async (req, res, next) => {
   try {
-    return res.json(storeStatusDto(await loadStoreHours()));
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
+    return res.json(storeStatusDto(shopHours(shop)));
   } catch (error) {
     return next(error);
   }
 });
 
-// Behind the /admin guard. Any admin may change the hours or pause orders:
-// the person on shift is the one who knows the shop cannot deliver.
+// Behind the /admin guard, for the shop being acted in. Every shop keeps its
+// own hours, set by its own admins or by a Q express super admin acting in it
+// (the owner's decision). Any admin of the shop may change them or pause
+// orders: the person on shift is the one who knows the shop cannot deliver.
 router.put("/admin/store-hours", async (req, res, next) => {
   try {
     const input = UpdateStoreHoursBody.parse(req.body);
     if (!isValidTime(input.open_time) || !isValidTime(input.close_time)) {
       return res.status(400).json({ error: "Vaqt SS:DD ko‘rinishida bo‘lsin, masalan 06:00" });
     }
-    const values = {
-      openTime: input.open_time,
-      closeTime: input.close_time,
-      acceptingOrders: input.accepting_orders,
-      updatedBy: signedInAdmin(res).id,
-      updatedAt: new Date(),
-    };
-    await db
-      .insert(storeSettingsTable)
-      .values({ id: 1, ...values })
-      .onConflictDoUpdate({ target: storeSettingsTable.id, set: values });
-    return res.json(storeStatusDto(await loadStoreHours()));
+    const admin = signedInAdmin(res);
+    const shop = await adminShop(res);
+    const [saved] = await db
+      .update(shopsTable)
+      .set({
+        openTime: input.open_time,
+        closeTime: input.close_time,
+        acceptingOrders: input.accepting_orders,
+        settingsUpdatedBy: admin.id,
+        settingsUpdatedAt: new Date(),
+      })
+      .where(eq(shopsTable.id, shop.id))
+      .returning();
+    forgetShops();
+    return res.json(storeStatusDto(shopHours(saved)));
   } catch (error) {
     return next(error);
   }
@@ -1236,7 +1385,9 @@ router.put("/admin/store-hours", async (req, res, next) => {
 
 router.get("/leaderboard/weekly", async (req, res, next) => {
   try {
-    const orders = await db.select().from(ordersTable);
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
+    const orders = await db.select().from(ordersTable).where(eq(ordersTable.shopId, shop.id));
     // A blocked customer's orders are off the leaderboard, so prank orders
     // can neither rank nor win the weekly prize. By account, not by number:
     // a number a blocked prankster typed may be a stranger's.
@@ -1246,7 +1397,8 @@ router.get("/leaderboard/weekly", async (req, res, next) => {
       .select({ id: usersTable.id })
       .from(usersTable)
       .where(sql`${usersTable.blockedAt} is not null or exists (select 1 from customer_sessions b
-        where b.telegram_id = ${usersTable.telegramId} and b.blocked_at is not null)`);
+        where b.telegram_id = ${usersTable.telegramId} and b.blocked_at is not null)
+        or exists (select 1 from customer_shop_blocks s where s.user_id = ${usersTable.id} and s.shop_id = ${shop.id})`);
     const blockedIds = new Set(blocked.map((row) => row.id));
     const eligible = orders.filter((order) => !(order.userId !== null && blockedIds.has(order.userId)));
     res.json(weeklyLeaderboard(eligible, requestLang(req)));
@@ -1260,13 +1412,20 @@ router.get("/leaderboard/weekly", async (req, res, next) => {
 router.post("/chat/session", async (req, res, next) => {
   try {
     const input = StartChatSessionBody.parse(req.body ?? {});
-    const name = input.name?.trim() ?? "";
-    const phone = input.phone?.trim() ?? "";
 
-    const { thread: existing, customer, blocked, closed } = await resolveThread(req, res);
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
+    const { thread: existing, customer, blocked, closed } = await resolveThread(req, res, shop.id);
     const lang = requestLang(req, customer?.user);
     if (blocked) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     if (closed || !customer) return res.status(403).json({ error: chatText(lang, "closed"), chat_closed: true });
+    // What the widget sends is the customer's saved profile, so another shop
+    // takes it only once the customer has ordered there (the owner's rule),
+    // whatever an old or altered page sends. Q express, the platform, takes
+    // it always (confirmed by the owner, 2026-10-13).
+    const shareDetails = shop.id === PLATFORM_SHOP_ID || (await orderedInShop(customer.user.id, shop.id));
+    const name = shareDetails ? input.name?.trim() ?? "" : "";
+    const phone = shareDetails ? input.phone?.trim() ?? "" : "";
     if (existing) {
       // The customer may have filled in their profile since the thread was
       // opened, so newly supplied details replace blanks without wiping what
@@ -1286,7 +1445,7 @@ router.post("/chat/session", async (req, res, next) => {
       return res.status(429).json({ error: chatText(lang, "tooManyThreads") });
     }
 
-    const { thread } = await customerThread(customer.user, { name, phone });
+    const { thread } = await customerThread(customer.user, shop.id, { name, phone });
     return res.json({ thread_id: thread.id, customer_name: thread.customerName, phone: thread.phone });
   } catch (error) {
     return next(error);
@@ -1295,7 +1454,9 @@ router.post("/chat/session", async (req, res, next) => {
 
 router.get("/chat/messages", async (req, res, next) => {
   try {
-    const { thread, customer, blocked, closed } = await resolveThread(req, res);
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
+    const { thread, customer, blocked, closed } = await resolveThread(req, res, shop.id);
     const lang = requestLang(req, customer?.user);
     if (blocked) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     if (closed) return res.status(403).json({ error: chatText(lang, "closed"), chat_closed: true });
@@ -1313,7 +1474,9 @@ router.get("/chat/messages", async (req, res, next) => {
 router.post("/chat/messages", async (req, res, next) => {
   try {
     const { body } = SendChatMessageBody.parse(req.body);
-    const { thread, customer, blocked, closed } = await resolveThread(req, res);
+    const shop = await storefrontShop(req, res);
+    if (!shop) return;
+    const { thread, customer, blocked, closed } = await resolveThread(req, res, shop.id);
     const lang = requestLang(req, customer?.user);
     if (blocked) return res.status(403).json({ error: blockedMessage(lang), blocked: true });
     if (closed || !customer) return res.status(403).json({ error: chatText(lang, "closed"), chat_closed: true });
@@ -1334,7 +1497,7 @@ router.post("/chat/messages", async (req, res, next) => {
 
     // Best effort, exactly like the order notification: the message is stored
     // either way, and a Telegram outage must not lose what the customer wrote.
-    const linkedChatIds = await linkedTelegramChatIds();
+    const linkedChatIds = await linkedTelegramChatIds(shop.id);
     const via: ChatSource = customer.session.source === "telegram" ? "mini-app" : "site";
     // The bot holds the whole conversation: what was written in the Mini App
     // is copied into the customer's chat with the bot too. Not into an admin's
@@ -1348,32 +1511,62 @@ router.post("/chat/messages", async (req, res, next) => {
       const echoed = await sendCustomerEcho(telegramId, message.body, isLang(customer.user.language) ? customer.user.language : lang);
       if (!echoed.sent) req.log.warn({ reason: echoed.error }, "Telegram chat echo to customer failed");
     };
-    await Promise.all([notifyAdminsOfChat(req, thread, message.body, via, linkedChatIds), echo()]);
+    // Through this shop's bot, to this shop's admins.
+    await withBot(await shopBot(shop), () => Promise.all([notifyAdminsOfChat(req, thread, message.body, via, linkedChatIds), echo()]));
     return res.status(201).json(chatMessageDto(message));
   } catch (error) {
     return next(error);
   }
 });
 
-// Where the shop is served from, for links the bot sends. Render names it in
-// RENDER_EXTERNAL_URL; PUBLIC_BASE_URL overrides it elsewhere.
-function publicBaseUrl(req: Request) {
-  return process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `https://${req.get("host")}`;
-}
-
 // Telegram calls this for every message an admin sends the bot. A reply to a
 // chat notification becomes an operator message in that thread, exactly as if
 // it had been typed on the dashboard, so the customer's widget and the
 // dashboard both show it on their next poll, and the other admins get a copy.
 // "/start <code>" from a dashboard link connects that chat to an admin.
-router.post("/telegram/webhook", async (req, res, next) => {
+//
+// Every shop's bot has its own webhook: Q express's at /telegram/webhook, as
+// it always was, another shop's at /telegram/webhook/<shop id>. Each runs
+// inside its shop's bot, so it answers through that bot, reaches that shop's
+// admins and conversations, and nothing else.
+router.post("/telegram/webhook", (req, res, next) => {
+  void shopWebhook(PLATFORM_SHOP_ID, req, res, next);
+});
+
+router.post("/telegram/webhook/:shopId", (req, res, next) => {
+  const shopId = Number(req.params.shopId);
+  if (!Number.isSafeInteger(shopId) || shopId <= PLATFORM_SHOP_ID) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  void shopWebhook(shopId, req, res, next);
+});
+
+async function shopWebhook(shopId: number, req: Request, res: Response, next: (error?: unknown) => void) {
   try {
+    const shop = await loadShop(shopId);
+    if (!shop) return res.status(404).json({ error: "Not found" });
+    // An archived shop's bot hears nothing; answered so Telegram stops retrying.
+    if (isArchived(shop)) return res.json({ ok: true });
+    return await withBot(await shopBot(shop), () => handleWebhook(shop, req, res));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function handleWebhook(shop: ShopRow, req: Request, res: Response) {
+  {
     if (!webhookSecretMatches(req.get("x-telegram-bot-api-secret-token"))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    const recipients = await linkedTelegramRecipients();
+    const recipients = await linkedTelegramRecipients(shop.id);
     const update = parseAdminUpdate(req.body, recipients.map((recipient) => recipient.chatId));
     if (update.kind === "ignore") return res.json({ ok: true });
+    // A hidden shop is closed to customers, in its bot as on the site: they
+    // are neither greeted nor heard. Its admins keep their links and replies.
+    if (!shop.active && (update.kind === "welcome" || update.kind === "customer-message" || update.kind === "customer-unsupported")) {
+      return res.json({ ok: true });
+    }
     // The shop works in private chats only. Added to a group or channel, the
     // bot reads nothing there and leaves.
     if (update.kind === "leave") {
@@ -1387,7 +1580,8 @@ router.post("/telegram/webhook", async (req, res, next) => {
         const [admin] = await tx
           .select()
           .from(adminsTable)
-          .where(eq(adminsTable.telegramLinkHash, telegramLinkHash(update.code)))
+          // Only this shop's admins link through this shop's bot.
+          .where(and(eq(adminsTable.telegramLinkHash, telegramLinkHash(update.code)), eq(adminsTable.shopId, shop.id)))
           .limit(1)
           .for("update");
         if (!admin || !admin.telegramLinkExpiresAt || admin.telegramLinkExpiresAt < new Date()) return undefined;
@@ -1396,7 +1590,7 @@ router.post("/telegram/webhook", async (req, res, next) => {
         await tx
           .update(adminsTable)
           .set({ telegramChatId: null })
-          .where(eq(adminsTable.telegramChatId, update.chatId));
+          .where(and(eq(adminsTable.telegramChatId, update.chatId), eq(adminsTable.shopId, shop.id)));
         const [updated] = await tx
           .update(adminsTable)
           .set({ telegramChatId: update.chatId, telegramLinkHash: null, telegramLinkExpiresAt: null })
@@ -1415,7 +1609,7 @@ router.post("/telegram/webhook", async (req, res, next) => {
         .select({ name: productsTable.name, price: productsTable.price, oldPrice: productsTable.oldPrice })
         .from(productsTable)
         .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
-        .where(and(eq(productsTable.active, true), eq(categoriesTable.active, true), sql`${productsTable.stock} > 0`, sql`${productsTable.oldPrice} > ${productsTable.price}`))
+        .where(and(eq(productsTable.shopId, shop.id), eq(productsTable.active, true), eq(categoriesTable.active, true), sql`${productsTable.stock} > 0`, sql`${productsTable.oldPrice} > ${productsTable.price}`))
         .orderBy(desc(sql`(${productsTable.oldPrice} - ${productsTable.price}) / ${productsTable.oldPrice}`))
         .limit(3);
       // The language saved on their account, or their Telegram's.
@@ -1424,7 +1618,7 @@ router.post("/telegram/webhook", async (req, res, next) => {
         update.chatId,
         publicBaseUrl(req),
         offers.map((offer) => ({ name: offer.name, price: Number(offer.price), oldPrice: offer.oldPrice === null ? null : Number(offer.oldPrice) })),
-        await loadStoreHours(),
+        shopHours(shop),
         lang,
       );
       if (!welcomed.sent) req.log.warn({ reason: welcomed.error }, "Telegram welcome failed");
@@ -1453,14 +1647,14 @@ router.post("/telegram/webhook", async (req, res, next) => {
       return res.json({ ok: true });
     }
     if (update.kind === "customer-message") {
-      if (await telegramIsBlocked(update.telegramUserId)) {
+      if (await telegramBlockedInShop(update.telegramUserId, shop.id)) {
         if (customerNoticeLimiter.allow(update.chatId)) {
           await sendCustomerNotice(update.chatId, "blocked", await telegramUserLang(update.telegramUserId, update.languageCode));
         }
         return res.json({ ok: true });
       }
       const customer = await telegramCustomer(update.telegramUserId, { name: update.name, username: update.username }, update.languageCode);
-      const { thread } = await customerThread(customer);
+      const { thread } = await customerThread(customer, shop.id);
       if (!chatMessageLimiter.allow(thread.id)) {
         if (customerNoticeLimiter.allow(update.chatId)) {
           await sendCustomerNotice(update.chatId, "too-many", accountLang(customer, update.languageCode));
@@ -1488,13 +1682,14 @@ router.post("/telegram/webhook", async (req, res, next) => {
     const [thread] = await db
       .select()
       .from(chatThreadsTable)
-      .where(eq(chatThreadsTable.id, update.threadId))
+      // A thread of another shop is as good as missing to this bot.
+      .where(and(eq(chatThreadsTable.id, update.threadId), eq(chatThreadsTable.shopId, shop.id)))
       .limit(1);
     if (!thread) {
       await sendReplyHint(update.chatId, update.messageId, "missing-thread");
       return res.json({ ok: true });
     }
-    if (await threadOwnerBlocked(thread.userId)) {
+    if (await threadOwnerBlocked(thread.userId, shop.id)) {
       await sendReplyHint(update.chatId, update.messageId, "customer-blocked");
       return res.json({ ok: true });
     }
@@ -1540,33 +1735,32 @@ router.post("/telegram/webhook", async (req, res, next) => {
     if (!copied.sent) req.log.warn({ reason: copied.error }, "Telegram reply copy failed");
     await deliverReplyToCustomerTelegram(req, thread.userId, message.body, recipients.map((recipient) => recipient.chatId));
     return res.json({ ok: true });
-  } catch (error) {
-    return next(error);
   }
-});
+}
 
 function adminCategoryDto(category: typeof categoriesTable.$inferSelect, productCount: number) {
   return { ...categoryDto(category, productCount), sort_order: category.sortOrder, active: category.active };
 }
 
 // Every product counts here, hidden ones too: they are what blocks a delete.
-async function loadAdminCategories(where?: SQL) {
+// Only the shop being acted in.
+async function loadAdminCategories(shopId: number, where?: SQL) {
   const rows = await db
     .select({ category: categoriesTable, productCount: sql<number>`count(${productsTable.id})` })
     .from(categoriesTable)
     .leftJoin(productsTable, eq(productsTable.categoryId, categoriesTable.id))
-    .where(where)
+    .where(and(eq(categoriesTable.shopId, shopId), where))
     .groupBy(categoriesTable.id)
     .orderBy(asc(categoriesTable.sortOrder), asc(categoriesTable.id));
   return rows.map(({ category, productCount }) => adminCategoryDto(category, Number(productCount)));
 }
 
 // Two categories with one name would look the same in every list and picker.
-async function categoryNameTaken(name: string, exceptId?: number) {
+async function categoryNameTaken(shopId: number, name: string, exceptId?: number) {
   const [row] = await db
     .select({ id: categoriesTable.id })
     .from(categoriesTable)
-    .where(and(sql`lower(${categoriesTable.name}) = lower(${name})`, exceptId === undefined ? undefined : ne(categoriesTable.id, exceptId)))
+    .where(and(eq(categoriesTable.shopId, shopId), sql`lower(${categoriesTable.name}) = lower(${name})`, exceptId === undefined ? undefined : ne(categoriesTable.id, exceptId)))
     .limit(1);
   return Boolean(row);
 }
@@ -1581,7 +1775,7 @@ const ICON_MISSING = "Kategoriya uchun ikonka tanlang";
 router.get("/admin/categories", async (_req, res, next) => {
   try {
     await ensureSeedData();
-    res.json(await loadAdminCategories());
+    res.json(await loadAdminCategories(adminShopId(res)));
   } catch (error) {
     return next(error);
   }
@@ -1594,14 +1788,17 @@ router.post("/admin/categories", async (req, res, next) => {
     const name = input.name.trim();
     if (name.length < 2) return res.status(400).json({ error: NAME_TOO_SHORT });
     if (input.icon.trim() === "") return res.status(400).json({ error: ICON_MISSING });
-    if (await categoryNameTaken(name)) return res.status(409).json({ error: NAME_TAKEN });
+    const shopId = adminShopId(res);
+    if (await categoryNameTaken(shopId, name)) return res.status(409).json({ error: NAME_TAKEN });
     // Without an explicit place a new category goes last, not first.
     const [{ last }] = await db
       .select({ last: sql<number | null>`max(${categoriesTable.sortOrder})` })
-      .from(categoriesTable);
+      .from(categoriesTable)
+      .where(eq(categoriesTable.shopId, shopId));
     const [category] = await db
       .insert(categoriesTable)
       .values({
+        shopId,
         name,
         slug: input.slug.trim().toLowerCase(),
         icon: input.icon.trim(),
@@ -1628,21 +1825,24 @@ router.patch("/admin/categories/:id", async (req, res, next) => {
     if (input.sort_order !== undefined) update.sortOrder = input.sort_order;
     if (input.active !== undefined) update.active = input.active;
     if (Object.keys(update).length === 0) return res.status(400).json({ error: "O‘zgarish yo‘q" });
-    const [existing] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id)).limit(1);
+    const shopId = adminShopId(res);
+    // Another shop's category answers exactly like a missing one.
+    const inShop = and(eq(categoriesTable.id, id), eq(categoriesTable.shopId, shopId));
+    const [existing] = await db.select().from(categoriesTable).where(inShop).limit(1);
     if (!existing) return res.status(404).json({ error: CATEGORY_NOT_FOUND });
     // Only a new name is checked, so two categories that already share one
     // can still be edited, renamed apart or hidden.
     const name = update.name;
-    if (name !== undefined && name.toLowerCase() !== existing.name.toLowerCase() && (await categoryNameTaken(name, id))) {
+    if (name !== undefined && name.toLowerCase() !== existing.name.toLowerCase() && (await categoryNameTaken(shopId, name, id))) {
       return res.status(409).json({ error: NAME_TAKEN });
     }
     const [category] = await db
       .update(categoriesTable)
       .set(update)
-      .where(eq(categoriesTable.id, id))
+      .where(inShop)
       .returning({ id: categoriesTable.id });
     if (!category) return res.status(404).json({ error: CATEGORY_NOT_FOUND });
-    const [updated] = await loadAdminCategories(eq(categoriesTable.id, id));
+    const [updated] = await loadAdminCategories(shopId, eq(categoriesTable.id, id));
     // Deleted by another admin between the update and this read.
     if (!updated) return res.status(404).json({ error: CATEGORY_NOT_FOUND });
     return res.json(updated);
@@ -1655,21 +1855,26 @@ router.patch("/admin/categories/:id", async (req, res, next) => {
 router.delete("/admin/categories/:id", async (req, res, next) => {
   try {
     const { id } = DeleteAdminCategoryParams.parse(req.params);
+    const shopId = adminShopId(res);
     const outcome = await db.transaction(async (tx) => {
       // Deletes take turns, so two at once cannot both see a second category
-      // left and together empty the table; an empty table is what makes
-      // ensureSeedData put the demo catalog back. Only the row being deleted
-      // is locked: an order locks the categories of its products, and locking
-      // every row here could deadlock against it.
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('categories:delete'))`);
+      // left and together empty Q express's catalog; an empty one is what
+      // makes ensureSeedData put the demo catalog back. Only the row being
+      // deleted is locked: an order locks the categories of its products, and
+      // locking every row here could deadlock against it.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`categories:delete:${shopId}`}))`);
       const [target] = await tx
         .select({ id: categoriesTable.id })
         .from(categoriesTable)
-        .where(eq(categoriesTable.id, id))
+        .where(and(eq(categoriesTable.id, id), eq(categoriesTable.shopId, shopId)))
         .for("update");
       if (!target) return { status: 404, error: CATEGORY_NOT_FOUND } as const;
-      const [{ total }] = await tx.select({ total: sql<number>`count(*)` }).from(categoriesTable);
-      if (Number(total) <= 1) {
+      // Another shop's catalog starts empty and may be emptied again.
+      const [{ total }] = await tx
+        .select({ total: sql<number>`count(*)` })
+        .from(categoriesTable)
+        .where(eq(categoriesTable.shopId, shopId));
+      if (shopId === PLATFORM_SHOP_ID && Number(total) <= 1) {
         return { status: 409, error: "Oxirgi kategoriyani o‘chirib bo‘lmaydi. Uni yashirib qo‘yishingiz mumkin." } as const;
       }
       // Deleting products along with their category would be one click too
@@ -1705,6 +1910,7 @@ router.get("/admin/products", async (_req, res, next) => {
       .select({ product: productsTable, category: categoriesTable.name })
       .from(productsTable)
       .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
+      .where(eq(productsTable.shopId, adminShopId(res)))
       .orderBy(asc(categoriesTable.sortOrder), asc(productsTable.name));
     res.json(rows.map(({ product, category }) => adminProductDto(product, category)));
   } catch (error) {
@@ -1717,16 +1923,20 @@ router.post("/admin/products", async (req, res, next) => {
     await ensureSeedData();
     const input = CreateAdminProductBody.parse(req.body);
     validateAdminProductNumbers(input);
+    const shopId = adminShopId(res);
+    // A product goes into a category of the shop being acted in, and belongs
+    // to that shop.
     const [category] = await db
       .select()
       .from(categoriesTable)
-      .where(eq(categoriesTable.id, input.category_id))
+      .where(and(eq(categoriesTable.id, input.category_id), eq(categoriesTable.shopId, shopId)))
       .limit(1);
     if (!category) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
 
     const [product] = await db
       .insert(productsTable)
       .values({
+        shopId,
         categoryId: input.category_id,
         name: input.name.trim(),
         description: input.description.trim(),
@@ -1756,10 +1966,13 @@ router.patch("/admin/products/:id", async (req, res, next) => {
   try {
     const { id } = UpdateAdminProductParams.parse(req.params);
     const input = UpdateAdminProductBody.parse(req.body);
+    const shopId = adminShopId(res);
+    // Another shop's product answers exactly like a missing one.
+    const inShop = and(eq(productsTable.id, id), eq(productsTable.shopId, shopId));
     const [existingProduct] = await db
       .select()
       .from(productsTable)
-      .where(eq(productsTable.id, id))
+      .where(inShop)
       .limit(1);
     if (!existingProduct) return res.status(404).json({ error: "Product not found" });
     validateAdminProductNumbers({
@@ -1793,7 +2006,7 @@ router.patch("/admin/products/:id", async (req, res, next) => {
       const [category] = await db
         .select({ id: categoriesTable.id })
         .from(categoriesTable)
-        .where(eq(categoriesTable.id, input.category_id))
+        .where(and(eq(categoriesTable.id, input.category_id), eq(categoriesTable.shopId, shopId)))
         .limit(1);
       if (!category) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
     }
@@ -1801,8 +2014,9 @@ router.patch("/admin/products/:id", async (req, res, next) => {
     const [product] = await db
       .update(productsTable)
       .set(update)
-      .where(eq(productsTable.id, id))
+      .where(inShop)
       .returning();
+    if (!product) return res.status(404).json({ error: "Product not found" });
     const [category] = await db
       .select({ name: categoriesTable.name })
       .from(categoriesTable)
@@ -1833,7 +2047,7 @@ router.delete("/admin/products/:id", async (req, res, next) => {
     // never rewrites history. There is no foreign key to block this either.
     const [product] = await db
       .delete(productsTable)
-      .where(eq(productsTable.id, id))
+      .where(and(eq(productsTable.id, id), eq(productsTable.shopId, adminShopId(res))))
       .returning();
     if (!product) return res.status(404).json({ error: "Product not found" });
     await discardStoredImage(req, product.imagePublicId);
@@ -1859,6 +2073,7 @@ router.post("/admin/uploads/signature", (_req, res, next) => {
 
 router.get("/admin/chats", async (_req, res, next) => {
   try {
+    const shopId = adminShopId(res);
     // Two correlated subqueries rather than a query per thread, so the list
     // stays one round trip as conversations pile up.
     const rows = await db
@@ -1868,6 +2083,7 @@ router.get("/admin/chats", async (_req, res, next) => {
         phone: chatThreadsTable.phone,
         ownerName: usersTable.name,
         ownerPhone: usersTable.phone,
+        ordered: sql<boolean>`exists (select 1 from orders o where o.user_id = ${chatThreadsTable.userId} and o.shop_id = ${shopId})`,
         telegramName: usersTable.telegramName,
         telegramUsername: usersTable.telegramUsername,
         lastMessageAt: chatThreadsTable.lastMessageAt,
@@ -1876,7 +2092,8 @@ router.get("/admin/chats", async (_req, res, next) => {
           where m.thread_id = ${chatThreadsTable.id}
           order by m.id desc limit 1
         )`,
-        customerBlocked: sql<boolean>`coalesce((select u.blocked_at is not null from users u where u.id = ${chatThreadsTable.userId}), false)`,
+        customerBlocked: sql<boolean>`coalesce((select u.blocked_at is not null from users u where u.id = ${chatThreadsTable.userId}), false)
+          or exists (select 1 from customer_shop_blocks s where s.user_id = ${chatThreadsTable.userId} and s.shop_id = ${shopId})`,
         deviceBlocked: sql<boolean>`exists (select 1 from users u join customer_sessions b on b.telegram_id = u.telegram_id
           where u.id = ${chatThreadsTable.userId} and b.blocked_at is not null)`,
         unreadCount: sql<number>`(
@@ -1889,15 +2106,18 @@ router.get("/admin/chats", async (_req, res, next) => {
       })
       .from(chatThreadsTable)
       .leftJoin(usersTable, eq(chatThreadsTable.userId, usersTable.id))
+      .where(eq(chatThreadsTable.shopId, shopId))
       .orderBy(desc(chatThreadsTable.lastMessageAt));
 
+    // A platform super admin sees every customer whole, in any shop.
+    const full = isPlatformSuperAdmin(signedInAdmin(res));
     res.json(
       rows.map((row) => ({
         id: row.id,
         // What the customer has typed by now; the thread only copied it when
         // it opened.
-        customer_name: row.ownerName || row.customerName,
-        phone: row.ownerPhone || row.phone,
+        customer_name: ((row.ordered || full) && row.ownerName) || row.customerName,
+        phone: ((row.ordered || full) && row.ownerPhone) || row.phone,
         telegram_name: row.telegramName ?? null,
         telegram_username: row.telegramUsername ?? null,
         last_message: row.lastMessage ?? "",
@@ -1918,7 +2138,7 @@ router.get("/admin/chats/:id/messages", async (req, res, next) => {
     const [thread] = await db
       .select({ id: chatThreadsTable.id })
       .from(chatThreadsTable)
-      .where(eq(chatThreadsTable.id, id))
+      .where(and(eq(chatThreadsTable.id, id), eq(chatThreadsTable.shopId, adminShopId(res))))
       .limit(1);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
     // Opening the thread is what clears its unread badge.
@@ -1938,7 +2158,10 @@ router.get("/admin/chats/:id/messages", async (req, res, next) => {
 router.delete("/admin/chats/:id", async (req, res, next) => {
   try {
     const { id } = DeleteAdminChatParams.parse(req.params);
-    const deleted = await db.delete(chatThreadsTable).where(eq(chatThreadsTable.id, id)).returning({ id: chatThreadsTable.id });
+    const deleted = await db
+      .delete(chatThreadsTable)
+      .where(and(eq(chatThreadsTable.id, id), eq(chatThreadsTable.shopId, adminShopId(res))))
+      .returning({ id: chatThreadsTable.id });
     if (deleted.length === 0) return res.status(404).json({ error: "Suhbat topilmadi" });
     req.log.info({ threadId: id, adminId: signedInAdmin(res).id }, "Chat deleted");
     return res.status(204).end();
@@ -1952,6 +2175,7 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
     const { id } = SendAdminChatMessageParams.parse(req.params);
     const { body } = SendAdminChatMessageBody.parse(req.body);
     const admin = signedInAdmin(res);
+    const shop = await adminShop(res);
     const [thread] = await db
       .select({
         id: chatThreadsTable.id,
@@ -1960,10 +2184,10 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
         userId: chatThreadsTable.userId,
       })
       .from(chatThreadsTable)
-      .where(eq(chatThreadsTable.id, id))
+      .where(and(eq(chatThreadsTable.id, id), eq(chatThreadsTable.shopId, shop.id)))
       .limit(1);
     if (!thread) return res.status(404).json({ error: "Suhbat topilmadi" });
-    if (await threadOwnerBlocked(thread.userId)) {
+    if (await threadOwnerBlocked(thread.userId, shop.id)) {
       return res.status(409).json({ error: "Mijoz bloklangan va javoblarni o‘qiy olmaydi" });
     }
 
@@ -1976,8 +2200,11 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
       .set({ lastMessageAt: message.createdAt, operatorReadAt: message.createdAt })
       .where(eq(chatThreadsTable.id, id));
 
-    // Copied to every admin chat so Telegram holds the whole conversation.
-    // Best effort: the customer already has the reply either way.
+    // Copied to every admin chat of the shop so Telegram holds the whole
+    // conversation, and on to the customer, through the shop's bot. Best
+    // effort: the customer already has the reply either way.
+    const chats = await linkedTelegramChatIds(shop.id);
+    await withBot(await shopBot(shop), async () => {
     const copied = await sendOperatorReplyNotification(
       {
         threadId: thread.id,
@@ -1987,12 +2214,13 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
         authorName: admin.displayName,
         via: "panel",
       },
-      await linkedTelegramChatIds(),
+      chats,
     );
     if (!copied.sent) {
       req.log.warn({ reason: copied.error }, "Telegram operator reply copy failed");
     }
-    await deliverReplyToCustomerTelegram(req, thread.userId, message.body, await linkedTelegramChatIds());
+    await deliverReplyToCustomerTelegram(req, thread.userId, message.body, chats);
+    });
     return res.status(201).json({ ...chatMessageDto(message), admin_name: admin.displayName });
   } catch (error) {
     return next(error);
@@ -2002,7 +2230,8 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
 router.get("/admin/dashboard", async (_req, res, next) => {
   try {
     await ensureSeedData();
-    const orders = await db.select().from(ordersTable);
+    const shopId = adminShopId(res);
+    const orders = await db.select().from(ordersTable).where(eq(ordersTable.shopId, shopId));
     const now = Date.now();
     // Midnight in Tashkent; the server's own clock is UTC.
     const todayStart = tashkentDayStart(new Date(now));
@@ -2018,14 +2247,17 @@ router.get("/admin/dashboard", async (_req, res, next) => {
         .filter((order) => order.status === "delivered" && (order.statusChangedAt ?? order.createdAt) >= from)
         .reduce((sum, order) => sum + money(order.total)!, 0);
     const statuses = (status: string) => orders.filter((order) => order.status === status).length;
-    const [{ count: productCount }] = await db.select({ count: sql<number>`count(*)` }).from(productsTable);
+    const [{ count: productCount }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(productsTable)
+      .where(eq(productsTable.shopId, shopId));
     const [{ count: lowStockCount }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(productsTable)
       .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
       // A hidden product is not for sale, so it is not a restocking signal;
       // nor is one whose category is hidden.
-      .where(and(sql`${productsTable.stock} <= 5`, eq(productsTable.active, true), eq(categoriesTable.active, true)));
+      .where(and(eq(productsTable.shopId, shopId), sql`${productsTable.stock} <= 5`, eq(productsTable.active, true), eq(categoriesTable.active, true)));
     res.json({
       today_orders: recent.length,
       new_orders: statuses("new"),
@@ -2048,6 +2280,7 @@ router.get("/admin/dashboard", async (_req, res, next) => {
 router.get("/admin/orders", async (req, res, next) => {
   try {
     const query = ListAdminOrdersQueryParams.parse(req.query);
+    const shop = await adminShop(res);
     const rows = await db
       .select({
         order: ordersTable,
@@ -2058,10 +2291,10 @@ router.get("/admin/orders", async (req, res, next) => {
       .from(ordersTable)
       .leftJoin(adminsTable, eq(ordersTable.statusChangedBy, adminsTable.id))
       .leftJoin(usersTable, eq(ordersTable.userId, usersTable.id))
-      .where(query.status ? eq(ordersTable.status, query.status) : undefined)
+      .where(and(eq(ordersTable.shopId, shop.id), query.status ? eq(ordersTable.status, query.status) : undefined))
       .orderBy(desc(ordersTable.createdAt));
     res.json(rows.map(({ order, changedBy, telegramName, telegramUsername }) =>
-      adminOrderDto(order, changedBy, { name: telegramName ?? null, username: telegramUsername ?? null })));
+      adminOrderDto(order, shop.name, changedBy, { name: telegramName ?? null, username: telegramUsername ?? null })));
   } catch (error) {
     return next(error);
   }
@@ -2072,10 +2305,17 @@ router.patch("/admin/orders/:id/status", async (req, res, next) => {
     const { id } = UpdateAdminOrderStatusParams.parse(req.params);
     const { status } = UpdateAdminOrderStatusBody.parse(req.body);
     const admin = signedInAdmin(res);
+    const shop = await adminShop(res);
     const outcome = await db.transaction(async (tx) => {
       // Locked so two admins pressing at once cannot both cancel the same
-      // order and return its stock twice.
-      const [current] = await tx.select().from(ordersTable).where(eq(ordersTable.id, id)).limit(1).for("update");
+      // order and return its stock twice. Another shop's order answers like a
+      // missing one.
+      const [current] = await tx
+        .select()
+        .from(ordersTable)
+        .where(and(eq(ordersTable.id, id), eq(ordersTable.shopId, shop.id)))
+        .limit(1)
+        .for("update");
       if (!current) return { kind: "missing" as const };
       if (!canChangeStatus(current.status, status)) return { kind: "refused" as const, from: current.status };
 
@@ -2100,7 +2340,7 @@ router.patch("/admin/orders/:id/status", async (req, res, next) => {
     if (outcome.kind === "refused") {
       return res.status(409).json({ error: "Buyurtma holatini bunday o‘zgartirib bo‘lmaydi", current_status: outcome.from });
     }
-    return res.json(adminOrderDto(outcome.order, admin.displayName, await orderTelegram(outcome.order.userId)));
+    return res.json(adminOrderDto(outcome.order, shop.name, admin.displayName, await orderTelegram(outcome.order.userId)));
   } catch (error) {
     return next(error);
   }

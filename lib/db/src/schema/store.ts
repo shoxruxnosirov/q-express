@@ -9,21 +9,55 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
+// One row per shop on the platform. Shop 1 is Q express, the platform's own;
+// its bot comes from the environment, the others' from bot_token_enc
+// (encrypted by the API, see lib/shops.ts).
+export const shopsTable = pgTable("shops", {
+  id: serial("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  orderPrefix: text("order_prefix").notNull().unique(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  active: boolean("active").notNull().default(true),
+  // The storefront card: rich HTML per language ({ uz, ru, en }).
+  card: jsonb("card").$type<Partial<Record<"uz" | "ru" | "en", string>>>().notNull().default({}),
+  openTime: text("open_time").notNull().default("06:00"),
+  closeTime: text("close_time").notNull().default("23:00"),
+  acceptingOrders: boolean("accepting_orders").notNull().default(true),
+  deliveryFee: numeric("delivery_fee", { precision: 12, scale: 2 }).notNull().default("4590"),
+  freeFirstDelivery: boolean("free_first_delivery").notNull().default(false),
+  botTokenEnc: text("bot_token_enc"),
+  botId: text("bot_id").unique(),
+  botUsername: text("bot_username"),
+  ownerChatId: text("owner_chat_id"),
+  settingsUpdatedBy: integer("settings_updated_by").references((): AnyPgColumn => adminsTable.id, { onDelete: "set null" }),
+  settingsUpdatedAt: timestamp("settings_updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // Set when a platform super admin "deletes" the shop: archived, not erased.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const PLATFORM_SHOP_ID = 1;
+
 export const categoriesTable = pgTable("categories", {
   id: serial("id").primaryKey(),
+  shopId: integer("shop_id").notNull().default(PLATFORM_SHOP_ID).references(() => shopsTable.id),
   name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
+  // Unique within its shop (categories_shop_slug_key).
+  slug: text("slug").notNull(),
   icon: text("icon").notNull(),
   sortOrder: integer("sort_order").notNull().default(0),
   active: boolean("active").notNull().default(true),
-});
+}, (table) => [uniqueIndex("categories_shop_slug_key").on(table.shopId, table.slug)]);
 
 export const productsTable = pgTable("products", {
   id: serial("id").primaryKey(),
+  shopId: integer("shop_id").notNull().default(PLATFORM_SHOP_ID).references(() => shopsTable.id),
   categoryId: integer("category_id")
     .notNull()
     .references(() => categoriesTable.id),
@@ -109,6 +143,7 @@ export const customerAddressesTable = pgTable(
 
 export const ordersTable = pgTable("orders", {
   id: serial("id").primaryKey(),
+  shopId: integer("shop_id").notNull().default(PLATFORM_SHOP_ID).references(() => shopsTable.id),
   orderNumber: text("order_number").notNull().unique(),
   userId: integer("user_id").references(() => usersTable.id),
   customerName: text("customer_name").notNull(),
@@ -138,7 +173,8 @@ export const ordersTable = pgTable("orders", {
   reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
 });
 
-// The shop's one row of settings. Times are "HH:MM" on the Tashkent clock; a
+// Superseded by the hours on each shop (migration 0013 copied this row onto
+// Q express); kept so the table's data is not lost. Times are "HH:MM" on the Tashkent clock; a
 // closing time at or before the opening time runs past midnight.
 export const storeSettingsTable = pgTable("store_settings", {
   id: integer("id").primaryKey().default(1),
@@ -155,6 +191,10 @@ export const storeSettingsTable = pgTable("store_settings", {
 // one (the repository is public, so no password or hash is ever committed).
 export const adminsTable = pgTable("admins", {
   id: serial("id").primaryKey(),
+  // The shop this admin runs. A super admin of shop 1 (Q express) runs the
+  // platform: creates shops and may act in any of them.
+  shopId: integer("shop_id").notNull().default(PLATFORM_SHOP_ID).references((): AnyPgColumn => shopsTable.id),
+  // Unique across the platform, so signing in needs no shop.
   username: text("username").notNull().unique(),
   displayName: text("display_name").notNull(),
   // 'super_admin' manages admins; 'admin' runs the shop.
@@ -164,19 +204,37 @@ export const adminsTable = pgTable("admins", {
   // Part of every session cookie. Bumping it signs the admin out everywhere,
   // which is what a password change, a reset or a deletion needs.
   sessionVersion: integer("session_version").notNull().default(0),
-  // Where this admin's Telegram notifications go, once they have linked it.
-  telegramChatId: text("telegram_chat_id").unique(),
+  // Where this admin's Telegram notifications go, once they have linked it
+  // (through their shop's bot). Unique per shop (admins_shop_telegram_chat_key).
+  telegramChatId: text("telegram_chat_id"),
   // SHA-256 of the one-time code in a pending t.me link, and when it lapses.
   telegramLinkHash: text("telegram_link_hash").unique(),
   telegramLinkExpiresAt: timestamp("telegram_link_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [uniqueIndex("admins_shop_telegram_chat_key").on(table.shopId, table.telegramChatId)]);
+
+// A customer blocked by one shop only. A block on users.blocked_at holds in
+// every shop.
+export const customerShopBlocksTable = pgTable(
+  "customer_shop_blocks",
+  {
+    id: serial("id").primaryKey(),
+    shopId: integer("shop_id").notNull().references(() => shopsTable.id, { onDelete: "cascade" }),
+    userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    blockedAt: timestamp("blocked_at", { withTimezone: true }).notNull().defaultNow(),
+    blockedBy: integer("blocked_by").references(() => adminsTable.id, { onDelete: "set null" }),
+    reason: text("reason"),
+  },
+  (table) => [unique("customer_shop_blocks_shop_user_key").on(table.shopId, table.userId)],
+);
 
 // A customer's one conversation with the shop, reached through their account
 // and its sessions. token_hash is left from before accounts, when a chat
 // cookie owned the thread; new threads get a random hash nobody holds.
 export const chatThreadsTable = pgTable("chat_threads", {
   id: serial("id").primaryKey(),
+  // A customer has one conversation per shop.
+  shopId: integer("shop_id").notNull().default(PLATFORM_SHOP_ID).references(() => shopsTable.id),
   tokenHash: text("token_hash").notNull().unique(),
   customerName: text("customer_name").notNull().default(""),
   phone: text("phone").notNull().default(""),

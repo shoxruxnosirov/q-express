@@ -3,6 +3,7 @@ import { Send } from 'lucide-react';
 import { isMiniApp } from '@/lib/telegram-mini-app';
 import { useT } from '@/i18n';
 import messages from '@/i18n/messages/openInTelegram';
+import { useShop } from '@/lib/shop';
 
 // The shop lives in Telegram: there the customer is signed in by their
 // Telegram account, with their profile, orders and the chat that the bot
@@ -10,8 +11,10 @@ import messages from '@/i18n/messages/openInTelegram';
 // in. Inside the Mini App there is nothing to show.
 export function OpenInTelegram({ title, hint }: { title: string; hint: string }) {
   const { t } = useT(messages);
-  const link = useGetCustomerLoginLink({
-    query: { queryKey: getGetCustomerLoginLinkQueryKey(), staleTime: Infinity, retry: false, enabled: !isMiniApp() },
+  // The bot of the shop being shown.
+  const { params } = useShop();
+  const link = useGetCustomerLoginLink(params, {
+    query: { queryKey: getGetCustomerLoginLinkQueryKey(params), staleTime: Infinity, retry: false, enabled: !isMiniApp() },
   });
   if (isMiniApp() || link.isError) return null;
   return (

@@ -1,7 +1,8 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startPreorderReminders } from "./lib/preorder-reminders";
-import { registerMenuButton, registerWebhook } from "./lib/telegram";
+import { connectPlatformBot, connectShopBot, otherShopsWithBots } from "./lib/shops";
 
 const rawPort = process.env["PORT"];
 
@@ -28,19 +29,39 @@ app.listen(port, (err) => {
   // Every minute: remind the admins 15 minutes before a pre-order is due.
   startPreorderReminders();
 
-  // Point the bot at this server so replies written in Telegram reach the
+
+  // Point the bots at this server so replies written in Telegram reach the
   // customer. Render supplies RENDER_EXTERNAL_URL to every web service;
   // PUBLIC_BASE_URL overrides it elsewhere. Unset in development, where
   // Telegram could not reach this machine anyway.
   const publicUrl = process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL;
   if (publicUrl) {
-    registerWebhook(publicUrl).then((result) => {
-      if (result.sent) logger.info("Telegram webhook registered");
-      else logger.warn({ reason: result.error }, "Telegram webhook not registered");
-    });
-    registerMenuButton(publicUrl).then((result) => {
-      if (result.sent) logger.info("Telegram menu button set");
-      else logger.warn({ reason: result.error }, "Telegram menu button not set");
-    });
+    // Q express's bot comes from the environment, so it never waits on the
+    // database, which may still be waking up.
+    void connectPlatformBot(publicUrl);
+    void connectOtherShopBots(publicUrl);
   }
 });
+
+// The other shops' bots are stored with their shop. A database that does not
+// answer yet is asked again a few times rather than leaving the shops' bots
+// unconnected until the next deploy.
+const RETRY_DELAYS_MS = [10_000, 30_000, 60_000, 120_000, 300_000];
+
+async function connectOtherShopBots(publicUrl: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const shops = await otherShopsWithBots();
+      for (const shop of shops) await connectShopBot(shop, publicUrl);
+      return;
+    } catch (error) {
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        logger.error({ error }, "Shop bots not registered");
+        return;
+      }
+      logger.warn({ error, retryInMs: delay }, "Shop bots not registered yet, trying again");
+      await sleep(delay);
+    }
+  }
+}

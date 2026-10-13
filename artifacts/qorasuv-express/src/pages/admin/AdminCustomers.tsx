@@ -7,6 +7,7 @@ import {
   useBlockCustomer,
   useListAdminCustomers,
   useUnblockCustomer,
+  useUnblockCustomerEverywhere,
   type AdminCustomer,
 } from '@workspace/api-client-react';
 import { Ban, ChevronDown, MapPin, Search, Send, Smartphone, UserRound } from 'lucide-react';
@@ -14,12 +15,13 @@ import { apiErrorMessage } from './AdminLogin';
 import { formatAddress } from '@/lib/address';
 import { formatUzPhone } from '@/lib/phone';
 import { CustomerDevices } from './CustomerDevices';
+import { useAdminShop } from '@/lib/admin-shop';
 import { telegramLabel, telegramProfileUrl } from '@/lib/telegram-label';
 import { useAsk, useConfirm } from '@/components/ConfirmDialog';
+import { dateTimeLabel } from '@/lib/tashkent-time';
 
 const money = (value: number) => `${Math.round(value).toLocaleString('ru-RU')} so'm`;
-const date = (value: string) =>
-  new Intl.DateTimeFormat('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+const date = (value: string) => dateTimeLabel(new Date(value));
 
 // Every customer account, newest order first. A Telegram account is always
 // one row; a browser guest may appear more than once if they cleared their
@@ -35,16 +37,32 @@ export function AdminCustomers() {
   // Only a super admin may block or unblock; everyone sees who is blocked.
   const session = useGetAdminSession({ query: { queryKey: getGetAdminSessionQueryKey() } });
   const canBlock = session.data?.admin?.role === 'super_admin';
+  // Devices are shared by every shop, so only Q express manages them. In
+  // another shop a block holds in that shop alone, except for a Q express
+  // super admin, who has no limits anywhere (the owner's decision): they may
+  // block there or everywhere, and manage devices too.
+  const { acting, platformSuper } = useAdminShop();
+  const inPlatform = Boolean(acting?.is_platform);
+  const devicesHere = inPlatform || platformSuper;
+  const everywhereChoice = platformSuper && !inPlatform;
   const block = useBlockCustomer();
   const unblock = useUnblockCustomer();
+  const unblockEverywhere = useUnblockCustomerEverywhere();
   const confirm = useConfirm();
   const ask = useAsk();
   // Replaces the one row in the cached list, so the page need not refetch all.
   const put = (updated: AdminCustomer) =>
     qc.setQueryData<AdminCustomer[]>(getListAdminCustomersQueryKey(), list => list?.map(item => (item.id === updated.id ? updated : item)));
-  const blockCustomer = async (customer: AdminCustomer) => {
+  // A refusal may still have changed something (a shop's own block lifted
+  // while Q express's stays), so the list is read again.
+  const refresh = () => void qc.invalidateQueries({ queryKey: getListAdminCustomersQueryKey() });
+  // Let back in, a customer may leave this shop's list (the server answers
+  // null): the list is read again instead.
+  const putOrRefresh = (updated: AdminCustomer | null) => (updated ? put(updated) : refresh());
+  const blockCustomer = async (customer: AdminCustomer, everywhere = false) => {
+    const where = inPlatform || everywhere ? 'hamma do‘konlarda' : `faqat ${acting?.name ?? 'shu do‘kon'}da`;
     const reason = await ask({
-      message: `${customer.name || 'Mijoz'} bloklansinmi? U buyurtma bera olmaydi, yoza olmaydi va Telegram orqali kira olmaydi. Blok telefon raqamiga ham qo‘yiladi.`,
+      message: `${customer.name || 'Mijoz'} ${where} bloklansinmi? U buyurtma bera olmaydi, yoza olmaydi va Telegram orqali kira olmaydi. Blok telefon raqamiga ham qo‘yiladi.`,
       inputLabel: 'Sabab (ixtiyoriy)',
       maxLength: 200,
       confirmLabel: 'Bloklash',
@@ -55,7 +73,7 @@ export function AdminCustomers() {
       setMessage({ text: 'Sabab 200 belgidan oshmasin. Qisqaroq yozib, qaytadan bloklang.', error: true });
       return;
     }
-    block.mutate({ id: customer.id, data: { reason: reason.trim() } }, {
+    block.mutate({ id: customer.id, data: { reason: reason.trim(), ...(everywhere ? { everywhere: true } : {}) } }, {
       onSuccess: updated => { put(updated); setMessage({ text: `${updated.name || 'Mijoz'} bloklandi.` }); },
       onError: err => setMessage({ text: apiErrorMessage(err, 'Bloklab bo‘lmadi.'), error: true }),
     });
@@ -63,8 +81,15 @@ export function AdminCustomers() {
   const unblockCustomer = async (customer: AdminCustomer) => {
     if (!(await confirm({ message: `${customer.name || 'Mijoz'} blokdan chiqarilsinmi?`, confirmLabel: 'Blokdan chiqarish' }))) return;
     unblock.mutate({ id: customer.id }, {
-      onSuccess: updated => { put(updated); setMessage({ text: `${updated.name || 'Mijoz'} blokdan chiqarildi.` }); },
-      onError: err => setMessage({ text: apiErrorMessage(err, 'Blokdan chiqarib bo‘lmadi.'), error: true }),
+      onSuccess: updated => { putOrRefresh(updated); setMessage({ text: `${updated?.name || customer.name || 'Mijoz'} blokdan chiqarildi.` }); },
+      onError: err => { setMessage({ text: apiErrorMessage(err, 'Blokdan chiqarib bo‘lmadi.'), error: true }); refresh(); },
+    });
+  };
+  const unblockCustomerEverywhere = async (customer: AdminCustomer) => {
+    if (!(await confirm({ message: `${customer.name || 'Mijoz'} hamma do‘konlarda blokdan chiqarilsinmi? Qurilmalari bloki ham olinadi.`, confirmLabel: 'Blokdan chiqarish' }))) return;
+    unblockEverywhere.mutate({ id: customer.id }, {
+      onSuccess: updated => { putOrRefresh(updated); setMessage({ text: `${updated?.name || customer.name || 'Mijoz'} hamma do‘konlarda blokdan chiqarildi.` }); },
+      onError: err => { setMessage({ text: apiErrorMessage(err, 'Blokdan chiqarib bo‘lmadi.'), error: true }); refresh(); },
     });
   };
 
@@ -115,9 +140,9 @@ export function AdminCustomers() {
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#e8efdc] text-[hsl(var(--primary))]"><UserRound size={17} /></span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-extrabold">{customer.name || 'Ism kiritilmagan'}</p>
+                    <p className="truncate text-sm font-extrabold">{customer.name || customer.telegram_name || 'Ism kiritilmagan'}</p>
                     <p className="mt-0.5 flex items-center gap-1.5 text-xs text-[hsl(var(--muted-foreground))]">
-                      {customer.phone ? formatUzPhone(customer.phone) : 'Telefon yo‘q'}
+                      {customer.phone ? formatUzPhone(customer.phone) : customer.order_count === 0 && !customer.last_order_at ? 'Faqat chatda yozgan' : 'Telefon yo‘q'}
                       {customer.telegram_linked && <span className="inline-flex items-center gap-1 rounded-full bg-[#eaf6fc] px-1.5 py-0.5 text-[9px] font-bold text-[#136a93]"><Send size={10} /> Telegram</span>}
                       {customer.blocked && <span data-testid={`badge-blocked-${customer.id}`} className="inline-flex items-center gap-1 rounded-full bg-[#fdecea] px-1.5 py-0.5 text-[9px] font-bold text-[#8c1d18]"><Ban size={10} /> bloklangan</span>}
                     </p>
@@ -136,21 +161,25 @@ export function AdminCustomers() {
               {customer.blocked && (
                 <p className="mt-2 text-xs text-[#8c1d18]">
                   {customer.blocked_at ? 'Bloklangan' : `Qurilmasi bloklangan (${customer.blocked_devices} ta) — Telegram akkaunti hamma joyda to‘xtatilgan`}{customer.blocked_by ? `: ${customer.blocked_by}` : ''}{customer.blocked_at ? `, ${date(customer.blocked_at)}` : ''}{customer.block_reason ? `. Sabab: ${customer.block_reason}` : ''}
+                  {customer.blocked_everywhere && !inPlatform && (platformSuper ? '. Q express hamma do‘konlarda bloklagan.' : '. Q express hamma do‘konlarda bloklagan, faqat Q express blokdan chiqara oladi.')}
                 </p>
               )}
               <div className="mt-3 flex items-center justify-between gap-2">
-                <button type="button" data-testid={`button-devices-${customer.id}`} onClick={() => setOpenDevices(openDevices === customer.id ? null : customer.id)} className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-1.5 text-xs font-bold text-[hsl(var(--muted-foreground))]">
+                {devicesHere && <button type="button" data-testid={`button-devices-${customer.id}`} onClick={() => setOpenDevices(openDevices === customer.id ? null : customer.id)} className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-1.5 text-xs font-bold text-[hsl(var(--muted-foreground))]">
                   <Smartphone size={12} /> Qurilmalar ({customer.active_sessions}) <ChevronDown size={12} className={openDevices === customer.id ? 'rotate-180' : ''} />
-                </button>
-              {canBlock && <div className="flex justify-end">
+                </button>}
+              {canBlock && !(customer.blocked_everywhere && !inPlatform && !platformSuper) && <div className="flex flex-wrap justify-end gap-2">
                 {customer.blocked ? (
-                  <button type="button" data-testid={`button-unblock-${customer.id}`} onClick={() => unblockCustomer(customer)} disabled={unblock.isPending} className="rounded-full border border-[hsl(var(--primary)/.4)] px-3 py-1.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-50">Blokdan chiqarish</button>
-                ) : (
-                  <button type="button" data-testid={`button-block-${customer.id}`} onClick={() => blockCustomer(customer)} disabled={block.isPending} className="inline-flex items-center gap-1.5 rounded-full border border-[#e6b2a8] px-3 py-1.5 text-xs font-bold text-[#9d493e] disabled:opacity-50"><Ban size={12} /> Bloklash</button>
-                )}
+                  everywhereChoice && customer.blocked_everywhere
+                    ? <button type="button" data-testid={`button-unblock-everywhere-${customer.id}`} onClick={() => unblockCustomerEverywhere(customer)} disabled={unblockEverywhere.isPending} className="rounded-full border border-[hsl(var(--primary)/.4)] px-3 py-1.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-50">Hamma joyda blokdan chiqarish</button>
+                    : <button type="button" data-testid={`button-unblock-${customer.id}`} onClick={() => unblockCustomer(customer)} disabled={unblock.isPending} className="rounded-full border border-[hsl(var(--primary)/.4)] px-3 py-1.5 text-xs font-bold text-[hsl(var(--primary))] disabled:opacity-50">Blokdan chiqarish</button>
+                ) : (<>
+                  <button type="button" data-testid={`button-block-${customer.id}`} onClick={() => blockCustomer(customer)} disabled={block.isPending} className="inline-flex items-center gap-1.5 rounded-full border border-[#e6b2a8] px-3 py-1.5 text-xs font-bold text-[#9d493e] disabled:opacity-50"><Ban size={12} /> {everywhereChoice ? 'Shu do‘konda bloklash' : 'Bloklash'}</button>
+                  {everywhereChoice && <button type="button" data-testid={`button-block-everywhere-${customer.id}`} onClick={() => blockCustomer(customer, true)} disabled={block.isPending} className="inline-flex items-center gap-1.5 rounded-full bg-[#9d493e] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"><Ban size={12} /> Hamma joyda bloklash</button>}
+                </>)}
               </div>}
               </div>
-              {openDevices === customer.id && <CustomerDevices customerId={customer.id} canBlock={canBlock} />}
+              {devicesHere && openDevices === customer.id && <CustomerDevices customerId={customer.id} canBlock={canBlock} />}
               {customer.addresses.length > 0 && (
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                   <MapPin size={13} className="mt-0.5 shrink-0 text-[hsl(var(--primary))]" />

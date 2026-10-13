@@ -1,0 +1,797 @@
+/* The rich-text editor and its read view (components/rich-text), taken over
+   unchanged from the clientapp admin panel's global.css.
+
+   Not in a cascade layer on purpose: Tailwind's base layer gives `button,
+   input, select` `font: inherit`, and these rules must win over it (the
+   paragraph menu's heading previews, the pill tabs, the symbol grid).
+
+   The admin panel's theme tokens (--bg, --sf, --bd, --tx, …) are defined only
+   inside the editor's own elements, never on :root, so they cannot reach the
+   rest of the site or clash with the shadcn tokens in index.css. The dark
+   theme is index.css's .dark class on <html> (the panel used data-theme). */
+.rich-scope,
+.rich-editor,
+.rich-text-content,
+.rich-source {
+  --bg: #fafafa;
+  --sf: #ffffff;
+  --sf2: #fafafa;
+  --bd: #ececef;
+  --bd2: #e4e4e7;
+  --dv: #f4f4f5;
+  --dv2: #f6f6f7;
+  --tx: #18181b;
+  --tx3: #52525b;
+  --tx4: #71717a;
+  --tx5: #a1a1aa;
+  --tx6b: #d4d4d8;
+  --seg: #ffffff;
+  --modified-bg: #fffbeb;
+  /* Amber warning text; flips per theme so small copy stays readable (AA). */
+  --warn-tx: #b45309;
+}
+
+.dark :is(.rich-scope, .rich-editor, .rich-text-content, .rich-source) {
+  --bg: #0e1014;
+  --sf: #181b21;
+  --sf2: #1e222a;
+  --bd: #2b303a;
+  --bd2: #363c46;
+  --dv: #23272f;
+  --dv2: #20242c;
+  --tx: #f3f4f6;
+  --tx3: #b2b6bf;
+  --tx4: #9499a2;
+  --tx5: #787d86;
+  --tx6b: #3f444d;
+  --seg: #313842;
+  --modified-bg: #332a12;
+  --warn-tx: #fbbf24;
+}
+
+/* Rich-text HTML (roaming operator general conditions): the Tiptap editing
+ surface and the read-only preview share one look. Tailwind's
+ preflight strips list markers and heading sizes, so they are restored here. */
+/* The frame the text is sized against: the editing surface, and the card
+   wherever it is shown. Only these, not the whole editor: a size container also
+   holds its fixed and absolute children, and the toolbar's popups must not. */
+.rich-text-frame {
+  container-type: inline-size;
+}
+.rich-text-content {
+  color: var(--tx);
+  /* Grows with the width the text is shown at, so a card reads big on a wide
+     screen and small on a phone in the same proportions; never below what a
+     phone reads, nor past what a wide screen needs. Every other size here is
+     relative to it (em), the editor's text sizes too. The plain size first is
+     for a browser without container units. */
+  font-size: 14px;
+  font-size: clamp(14px, 1.9cqi, 22px);
+  /* Read-view Field values are bold; the HTML carries its own emphasis. */
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+/* Its size and padding: .rich-editor .rich-text-editable (the editor's frame). */
+.rich-text-editable {
+  outline: none;
+}
+.rich-text-content > :first-child {
+  margin-top: 0;
+}
+.rich-text-content > :last-child {
+  margin-bottom: 0;
+}
+/* The panel's 13.5px text with 20/17/15/14px headings, as proportions. */
+.rich-text-content p {
+  margin: 0 0 0.6em;
+}
+.rich-text-content h1 {
+  font-size: 1.48em;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0.8em 0 0.4em;
+}
+.rich-text-content h2 {
+  font-size: 1.26em;
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 0.8em 0 0.35em;
+}
+.rich-text-content h3 {
+  font-size: 1.11em;
+  font-weight: 620;
+  margin: 0.8em 0 0.4em;
+}
+.rich-text-content h4 {
+  font-size: 1.04em;
+  font-weight: 620;
+  margin: 0.7em 0 0.4em;
+}
+/* A run of sized text (FONT_SIZES) keeps lines from overlapping when it is big. */
+.rich-text-content span[style*='font-size'] {
+  line-height: 1.25;
+}
+.rich-text-content pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--dv);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.93em;
+  white-space: pre-wrap;
+}
+.rich-text-content ul,
+.rich-text-content ol {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+.rich-text-content ul {
+  list-style: disc;
+}
+.rich-text-content ol {
+  list-style: decimal;
+}
+.rich-text-content li > p {
+  margin: 0;
+}
+/* Link colour that reads at AA (4.5:1) on the content's white page. */
+.rich-text-content a {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+/* On a coloured background (a cell, or highlighted text inside or around the
+   link) the blue can sink into it — #4f46e5 on a dark-blue header is under 2:1.
+   There the link takes the text's colour, which the editor and the sanitiser
+   keep readable on that background; the underline still marks it. */
+.rich-text-content [style*='background-color'] a,
+.rich-text-content[style*='background-color'] a,
+.rich-text-content a:has([style*='background-color']) {
+  color: inherit;
+}
+/* The content is always shown as the subscriber sees it — on a white page — also
+   in the dark theme: colours the admin picks for text and cells are judged
+   against white (the sanitiser's contrast rule), and a yellow cell or dark text
+   would not read on a dark page. The light theme's tokens are set again here, so
+   everything inside (borders, quotes, code, the placeholder, cell chrome) follows. */
+.dark .rich-text-content {
+  --bd: #ececef;
+  --bd2: #e4e4e7;
+  --dv: #f4f4f5;
+  --tx: #18181b;
+  --tx3: #52525b;
+  --tx4: #71717a;
+  --re-border: #dadada;
+  --re-text: #222222;
+  color-scheme: light;
+  background: #ffffff;
+  color: var(--tx);
+}
+.rich-text-content hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--bd2);
+}
+/* The coloured box and the page background (colours, border and padding are
+   inline in the HTML). */
+.rich-text-content div[style] {
+  margin: 0 0 8px;
+}
+/* Last (and so the page background, the only one): no strip under its colour. */
+.rich-text-content > div[style]:last-child {
+  margin-bottom: 0;
+}
+.rich-text-content div[style] > :first-child {
+  margin-top: 0;
+}
+.rich-text-content div[style] > :last-child {
+  margin-bottom: 0;
+}
+.rich-text-content blockquote {
+  margin: 0 0 8px;
+  padding-left: 12px;
+  border-left: 3px solid var(--bd);
+  color: var(--tx3);
+}
+
+/* Pill tabs, the look of the language tabs (components/rich-text/lang-tabs.tsx), for the
+ rich-text field's Text / HTML switch and the colour picker's tabs. The active pill
+ is the one with aria-checked (radio) or aria-selected (tab). */
+.pill-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--dv);
+  border: 1px solid var(--bd);
+  border-radius: 9px;
+}
+.pill-tabs_fill {
+  display: flex;
+}
+.pill-tabs_fill > .pill-tab {
+  flex: 1;
+}
+.pill-tab {
+  font-size: 12.5px;
+  font-weight: 560;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--tx4);
+  background: transparent;
+}
+.pill-tab[aria-checked='true'],
+.pill-tab[aria-selected='true'] {
+  color: var(--tx);
+  background: var(--sf);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* Rich-text editor chrome (components/rich-text/editor-chrome.tsx) in the Jodit
+ look: its colours, 34px toolbar buttons, separators, dropdowns and link popup.
+ Tiptap is headless, so this is all ours; nothing comes from the jodit package. */
+.rich-editor {
+  --re-border: #dadada;
+  --re-panel: #f9f9f9;
+  --re-bg: #ffffff;
+  --re-icon: #4c4c4c;
+  --re-text: #222222;
+  --re-hover: #dcdcdc;
+  --re-pressed: hsla(0, 0%, 86.3%, 0.4);
+  --re-shadow:
+    0 4px 1px -2px rgba(76, 76, 76, 0.2), 0 3px 3px 0 rgba(76, 76, 76, 0.15),
+    0 1px 4px 0 rgba(76, 76, 76, 0.13);
+  border: 1px solid var(--re-border);
+  border-radius: 3px;
+  background: var(--re-bg);
+  color: var(--re-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell,
+    'Helvetica Neue', sans-serif;
+  font-size: 14px;
+}
+/* Dark: the app's own surfaces, so the editor sits in the page rather than on it. */
+.dark .rich-editor {
+  --re-border: var(--bd2);
+  --re-panel: var(--dv);
+  --re-bg: var(--sf);
+  --re-icon: var(--tx3);
+  --re-text: var(--tx);
+  --re-hover: var(--seg);
+  --re-pressed: rgba(255, 255, 255, 0.08);
+  --re-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.rich-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  min-height: 36px;
+  padding: 0;
+  background: var(--re-panel);
+  border-bottom: 1px solid var(--re-border);
+  border-radius: 3px 3px 0 0;
+}
+.rich-editor__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  min-width: 34px;
+  padding: 0;
+  margin: 1px 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--re-icon);
+  cursor: pointer;
+}
+.rich-editor__btn[data-active] {
+  background: var(--re-pressed);
+}
+.rich-editor__btn:hover:not(:disabled),
+.rich-editor__btn[aria-expanded='true'] {
+  background: var(--re-hover);
+}
+/* The app's focus ring, drawn inside so neighbouring buttons do not cover it. */
+.rich-editor__btn:focus-visible,
+.rich-editor__item:focus-visible,
+.rich-editor__symbol:focus-visible {
+  outline-offset: -2px;
+}
+.rich-editor__btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.rich-editor__icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+.rich-editor__icon svg,
+.rich-editor__trigger svg {
+  width: 100%;
+  height: 100%;
+}
+.rich-editor__trigger {
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  margin: 0 3px 0 2px;
+  opacity: 0.4;
+}
+.rich-editor__sep {
+  margin: 2px;
+  border-right: 1px solid var(--re-border);
+}
+.rich-editor__slot {
+  position: relative;
+  display: inline-flex;
+}
+.rich-editor__popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  /* On a narrow screen a popup is never wider than the screen. */
+  max-width: calc(100vw - 16px);
+  min-width: 180px;
+  padding: 8px;
+  background: var(--re-bg);
+  color: var(--re-text);
+  box-shadow: var(--re-shadow);
+}
+.rich-editor__list {
+  display: flex;
+  flex-direction: column;
+  margin: -8px;
+}
+.rich-editor__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rich-editor__item:hover {
+  background: var(--re-hover);
+}
+.rich-editor__item[aria-checked='true'] {
+  background: var(--re-pressed);
+}
+/* Paragraph menu items show their own format. */
+.rich-editor__block_h1 {
+  font-size: 20px;
+  font-weight: 700;
+}
+.rich-editor__block_h2 {
+  font-size: 17px;
+  font-weight: 650;
+}
+.rich-editor__block_h3 {
+  font-size: 15px;
+  font-weight: 620;
+}
+.rich-editor__block_h4 {
+  font-weight: 620;
+}
+.rich-editor__block_blockquote {
+  padding-left: 8px;
+  border-left: 3px solid var(--re-border);
+}
+.rich-editor__block_pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+/* List buttons: icon + arrow, joined. */
+.rich-editor__split {
+  display: inline-flex;
+}
+.rich-editor__split > .rich-editor__btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.rich-editor__btn_trigger {
+  min-width: 16px;
+  width: 16px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.rich-editor__btn_trigger .rich-editor__trigger {
+  margin: 0;
+}
+.rich-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rich-editor__field label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+.rich-editor__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.rich-editor__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  /* Never wider than the popup it sits in (which is capped to the screen). */
+  max-width: 100%;
+}
+.rich-editor__input {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--re-border);
+  border-radius: 3px;
+  background: var(--re-bg);
+  color: var(--re-text);
+  font: inherit;
+}
+.rich-editor__input:focus {
+  border-color: #b5b5b5;
+}
+.rich-editor__input[aria-invalid='true'] {
+  border-color: #c82333;
+}
+.rich-editor__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.75;
+}
+.rich-editor__hint[data-error] {
+  color: #c82333;
+  font-weight: 600;
+  opacity: 1;
+}
+.dark .rich-editor__hint[data-error] {
+  color: #ff8a8a;
+}
+.rich-editor__form-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rich-editor__ui-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 3px;
+  background: #e3e3e3;
+  color: #212529;
+  font: inherit;
+  cursor: pointer;
+}
+.rich-editor__ui-btn:hover {
+  background: #c9cdd1;
+}
+/* Jodit's blue, one shade darker so white text reads at AA (4.5:1). */
+.rich-editor__ui-btn_primary {
+  background: #0069d9;
+  color: #fff;
+}
+.rich-editor__ui-btn_primary:hover {
+  background: #0056b3;
+}
+/* The editing surface inside the frame: Jodit's 8px padding and 14px text. */
+/* Sized like the card (.rich-text-content), against the width being edited:
+   what an admin sees here is the card at this width. */
+.rich-editor .rich-text-editable {
+  min-height: 184px;
+  padding: 0.6em;
+  color: var(--re-text);
+}
+/* The text size menu: each item drawn at its own size. */
+.rich-editor__size {
+  line-height: 1.2;
+}
+
+/* The editing surface anchors the link bubble. */
+.rich-editor {
+  position: relative;
+}
+/* Jodit's popup on a clicked link or table cell. Above the text, but below the
+   page chrome — the fixed topbar (20), a form's sticky save bar (15) and the
+   editor's own sticky toolbar (10) — so scrolling slides it under them. */
+.rich-editor__bubble {
+  position: absolute;
+  z-index: 9;
+  /* Never wider than the editor it floats in. */
+  max-width: 100%;
+  background: var(--re-bg);
+  color: var(--re-text);
+  box-shadow: var(--re-shadow);
+}
+.rich-editor__bubble-bar {
+  display: flex;
+  padding: 0 2px;
+}
+.rich-editor__bubble-form {
+  padding: 8px;
+}
+
+/* Sticky toolbar: it stays in view under the fixed topbar while a
+   long text scrolls past. */
+.rich-editor__toolbar {
+  position: sticky;
+  /* Under the app's fixed 60px topbar and, in a form, under its sticky save bar
+     (StickyActions publishes --sticky-actions-height). A modal or another scroll
+     container sets its own --rich-editor-sticky-top. */
+  top: calc(var(--rich-editor-sticky-top, 60px) + var(--sticky-actions-height, 0px));
+  z-index: 10;
+}
+/* The placeholder, on the editor's only (empty) block. */
+.rich-editor .rich-text-editable > .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  /* The app's muted text, readable at AA in both themes (Jodit's #a5a5a5 is not). */
+  color: var(--tx4);
+  pointer-events: none;
+}
+
+/* Special characters popup (cut to what this text needs). */
+.rich-editor__symbols {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 236px;
+}
+.rich-editor__symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+.rich-editor__symbol {
+  height: 36px;
+  border: 1px solid var(--re-border);
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-size: 17px;
+  cursor: pointer;
+}
+.rich-editor__symbol:hover {
+  background: var(--re-hover);
+}
+
+/* Tables — same look in the editor and the read view (Jodit's defaults: collapsed
+ 1px borders, 0.4em padding, middle-aligned cells). A wide table scrolls sideways
+ instead of breaking the page. */
+.rich-text-content table {
+  border-collapse: collapse;
+  empty-cells: show;
+  max-width: 100%;
+  margin: 0 0 8px;
+}
+.rich-text-content td,
+.rich-text-content th {
+  position: relative;
+  min-width: 2em;
+  padding: 0.4em;
+  border: 1px solid var(--re-border, var(--bd2));
+  vertical-align: middle;
+  text-align: left;
+}
+.rich-text-content th {
+  font-weight: 600;
+  background: var(--dv);
+}
+/* On a coloured background (the page background, a box, a cell): header cells and
+   code take its text colour over a light tint, and quotes its colour, not the white
+   page's grey fill and grey text, which would vanish on a dark colour. A cell's own
+   colours (inline) still win. */
+.rich-text-content[style*='background-color'] :is(th, pre),
+.rich-text-content [style*='background-color'] :is(th, pre) {
+  background: rgba(128, 128, 128, 0.18);
+  color: inherit;
+}
+.rich-text-content[style*='background-color'] blockquote,
+.rich-text-content [style*='background-color'] blockquote {
+  color: inherit;
+}
+.rich-text-content td > p,
+.rich-text-content th > p {
+  margin: 0;
+}
+/* Read view: let a wide table scroll inside its box. */
+.rich-text-content:not(.rich-text-editable) table {
+  display: block;
+  overflow-x: auto;
+}
+/* Editor: Tiptap's wrapper scrolls, its cells show drag selection and resizing. */
+.rich-text-editable .tableWrapper {
+  overflow-x: auto;
+  margin: 0 0 8px;
+}
+.rich-text-editable .tableWrapper table {
+  margin: 0;
+}
+.rich-text-editable .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 136, 229, 0.15);
+  outline: 1px double #1e88e5;
+  pointer-events: none;
+}
+.rich-text-editable .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: #1e88e5;
+  pointer-events: none;
+}
+.rich-text-editable.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Toolbar table picker: Jodit's 10×10 grid with a "rows × cols" label. */
+.rich-editor__table-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.rich-editor__table-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 18px);
+  gap: 2px;
+}
+/* Rows are there for assistive tech; the cells lay out in the grid. */
+.rich-editor__table-row {
+  display: contents;
+}
+.rich-editor__table-cell {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--re-border);
+  background: var(--re-bg);
+  cursor: pointer;
+}
+.rich-editor__table-cell[data-on] {
+  border-color: #1e88e5;
+  background: rgba(30, 136, 229, 0.25);
+}
+.rich-editor__table-grid:focus-visible {
+  outline: 2px solid #1e88e5;
+  outline-offset: 2px;
+}
+.rich-editor__table-size {
+  font-size: 13px;
+}
+
+/* Cell popup: Jodit's two rows of buttons. */
+.rich-editor__cell-bubble {
+  display: flex;
+  flex-direction: column;
+}
+.rich-editor__cell-bubble .rich-editor__bubble-bar + .rich-editor__bubble-bar {
+  border-top: 1px solid var(--re-border);
+}
+
+/* The coloured box popup: the palette, then "Remove box" under it. */
+.rich-editor__box-popup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* Cell colour picker: Background / Text / Border tabs over Jodit's palette. */
+.rich-editor__colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 232px;
+}
+.rich-editor__swatches {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+}
+.rich-editor__swatch {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.rich-editor__swatch:hover {
+  transform: scale(1.2);
+}
+.rich-editor__swatch:focus-visible {
+  outline-offset: 1px;
+}
+/* A colour that would not show on what is behind the text: kept in its place,
+   crossed out, not pickable. */
+.rich-editor__swatch[aria-disabled='true'] {
+  background-image: linear-gradient(
+    to top right,
+    transparent calc(50% - 1px),
+    #c82333 calc(50% - 1px),
+    #c82333 calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rich-editor__swatch[aria-disabled='true']:hover {
+  transform: none;
+}
+/* The chosen colour as a ring, so the focus outline (on the same swatch when the
+   palette opens) still shows. */
+.rich-editor__swatch[aria-selected='true'] {
+  box-shadow:
+    0 0 0 2px var(--re-bg),
+    0 0 0 4px #1e88e5;
+}
+.rich-editor__color-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rich-editor__custom-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rich-editor__custom-color input {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--re-border);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dark .rich-editor__ui-btn:not(.rich-editor__ui-btn_primary) {
+  background: var(--seg);
+  color: var(--tx);
+}
+.dark .rich-editor__ui-btn:not(.rich-editor__ui-btn_primary):hover {
+  background: var(--tx6b);
+}
+/* The text area itself has no outline (it would cut through the toolbar), so the
+   frame shows where typing goes, in the app's focus colour. Mouse focus too: the
+   caret alone is easy to lose in a long form. */
+.rich-editor:has(.rich-text-editable:focus) {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--primary));
+}
+/* The HTML tab's code area, with the same focus frame. CodeMirror's own dotted
+   outline would be clipped by the rounded corners, so it is replaced. */
+.rich-source {
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.rich-source .cm-editor.cm-focused {
+  outline: none;
+}
+.rich-source:has(.cm-focused) {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--primary));
+}
+
+/* A dropdown opening upwards, so it does not cover the text being edited. */
+.rich-editor__popup[data-side='top'] {
+  top: auto;
+  bottom: 100%;
+}

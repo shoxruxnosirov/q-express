@@ -9,6 +9,7 @@ import type { ProductUnit } from './productUnit';
 
 export interface Product {
   id: number;
+  shop_id: number;
   category_id: number;
   category: string;
   name: string;

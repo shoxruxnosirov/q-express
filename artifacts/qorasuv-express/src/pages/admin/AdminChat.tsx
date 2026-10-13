@@ -11,16 +11,15 @@ import {
 } from '@workspace/api-client-react';
 import { telegramLabel, telegramProfileUrl } from '@/lib/telegram-label';
 import { useConfirm } from '@/components/ConfirmDialog';
+import { dateTimeLabel } from '@/lib/tashkent-time';
+import { formatUzPhone } from '@/lib/phone';
 
 // Same reasoning as the customer widget: the free instance sleeps, so the page
 // polls instead of holding a socket open.
 const THREADS_POLL_MS = 10000;
 const MESSAGES_POLL_MS = 5000;
 
-const time = (value: string) =>
-  new Intl.DateTimeFormat('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(
-    new Date(value),
-  );
+const time = (value: string) => dateTimeLabel(new Date(value));
 
 export function AdminChat() {
   const queryClient = useQueryClient();
@@ -153,7 +152,7 @@ export function AdminChat() {
                     )}
                   </div>
                   <p className="mt-0.5 truncate text-[11px] text-[hsl(var(--muted-foreground))]">
-                    {thread.phone || 'Telefon ko‘rsatilmagan'}
+                    {thread.phone ? formatUzPhone(thread.phone) : 'Telefon ko‘rsatilmagan'}
                   </p>
                   {telegramLabel(thread) && <p data-testid={`text-chat-telegram-${thread.id}`} className="mt-0.5 truncate text-[11px] font-semibold text-[#136a93]">Telegram: {telegramProfileUrl(thread) ? <a href={telegramProfileUrl(thread)} target="_blank" rel="noreferrer" className="underline">{telegramLabel(thread)}</a> : telegramLabel(thread)}</p>}
                   <p className="mt-1 truncate text-xs text-[hsl(var(--muted-foreground))]">
@@ -185,7 +184,7 @@ export function AdminChat() {
               <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--border))] px-4 py-3">
                 <p className="min-w-0 truncate text-sm font-extrabold">
                   {selectedThread?.customer_name || 'Mijoz'}
-                  {selectedThread?.phone ? <span className="ml-2 font-semibold text-[hsl(var(--muted-foreground))]">{selectedThread.phone}</span> : null}
+                  {selectedThread?.phone ? <span className="ml-2 font-semibold text-[hsl(var(--muted-foreground))]">{formatUzPhone(selectedThread.phone)}</span> : null}
                   {selectedThread && telegramLabel(selectedThread) ? <span className="ml-2 font-semibold text-[#136a93]">{telegramLabel(selectedThread)}</span> : null}
                 </p>
                 <button

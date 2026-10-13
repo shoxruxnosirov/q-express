@@ -27,6 +27,20 @@ export function dayLabel(at: Date, now = new Date(), lang: Lang = 'uz') {
   return translateText(messages, lang, 'date', { day: l.getUTCDate(), month: translateText(messages, lang, MONTHS[l.getUTCMonth()]) });
 }
 
+// "13-oktabr", with the year once it is not this year's: "13-oktabr 2025".
+// Written out here rather than by Intl, whose Uzbek month names Chrome lacks
+// (it printed "M10 13").
+export function dateLabel(at: Date, now = new Date(), lang: Lang = 'uz') {
+  const l = local(at);
+  const label = translateText(messages, lang, 'date', { day: l.getUTCDate(), month: translateText(messages, lang, MONTHS[l.getUTCMonth()]) });
+  return l.getUTCFullYear() === local(now).getUTCFullYear() ? label : `${label} ${l.getUTCFullYear()}`;
+}
+
+// When something happened: "13-oktabr, 19:32".
+export function dateTimeLabel(at: Date, now = new Date(), lang: Lang = 'uz') {
+  return `${dateLabel(at, now, lang)}, ${clockTime(at)}`;
+}
+
 // "Ertaga, 06:00"
 export function deliveryLabel(at: Date, now = new Date(), lang: Lang = 'uz') {
   return `${dayLabel(at, now, lang)}, ${clockTime(at)}`;

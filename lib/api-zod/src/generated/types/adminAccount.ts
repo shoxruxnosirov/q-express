@@ -9,6 +9,9 @@ import type { AdminAccountRole } from './adminAccountRole';
 
 export interface AdminAccount {
   id: number;
+  shop_id: number;
+  /** A super admin of Q express, who runs the platform and may act in any shop. */
+  platform_super_admin: boolean;
   username: string;
   display_name: string;
   role: AdminAccountRole;

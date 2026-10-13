@@ -143,6 +143,42 @@ export function openTelegramLink(url: string) {
 export const __test = {
   captureInitData,
   insideTelegram,
+  launchStartParam: (location: { search: string; hash: string }) => launchStartParam(location),
   readSessionToken,
   setInitData: (value: string) => { initData = value; },
 };
+
+// Another shop's bot opens Q express's Mini App at its own page by a start
+// parameter (t.me/<bot>?startapp=<slug>[__chat|__orders|__deals], written by
+// startParam in the API's lib/telegram.ts). Telegram hands it over as
+// tgWebAppStartParam (in the query string or the fragment, by client) and as
+// start_param inside the signed launch data. Answers the page to open.
+export function startAppPath(startParam: string | null | undefined) {
+  const match = /^([a-z0-9][a-z0-9-]{1,39})(?:__(chat|orders|deals))?$/.exec(startParam ?? '');
+  if (!match) return undefined;
+  const base = `/s/${match[1]}`;
+  switch (match[2]) {
+    case 'chat': return `${base}/?chat=open`;
+    case 'orders': return `${base}/orders`;
+    case 'deals': return `${base}/catalog?sort=discount`;
+    default: return base;
+  }
+}
+
+// The page this launch asked for, read once when the Mini App opens; only
+// inside Telegram and only on the launch itself, never on a later reload.
+export function launchStartPath() {
+  if (typeof window === 'undefined' || !insideTelegram(window as unknown as TelegramHost)) return undefined;
+  return startAppPath(launchStartParam(window.location));
+}
+
+// Only a launch carries tgWebAppData in its fragment; a reload of a page the
+// customer has moved on from does not, and stays where it is.
+function launchStartParam(location: { search: string; hash: string }) {
+  const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const launchData = hash.get('tgWebAppData');
+  if (!launchData) return null;
+  return new URLSearchParams(location.search).get('tgWebAppStartParam')
+    ?? hash.get('tgWebAppStartParam')
+    ?? new URLSearchParams(launchData).get('start_param');
+}

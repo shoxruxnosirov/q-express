@@ -10,6 +10,8 @@ import {
   useStartChatSession,
 } from '@workspace/api-client-react';
 import { readProfile } from '@/lib/profile';
+import { useShop } from '@/lib/shop';
+import { clockTime } from '@/lib/tashkent-time';
 import { apiErrorMessage } from '@/pages/admin/AdminLogin';
 import { useT } from '@/i18n';
 import chatMessages from '@/i18n/messages/chat';
@@ -21,8 +23,11 @@ const OPEN_POLL_MS = 5000;
 const CLOSED_POLL_MS = 30000;
 // The browser cannot read the httpOnly session cookie, so this non-secret flag
 // records that a conversation exists and is worth polling for.
-const STARTED_FLAG = 'qorasuv-chat-started';
+// A customer has one conversation with each shop, so both are kept per shop:
+// Q express under the plain name, another shop with ":<slug>" after it.
+export const STARTED_FLAG = 'qorasuv-chat-started';
 const SEEN_MESSAGE_KEY = 'qorasuv-chat-seen-id';
+const scoped = (key: string, slug: string | null) => (slug ? `${key}:${slug}` : key);
 
 const readNumber = (key: string) => {
   try {
@@ -38,23 +43,23 @@ const writeValue = (key: string, value: string) => {
     // Storage may be unavailable; the chat still works, it just re-announces.
   }
 };
-const hasStarted = () => {
+const hasStarted = (key: string) => {
   try {
-    return localStorage.getItem(STARTED_FLAG) === '1';
+    return localStorage.getItem(key) === '1';
   } catch {
     return false;
   }
 };
-const forgetStarted = () => {
+const forgetStarted = (key: string) => {
   try {
-    localStorage.removeItem(STARTED_FLAG);
+    localStorage.removeItem(key);
   } catch {
     // ignore
   }
 };
 
-const time = (value: string, locale: string) =>
-  new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+// On the Tashkent clock, like every other time the shop shows.
+const time = (value: string) => clockTime(new Date(value));
 
 // "?chat=open" is how the bot's "Chatni ochish" button lands: the shop opens
 // with the conversation already showing. The parameter is dropped at once, so
@@ -71,14 +76,31 @@ function takeOpenRequest() {
   }
 }
 
+// Forgets every shop's conversation flag, when the customer signs out.
+export function forgetAllChats() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key === STARTED_FLAG || key.startsWith(`${STARTED_FLAG}:`)) localStorage.removeItem(key);
+    }
+  } catch {
+    // Storage may be unavailable.
+  }
+}
+
+// The conversation with the shop being shown. Rendered with the shop as its
+// key, so moving to another shop starts afresh with that shop's thread.
 export function CustomerChat() {
-  const { t, locale } = useT(chatMessages);
+  const { t } = useT(chatMessages);
+  const { slug, params, isPlatform } = useShop();
+  const startedKey = scoped(STARTED_FLAG, slug);
+  const seenKey = scoped(SEEN_MESSAGE_KEY, slug);
+  const transcriptKey = getGetChatTranscriptQueryKey(params);
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   // Held until the chat is known to be open: inside Telegram the profile may
   // first answer before the Mini App sign-in has finished.
   const [openRequested, setOpenRequested] = useState(takeOpenRequest);
-  const [started, setStarted] = useState(hasStarted);
+  const [started, setStarted] = useState(() => hasStarted(startedKey));
   const [draft, setDraft] = useState('');
   const [failed, setFailed] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -89,9 +111,9 @@ export function CustomerChat() {
 
   const startSession = useStartChatSession();
   const sendMessage = useSendChatMessage();
-  const transcript = useGetChatTranscript({
+  const transcript = useGetChatTranscript(params, {
     query: {
-      queryKey: getGetChatTranscriptQueryKey(),
+      queryKey: transcriptKey,
       enabled: started && chatOpen,
       refetchInterval: open ? OPEN_POLL_MS : CLOSED_POLL_MS,
       // A browser whose conversation was cleared server-side should stop asking.
@@ -101,7 +123,7 @@ export function CustomerChat() {
 
   const messages = transcript.data?.messages ?? [];
   const lastOperatorId = [...messages].reverse().find(message => message.sender === 'operator')?.id ?? 0;
-  const [seenId, setSeenId] = useState(() => readNumber(SEEN_MESSAGE_KEY));
+  const [seenId, setSeenId] = useState(() => readNumber(seenKey));
   const unread = !open && lastOperatorId > seenId;
 
   // Opening starts the conversation if this browser has none yet. The call is
@@ -117,12 +139,14 @@ export function CustomerChat() {
   useEffect(() => {
     if (!open || started || starting.current) return;
     starting.current = true;
-    const profile = readProfile();
+    // The saved profile is Q express's to know; another shop learns the
+    // customer's name and phone from their first order there.
+    const profile = isPlatform ? readProfile() : undefined;
     startSession.mutate(
-      { data: { name: profile.name, phone: profile.phone } },
+      { data: profile ? { name: profile.name, phone: profile.phone } : {}, params },
       {
         onSuccess: () => {
-          writeValue(STARTED_FLAG, '1');
+          writeValue(startedKey, '1');
           setStarted(true);
           setFailed('');
         },
@@ -144,7 +168,7 @@ export function CustomerChat() {
   // the cookie is in fact fine, so a transient failure costs one request.
   useEffect(() => {
     if (!started || !transcript.isError) return;
-    forgetStarted();
+    forgetStarted(startedKey);
     setStarted(false);
     // The admin may have deleted the conversation (the next open starts a new
     // one), or blocked the customer: re-read the profile to find out.
@@ -161,17 +185,17 @@ export function CustomerChat() {
   useEffect(() => {
     if (chatOpen || !customer.isSuccess) return;
     setOpen(false);
-    if (!hasStarted() && !started) return;
-    forgetStarted();
+    if (!hasStarted(startedKey) && !started) return;
+    forgetStarted(startedKey);
     setStarted(false);
-    queryClient.removeQueries({ queryKey: getGetChatTranscriptQueryKey() });
+    queryClient.removeQueries({ queryKey: transcriptKey });
   }, [chatOpen, customer.isSuccess, started, queryClient]);
 
   // Reading the thread is what clears the dot.
   useEffect(() => {
     if (!open || !lastOperatorId) return;
     setSeenId(lastOperatorId);
-    writeValue(SEEN_MESSAGE_KEY, String(lastOperatorId));
+    writeValue(seenKey, String(lastOperatorId));
   }, [open, lastOperatorId]);
 
   useEffect(() => {
@@ -183,12 +207,12 @@ export function CustomerChat() {
     const body = draft.trim();
     if (!body || !started || sendMessage.isPending) return;
     sendMessage.mutate(
-      { data: { body } },
+      { data: { body }, params },
       {
         onSuccess: () => {
           setDraft('');
           setFailed('');
-          queryClient.invalidateQueries({ queryKey: getGetChatTranscriptQueryKey() });
+          queryClient.invalidateQueries({ queryKey: transcriptKey });
         },
         onError: err => setFailed(apiErrorMessage(err, t('sendFailed'))),
       },
@@ -258,7 +282,7 @@ export function CustomerChat() {
                   message.sender === 'operator' ? 'text-[hsl(var(--muted-foreground))]' : 'text-[#d9e5ce]'
                 }`}
               >
-                {time(message.created_at, locale)}
+                {time(message.created_at)}
               </p>
             </div>
           ))

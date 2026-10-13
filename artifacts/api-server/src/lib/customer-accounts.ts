@@ -6,6 +6,7 @@ import {
   chatThreadsTable,
   customerAddressesTable,
   customerSessionsTable,
+  customerShopBlocksTable,
   ordersTable,
   usersTable,
 } from "@workspace/db/schema";
@@ -83,8 +84,38 @@ export async function telegramIsBlocked(telegramUserId: string) {
 }
 
 // The customer behind a request is blocked, or the device it came from is.
+// These hold in every shop.
 export function customerIsBlocked(customer: SignedInCustomer | undefined) {
   return Boolean(customer && (isBlocked(customer.user) || customer.session.blockedAt !== null || customer.telegramBlocked));
+}
+
+// A shop may block a customer for itself alone; Q express's super admins
+// block everywhere (users.blocked_at, above).
+export async function blockedByShop(userId: number, shopId: number) {
+  const [row] = await db
+    .select({ id: customerShopBlocksTable.id })
+    .from(customerShopBlocksTable)
+    .where(and(eq(customerShopBlocksTable.userId, userId), eq(customerShopBlocksTable.shopId, shopId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+// Blocked everywhere, or by this shop.
+export async function customerBlockedInShop(customer: SignedInCustomer | undefined, shopId: number) {
+  if (!customer) return false;
+  return customerIsBlocked(customer) || (await blockedByShop(customer.user.id, shopId));
+}
+
+// The same for a Telegram account writing to a shop's bot.
+export async function telegramBlockedInShop(telegramUserId: string, shopId: number) {
+  if (await telegramIsBlocked(telegramUserId)) return true;
+  const [row] = await db
+    .select({ id: customerShopBlocksTable.id })
+    .from(customerShopBlocksTable)
+    .innerJoin(usersTable, eq(customerShopBlocksTable.userId, usersTable.id))
+    .where(and(eq(usersTable.telegramId, telegramUserId), eq(customerShopBlocksTable.shopId, shopId)))
+    .limit(1);
+  return Boolean(row);
 }
 
 // ---------------------------------------------------------------------------
@@ -550,23 +581,24 @@ async function mergeCustomer(tx: Tx, fromId: number, intoId: number) {
     await upsertAddress(tx, intoId, { dom: address.dom, xonadon: address.xonadon }, address.lastUsedAt);
   }
 
-  // One conversation per customer: the verified one keeps its thread and
-  // takes the other's messages; if it had none, it adopts the other thread.
-  const [intoThread] = await tx
-    .select({ id: chatThreadsTable.id })
-    .from(chatThreadsTable)
-    .where(eq(chatThreadsTable.userId, intoId))
-    .orderBy(desc(chatThreadsTable.lastMessageAt))
-    .limit(1);
+  // One conversation per customer and shop: in each shop the Telegram
+  // account's thread keeps going and takes the other's messages; where it had
+  // none, it adopts the other thread.
   const fromThreads = await tx
-    .select({ id: chatThreadsTable.id })
+    .select({ id: chatThreadsTable.id, shopId: chatThreadsTable.shopId })
     .from(chatThreadsTable)
     .where(eq(chatThreadsTable.userId, fromId));
-  if (fromThreads.length > 0) {
+  for (const shopId of new Set(fromThreads.map((thread) => thread.shopId))) {
+    const ids = fromThreads.filter((thread) => thread.shopId === shopId).map((thread) => thread.id);
+    const [intoThread] = await tx
+      .select({ id: chatThreadsTable.id })
+      .from(chatThreadsTable)
+      .where(and(eq(chatThreadsTable.userId, intoId), eq(chatThreadsTable.shopId, shopId)))
+      .orderBy(desc(chatThreadsTable.lastMessageAt))
+      .limit(1);
     if (!intoThread) {
-      await tx.update(chatThreadsTable).set({ userId: intoId }).where(eq(chatThreadsTable.userId, fromId));
+      await tx.update(chatThreadsTable).set({ userId: intoId }).where(inArray(chatThreadsTable.id, ids));
     } else {
-      const ids = fromThreads.map((thread) => thread.id);
       await tx.update(chatMessagesTable).set({ threadId: intoThread.id }).where(inArray(chatMessagesTable.threadId, ids));
       await tx.execute(sql`
         update chat_threads set last_message_at = coalesce(
@@ -575,6 +607,12 @@ async function mergeCustomer(tx: Tx, fromId: number, intoId: number) {
       await tx.delete(chatThreadsTable).where(inArray(chatThreadsTable.id, ids));
     }
   }
+  // A shop's block on the guest account follows it; the account's own block
+  // was refused above.
+  await tx.execute(sql`
+    insert into customer_shop_blocks (shop_id, user_id, blocked_at, blocked_by, reason)
+    select shop_id, ${intoId}, blocked_at, blocked_by, reason from customer_shop_blocks where user_id = ${fromId}
+    on conflict (shop_id, user_id) do nothing`);
 
   await tx.update(customerSessionsTable).set({ userId: intoId }).where(eq(customerSessionsTable.userId, fromId));
   await tx.delete(usersTable).where(eq(usersTable.id, fromId));

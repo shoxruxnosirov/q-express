@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Response } from "express";
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   BlockCustomerBody,
   BlockCustomerParams,
@@ -8,14 +8,22 @@ import {
   ListCustomerSessionsParams,
   ReplaceCustomerAddressesBody,
   RevokeCustomerSessionParams,
+  UnblockCustomerEverywhereParams,
   UnblockCustomerParams,
   UnblockCustomerSessionParams,
   SignInWithTelegramBody,
   UpdateCustomerProfileBody,
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
-import { customerAddressesTable, customerSessionsTable, ordersTable, usersTable } from "@workspace/db/schema";
-import { signedInAdmin } from "../lib/admin-directory";
+import {
+  customerAddressesTable,
+  customerSessionsTable,
+  customerShopBlocksTable,
+  ordersTable,
+  usersTable,
+} from "@workspace/db/schema";
+import { adminShopId, isPlatformSuperAdmin, signedInAdmin } from "../lib/admin-directory";
+import { PLATFORM_SHOP_ID, publicBaseUrl, requestShop, shopBot } from "../lib/shops";
 import {
   AccountLimitError,
   BlockedMergeError,
@@ -37,8 +45,9 @@ import {
 } from "../lib/customer-accounts";
 import { CHAT_SESSION_COOKIE } from "../lib/chat-session";
 import { clearCustomerCookie } from "../lib/customer-session";
+import { flatKey } from "../lib/order-rules";
 import { normalizeUzPhone } from "../lib/phone";
-import { botConfigured, getBotUsername, verifyWebAppInitData, webAppUser, registerMenuButton } from "../lib/telegram";
+import { botConfigured, getBotUsername, verifyWebAppInitData, webAppUser, registerMenuButton, withBot } from "../lib/telegram";
 import { requestLang, translate, type Lang } from "../lib/i18n";
 import { accountMessages, commonMessages } from "../lib/messages";
 
@@ -100,10 +109,10 @@ router.patch("/customer/me", async (req, res, next) => {
       })
       .where(eq(usersTable.id, user.id))
       .returning();
-    // The bot's menu button follows the customer's language. Best effort.
+    // The menu button of Q express's bot, the one bot with a Mini App, follows
+    // the customer's language. Best effort.
     if (input.language !== undefined && input.language !== user.language && updated.telegramId) {
-      const base = process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `https://${req.get("host")}`;
-      void registerMenuButton(base, updated.telegramId, input.language);
+      void registerMenuButton(publicBaseUrl(req), updated.telegramId, input.language);
     }
     return res.json(await customerProfileDto({ ...customer, user: updated }));
   } catch (error) {
@@ -135,7 +144,9 @@ router.put("/customer/me/addresses", async (req, res, next) => {
 // the Mini App and they are signed in by their Telegram account.
 router.get("/customer/login", async (req, res, next) => {
   try {
-    const username = await getBotUsername();
+    // The bot of the shop the page shows.
+    const shop = await requestShop(req.query.shop);
+    const username = shop ? await withBot(await shopBot(shop), () => getBotUsername()) : undefined;
     if (!username) return res.status(503).json({ error: say(requestLang(req), "botNotConfigured") });
     return res.json({ url: `https://t.me/${username}` });
   } catch (error) {
@@ -151,6 +162,10 @@ router.post("/customer/telegram", async (req, res, next) => {
   const lang = requestLang(req);
   try {
     const { init_data } = SignInWithTelegramBody.parse(req.body);
+    // Only Q express's own bot opens the Mini App, so only launch data it
+    // signed is accepted. Another shop's owner holds their bot's token and
+    // could sign launch data for anybody with it; their bots therefore link
+    // to Q express's Mini App rather than opening one of their own.
     if (!botConfigured()) return res.status(503).json({ error: say(lang, "botNotConfigured") });
     const telegramUserId = verifyWebAppInitData(init_data);
     if (!telegramUserId) return res.status(401).json({ error: say(lang, "telegramNotVerified") });
@@ -189,8 +204,16 @@ router.post("/customer/logout", async (req, res, next) => {
   }
 });
 
-// Every customer, or one, with order totals, saved addresses and any block.
-async function adminCustomers(onlyId?: number) {
+// Every customer of a shop, or one, with order totals, saved addresses and any
+// block. A shop's admins, Q express's included, meet a customer with their
+// first order there (the owner's rule): the account is shared by every shop,
+// but who it is stays out of a shop's sight until it is that shop's customer.
+// Only that shop's orders are counted, and only the flats it delivered to.
+// Someone who only wrote to the shop's chat, or is blocked here, is listed
+// too, so they can be blocked or let back in, but as their Telegram name
+// alone: no phone and no addresses until they order. A platform super admin
+// (`full`) is not held to that in any shop: they see every customer whole.
+async function adminCustomers(shopId: number, onlyId?: number, full = false) {
     const rows = await db
       .select({
         user: usersTable,
@@ -206,12 +229,32 @@ async function adminCustomers(onlyId?: number) {
         // What the customer has actually paid for: delivered orders only.
         totalSpent: sql<string>`coalesce(sum(${ordersTable.total}) filter (where ${ordersTable.status} = 'delivered'), 0)`,
         lastOrderAt: sql<Date | null>`max(${ordersTable.createdAt})`,
+        ordered: sql<boolean>`count(${ordersTable.id}) > 0`,
+        orderedFlats: sql<string[]>`coalesce(array_agg(distinct ${ordersTable.addressKey}) filter (where ${ordersTable.addressKey} is not null), '{}')`,
       })
       .from(usersTable)
-      .leftJoin(ordersTable, eq(ordersTable.userId, usersTable.id))
-      .where(onlyId === undefined ? undefined : eq(usersTable.id, onlyId))
+      .leftJoin(ordersTable, and(eq(ordersTable.userId, usersTable.id), eq(ordersTable.shopId, shopId)))
+      .where(and(
+        onlyId === undefined ? undefined : eq(usersTable.id, onlyId),
+        or(
+          sql`exists (select 1 from orders o where o.user_id = ${usersTable.id} and o.shop_id = ${shopId})`,
+          sql`exists (select 1 from chat_threads t where t.user_id = ${usersTable.id} and t.shop_id = ${shopId})`,
+          sql`exists (select 1 from customer_shop_blocks b where b.user_id = ${usersTable.id} and b.shop_id = ${shopId})`,
+          shopId === PLATFORM_SHOP_ID ? isNotNull(usersTable.blockedAt) : undefined,
+        ),
+      ))
       .groupBy(usersTable.id)
       .orderBy(sql`max(${ordersTable.createdAt}) desc nulls last`, desc(usersTable.createdAt));
+    const shopBlocks = await db
+      .select({
+        userId: customerShopBlocksTable.userId,
+        blockedAt: customerShopBlocksTable.blockedAt,
+        reason: customerShopBlocksTable.reason,
+        blockedBy: sql<string | null>`(select a.display_name from admins a where a.id = ${customerShopBlocksTable.blockedBy})`,
+      })
+      .from(customerShopBlocksTable)
+      .where(eq(customerShopBlocksTable.shopId, shopId));
+    const shopBlockByUser = new Map(shopBlocks.map((block) => [block.userId, block]));
     const addresses = await db
       .select()
       .from(customerAddressesTable)
@@ -222,11 +265,21 @@ async function adminCustomers(onlyId?: number) {
       list.push({ dom: address.dom, xonadon: address.xonadon });
       byUser.set(address.userId, list);
     }
-    return rows.map(({ user, blockedByName, activeSessions, blockedDevices, orderCount, totalSpent, lastOrderAt }) => ({
+    return rows.map(({ user, blockedByName, activeSessions, blockedDevices, orderCount, totalSpent, lastOrderAt, ordered, orderedFlats }) => {
+      const flats = new Set(orderedFlats);
+      const known = ordered || full;
+      // A block everywhere wins; otherwise this shop's own.
+      const shopBlock = shopBlockByUser.get(user.id);
+      const block = isBlocked(user)
+        ? { at: user.blockedAt!, by: blockedByName, reason: user.blockReason }
+        : shopBlock
+          ? { at: shopBlock.blockedAt, by: shopBlock.blockedBy, reason: shopBlock.reason }
+          : undefined;
+      return {
         id: user.id,
-        name: user.name,
-        phone: user.phone ?? "",
-        phone_verified: isVerified(user),
+        name: known ? user.name : "",
+        phone: known ? user.phone ?? "" : "",
+        phone_verified: known && isVerified(user),
         telegram_linked: user.telegramId !== null,
         telegram_name: user.telegramName,
         telegram_username: user.telegramUsername,
@@ -235,21 +288,25 @@ async function adminCustomers(onlyId?: number) {
         total_spent: Number(totalSpent),
         last_order_at: lastOrderAt ? new Date(lastOrderAt).toISOString() : null,
         created_at: user.createdAt.toISOString(),
-        addresses: byUser.get(user.id) ?? [],
-        // Blocked on the account or on any of its devices: either way the
-        // customer is refused.
-        blocked: isBlocked(user) || Number(blockedDevices) > 0,
+        addresses: (byUser.get(user.id) ?? []).filter((address) => full || flats.has(flatKey(address.dom, address.xonadon))),
+        // Blocked on the account, by this shop, or on any of its devices:
+        // either way the customer is refused here.
+        blocked: block !== undefined || Number(blockedDevices) > 0,
+        // Blocked by Q express on the account or a device: only Q express can
+        // lift it, whichever shop the customer is shown in.
+        blocked_everywhere: isBlocked(user) || Number(blockedDevices) > 0,
         blocked_devices: Number(blockedDevices),
-        blocked_at: user.blockedAt ? user.blockedAt.toISOString() : null,
-        blocked_by: user.blockedAt ? blockedByName : null,
-        block_reason: user.blockReason,
-      }));
+        blocked_at: block ? block.at.toISOString() : null,
+        blocked_by: block ? block.by : null,
+        block_reason: block ? block.reason : null,
+      };
+    });
 }
 
 // Behind the /admin guard registered in routes/admins.ts, which runs first.
 router.get("/admin/customers", async (_req, res, next) => {
   try {
-    res.json(await adminCustomers());
+    res.json(await adminCustomers(adminShopId(res), undefined, platformSuper(res)));
   } catch (error) {
     return next(error);
   }
@@ -257,53 +314,137 @@ router.get("/admin/customers", async (_req, res, next) => {
 
 // Only a super admin may block or lift a block (the owner's decision); every
 // admin can see who is blocked. The block takes effect on the customer's next
-// request.
+// request. In Q express a platform super admin blocks a customer everywhere;
+// in another shop the shop's super admin blocks them in that shop alone.
+// A platform super admin has no limits in any shop (the owner's decision,
+// 2026-10-13): there they may block in that shop or everywhere, and lift
+// either.
+// The /admin guard only lets a platform super admin act outside their own
+// shop, so a super admin is always one of the shop being acted in.
 function superAdminOnly(res: Response) {
   if (signedInAdmin(res).role === "super_admin") return true;
   res.status(403).json({ error: "Bloklash faqat super admin uchun" });
   return false;
 }
 
+function platformSuper(res: Response) {
+  return isPlatformSuperAdmin(signedInAdmin(res));
+}
+
+// Devices are shared by every shop, so only Q express handles them: any of
+// its admins in Q express, its super admins in whichever shop they work in.
+function platformOnly(res: Response) {
+  if (adminShopId(res) === PLATFORM_SHOP_ID || platformSuper(res)) return true;
+  res.status(403).json({ error: "Qurilmalarni faqat Q express boshqaradi" });
+  return false;
+}
+
+const EVERYWHERE_BLOCK = "Bu mijozni Q express hamma do‘konlarda bloklagan. Uni faqat Q express super admini blokdan chiqara oladi.";
+
 router.post("/admin/customers/:id/block", async (req, res, next) => {
   try {
     if (!superAdminOnly(res)) return;
     const { id } = BlockCustomerParams.parse(req.params);
-    const { reason } = BlockCustomerBody.parse(req.body ?? {});
-    const [updated] = await db
-      .update(usersTable)
-      .set({ blockedAt: new Date(), blockedBy: signedInAdmin(res).id, blockReason: reason?.trim() || null })
-      .where(eq(usersTable.id, id))
-      .returning({ id: usersTable.id });
-    if (!updated) return res.status(404).json({ error: "Mijoz topilmadi" });
-    const [customer] = await adminCustomers(id);
+    const { reason, everywhere } = BlockCustomerBody.parse(req.body ?? {});
+    const shopId = adminShopId(res);
+    const full = platformSuper(res);
+    if (everywhere && shopId !== PLATFORM_SHOP_ID && !full) {
+      return res.status(403).json({ error: "Hamma do‘konlarda faqat Q express super admini bloklay oladi" });
+    }
+    const [exists] = await adminCustomers(shopId, id, full);
+    if (!exists) return res.status(404).json({ error: "Mijoz topilmadi" });
+    if (shopId === PLATFORM_SHOP_ID || everywhere) {
+      await db
+        .update(usersTable)
+        .set({ blockedAt: new Date(), blockedBy: signedInAdmin(res).id, blockReason: reason?.trim() || null })
+        .where(eq(usersTable.id, id));
+    } else {
+      await db
+        .insert(customerShopBlocksTable)
+        .values({ shopId, userId: id, blockedBy: signedInAdmin(res).id, reason: reason?.trim() || null })
+        .onConflictDoUpdate({
+          target: [customerShopBlocksTable.shopId, customerShopBlocksTable.userId],
+          set: { blockedAt: new Date(), blockedBy: signedInAdmin(res).id, reason: reason?.trim() || null },
+        });
+    }
+    const [customer] = await adminCustomers(shopId, id, full);
     return res.json(customer);
   } catch (error) {
     return next(error);
   }
 });
 
+function liftShopBlock(shopId: number, userId: number) {
+  return db
+    .delete(customerShopBlocksTable)
+    .where(and(eq(customerShopBlocksTable.shopId, shopId), eq(customerShopBlocksTable.userId, userId)))
+    .returning({ userId: customerShopBlocksTable.userId });
+}
+
+// Lifts the block on the account and its device blocks too; otherwise the
+// Telegram account would stay refused with nothing on the card to say so.
+async function liftEverywhereBlock(userId: number) {
+  const [updated] = await db
+    .update(usersTable)
+    .set({ blockedAt: null, blockedBy: null, blockReason: null })
+    .where(eq(usersTable.id, userId))
+    .returning({ id: usersTable.id, telegramId: usersTable.telegramId });
+  if (!updated) return false;
+  await db
+    .update(customerSessionsTable)
+    .set({ blockedAt: null, blockedBy: null, blockReason: null })
+    .where(
+      updated.telegramId === null
+        ? eq(customerSessionsTable.userId, userId)
+        : or(eq(customerSessionsTable.userId, userId), eq(customerSessionsTable.telegramId, updated.telegramId)),
+    );
+  return true;
+}
+
 router.delete("/admin/customers/:id/block", async (req, res, next) => {
   try {
     if (!superAdminOnly(res)) return;
     const { id } = UnblockCustomerParams.parse(req.params);
-    const [updated] = await db
-      .update(usersTable)
-      .set({ blockedAt: null, blockedBy: null, blockReason: null })
-      .where(eq(usersTable.id, id))
-      .returning({ id: usersTable.id, telegramId: usersTable.telegramId });
-    if (!updated) return res.status(404).json({ error: "Mijoz topilmadi" });
-    // Lifting the customer's block lifts their device blocks too; otherwise the
-    // Telegram account would stay refused with nothing on the card to say so.
-    await db
-      .update(customerSessionsTable)
-      .set({ blockedAt: null, blockedBy: null, blockReason: null })
-      .where(
-        updated.telegramId === null
-          ? eq(customerSessionsTable.userId, id)
-          : or(eq(customerSessionsTable.userId, id), eq(customerSessionsTable.telegramId, updated.telegramId)),
-      );
-    const [customer] = await adminCustomers(id);
-    return res.json(customer);
+    const shopId = adminShopId(res);
+    const full = platformSuper(res);
+    const [exists] = await adminCustomers(shopId, id, full);
+    if (!exists) return res.status(404).json({ error: "Mijoz topilmadi" });
+    if (shopId !== PLATFORM_SHOP_ID) {
+      // Only this shop's own block; one set by Q express stays.
+      const lifted = await liftShopBlock(shopId, id);
+      const [customer] = await adminCustomers(shopId, id, full);
+      // Still refused here, so the admin is told why rather than shown a
+      // success that changed nothing they can see.
+      if (customer?.blocked_everywhere) {
+        return res.status(409).json({
+          error: lifted.length > 0 ? `Do‘kondagi blok olindi. ${EVERYWHERE_BLOCK}` : EVERYWHERE_BLOCK,
+        });
+      }
+      // Let back in, the customer may no longer be on this shop's list at all
+      // (null): blocked was the only thing that kept them there.
+      return res.json(customer ?? null);
+    }
+    if (!(await liftEverywhereBlock(id))) return res.status(404).json({ error: "Mijoz topilmadi" });
+    const [customer] = await adminCustomers(shopId, id, full);
+    return res.json(customer ?? null);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// A platform super admin working in another shop lifts everything that
+// refuses the customer there: that shop's block and Q express's.
+router.delete("/admin/customers/:id/block-everywhere", async (req, res, next) => {
+  try {
+    if (!platformSuper(res)) return res.status(403).json({ error: "Bu amal faqat Q express super admini uchun" });
+    const { id } = UnblockCustomerEverywhereParams.parse(req.params);
+    const shopId = adminShopId(res);
+    const [exists] = await adminCustomers(shopId, id, true);
+    if (!exists) return res.status(404).json({ error: "Mijoz topilmadi" });
+    if (shopId !== PLATFORM_SHOP_ID) await liftShopBlock(shopId, id);
+    if (!(await liftEverywhereBlock(id))) return res.status(404).json({ error: "Mijoz topilmadi" });
+    const [customer] = await adminCustomers(shopId, id, true);
+    return res.json(customer ?? null);
   } catch (error) {
     return next(error);
   }
@@ -338,6 +479,7 @@ async function sessionDto(session: SessionRow) {
 
 router.get("/admin/customers/:id/sessions", async (req, res, next) => {
   try {
+    if (!platformOnly(res)) return;
     const { id } = ListCustomerSessionsParams.parse(req.params);
     const sessions = await customerSessions(id);
     return res.json(await Promise.all(sessions.map(sessionDto)));
@@ -350,6 +492,7 @@ router.get("/admin/customers/:id/sessions", async (req, res, next) => {
 // in again.
 router.post("/admin/customer-sessions/:id/revoke", async (req, res, next) => {
   try {
+    if (!platformOnly(res)) return;
     const { id } = RevokeCustomerSessionParams.parse(req.params);
     const [session] = await db
       .update(customerSessionsTable)
@@ -367,7 +510,7 @@ router.post("/admin/customer-sessions/:id/revoke", async (req, res, next) => {
 
 router.post("/admin/customer-sessions/:id/block", async (req, res, next) => {
   try {
-    if (!superAdminOnly(res)) return;
+    if (!platformOnly(res) || !superAdminOnly(res)) return;
     const { id } = BlockCustomerSessionParams.parse(req.params);
     const { reason } = BlockCustomerSessionBody.parse(req.body ?? {});
     const [session] = await db
@@ -384,7 +527,7 @@ router.post("/admin/customer-sessions/:id/block", async (req, res, next) => {
 
 router.delete("/admin/customer-sessions/:id/block", async (req, res, next) => {
   try {
-    if (!superAdminOnly(res)) return;
+    if (!platformOnly(res) || !superAdminOnly(res)) return;
     const { id } = UnblockCustomerSessionParams.parse(req.params);
     const [session] = await db
       .update(customerSessionsTable)

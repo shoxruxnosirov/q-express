@@ -6,8 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ListProductsSort } from './listProductsSort';
+import type { ShopParameter } from './shopParameter';
 
 export type ListProductsParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
 search?: string;
 category?: string;
 sort?: ListProductsSort;

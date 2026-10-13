@@ -214,7 +214,9 @@ export function AdminCatalogManager() {
           <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">Kategoriya va mahsulotlarni qo‘shing, qidiring, tahrirlang, yashiring yoki o‘chiring.</p>
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        {/* grid-cols-1 (minmax(0, 1fr)) rather than the implicit auto column, which
+            grows to its widest row and pushed the page past a phone's edge. */}
+        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <section data-testid="admin-categories" className="rounded-2xl bg-[hsl(var(--muted)/.55)] p-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-extrabold">Kategoriyalar</h3>
@@ -222,9 +224,9 @@ export function AdminCatalogManager() {
                 {categorySearch ? `${shownCategories.length} / ${allCategories.length}` : allCategories.length} ta
               </span>
             </div>
-            <form onSubmit={submitCategory} className="mt-3 grid gap-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background)/.6)] p-3">
+            <form onSubmit={submitCategory} className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background)/.6)] p-3">
               <p className="text-xs font-extrabold">Yangi kategoriya</p>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <input
                   required
                   minLength={2}
@@ -272,7 +274,7 @@ export function AdminCatalogManager() {
             ) : shownCategories.length === 0 ? (
               <p className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">{categorySearch ? 'Bunday kategoriya topilmadi.' : 'Hali kategoriya yo‘q.'}</p>
             ) : (
-              <div className="mt-3 grid max-h-[460px] gap-2 overflow-y-auto pr-1">
+              <div className="mt-3 grid max-h-[460px] grid-cols-1 gap-2 overflow-y-auto pr-1">
                 {shownCategories.map(category => (
                   <AdminCategoryRow
                     key={category.id}
@@ -291,7 +293,7 @@ export function AdminCatalogManager() {
 
           <form onSubmit={submitProduct} className="rounded-2xl bg-[hsl(var(--muted)/.55)] p-4">
             <h3 className="text-sm font-extrabold">Mahsulot qo‘shish</h3>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <select required value={product.category_id} onChange={event => setProduct({ ...product, category_id: event.target.value })} aria-label="Kategoriya" className={inputClass}>
                 <option value="">Kategoriya tanlang</option>
                 {categoryOptions.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
@@ -330,14 +332,14 @@ export function AdminCatalogManager() {
           </form>
         </div>
 
-        <section ref={productsRef} data-testid="admin-products" className="mt-6 scroll-mt-24">
+        <section ref={productsRef} data-testid="admin-products" className="mt-6 scroll-mt-36">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-extrabold">Mahsulotlar</h3>
             <span data-testid="text-product-count" className="text-xs text-[hsl(var(--muted-foreground))]">
               {filtering ? `${shownProducts.length} / ${allProducts.length}` : allProducts.length} ta mahsulot
             </span>
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_220px]">
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
             <SearchField value={productSearch} onChange={setProductSearch} placeholder="Mahsulot qidirish: nomi, tavsifi, kategoriyasi" testId="input-search-products" />
             <select
               value={categoryFilter ?? ''}
@@ -391,7 +393,7 @@ export function AdminCatalogManager() {
               )}
             </div>
           ) : (
-            <div className="mt-3 grid gap-2">
+            <div className="mt-3 grid grid-cols-1 gap-2">
               {shownProducts.map(item => (
                 <AdminProductRow
                   key={item.id}

@@ -74,7 +74,11 @@ export function parseOrderAddress(address: string): AddressParts | undefined {
 // Migration 0011 fills in older orders with the same pattern.
 export function addressKey(address: string): string | undefined {
   const parts = parseOrderAddress(address);
-  if (!parts) return undefined;
-  const part = (value: string) => value.toLowerCase().replace(/^0+(?=.)/, "");
-  return `${part(parts.dom)}|${part(parts.xonadon)}`;
+  return parts ? flatKey(parts.dom, parts.xonadon) : undefined;
+}
+
+// The same key for a saved address's two parts.
+export function flatKey(dom: string, xonadon: string) {
+  const part = (value: string) => value.trim().toLowerCase().replace(/^0+(?=.)/, "");
+  return `${part(dom)}|${part(xonadon)}`;
 }

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { inScript, translate, type Lang } from "./i18n.ts";
 import { botMessages } from "./messages.ts";
@@ -202,7 +203,7 @@ const MISSING_CONFIGURATION = "Telegram bot configuration is missing";
 // The code never checks which bot a token belongs to, so the mode alone decides
 // which variable is read, and a missing one is never quietly swapped for the
 // other bot's.
-function resolveBotToken(): { token: string } | TelegramResult {
+function resolveEnvBotToken(): { token: string } | TelegramResult {
   const botMode = process.env.TELEGRAM_BOT_MODE ?? "legacy";
   if (botMode !== "legacy" && botMode !== "new") {
     return { sent: false, error: "Telegram bot mode is invalid" };
@@ -214,8 +215,69 @@ function resolveBotToken(): { token: string } | TelegramResult {
   return { token };
 }
 
+// ---------------------------------------------------------------------------
+// Which bot
+//
+// Every shop on the platform has its own bot. Q express's comes from the
+// environment; the others' are stored with their shop (lib/shops.ts). A
+// request about a shop runs inside withBot(that shop's bot), and everything
+// below speaks through it: the token, the owner's chat, the shop's path on the
+// site. Outside any withBot, Q express's environment bot is used, as before
+// there were shops. A shop whose bot is missing stays silent; it never falls
+// back to another shop's bot.
+// ---------------------------------------------------------------------------
+
+export type BotContext = {
+  shopId: number;
+  shopName: string;
+  // Q express, the platform's own shop.
+  platform: boolean;
+  token: string | undefined;
+  ownerChatId: string | undefined;
+  // Where the shop lives on the site ("" for Q express, "/s/<slug>").
+  appPath: string;
+  // Where Telegram delivers this bot's updates.
+  webhookPath: string;
+  freeFirstDelivery: boolean;
+  // Another shop's bot never opens the Mini App itself: launch data it signed
+  // could be forged by the shop's owner, who holds its token. Its buttons open
+  // Q express's Mini App (this bot's @username) at the shop's page instead.
+  miniAppBot?: string;
+};
+
+const currentBot = new AsyncLocalStorage<BotContext>();
+
+export function withBot<T>(bot: BotContext, fn: () => T): T {
+  return currentBot.run(bot, fn);
+}
+
+// Q express's bot, as the environment configures it.
+export function envBotContext(): BotContext {
+  const env = resolveEnvBotToken();
+  return {
+    shopId: 1,
+    shopName: "Q express",
+    platform: true,
+    token: "token" in env ? env.token : undefined,
+    ownerChatId: process.env.TELEGRAM_ADMIN_CHAT_ID?.trim() || undefined,
+    appPath: "",
+    webhookPath: "/api/telegram/webhook",
+    freeFirstDelivery: true,
+  };
+}
+
+function activeBot(): BotContext {
+  return currentBot.getStore() ?? envBotContext();
+}
+
+function resolveBotToken(): { token: string } | TelegramResult {
+  const store = currentBot.getStore();
+  if (!store) return resolveEnvBotToken();
+  return store.token ? { token: store.token } : { sent: false, error: MISSING_CONFIGURATION };
+}
+
 export function ownerChatId() {
-  return process.env.TELEGRAM_ADMIN_CHAT_ID?.trim() || undefined;
+  return activeBot().ownerChatId;
 }
 
 // The bot works with private chats only: a private chat's id is the user's
@@ -328,7 +390,7 @@ export async function registerWebhook(baseUrl: string): Promise<TelegramResult> 
   const secret = webhookSecret();
   if (!secret) return { sent: false, error: "SESSION_SECRET is required for the Telegram webhook" };
   const { sent, error } = await callBotApi(bot.token, "setWebhook", {
-    url: `${baseUrl.replace(/\/+$/, "")}/api/telegram/webhook`,
+    url: `${baseUrl.replace(/\/+$/, "")}${activeBot().webhookPath}`,
     secret_token: secret,
     // my_chat_member: the bot being added to a group or channel, which it
     // then leaves (a channel never sends it a message to react to).
@@ -337,17 +399,39 @@ export async function registerWebhook(baseUrl: string): Promise<TelegramResult> 
   return error === undefined ? { sent } : { sent, error };
 }
 
-// The bot's @username, needed to build t.me links. Cached after the first
-// success; a failure is not cached so the next attempt can recover.
-let botUsername: string | undefined;
+// Stops Telegram calling this server for the bot: an archived shop's bot.
+export async function unregisterWebhook(): Promise<TelegramResult> {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  const { sent, error } = await callBotApi(bot.token, "deleteWebhook", {});
+  return error === undefined ? { sent } : { sent, error };
+}
+
+// The bot's @username, needed to build t.me links. Cached per token after the
+// first success; a failure is not cached so the next attempt can recover.
+const botUsernames = new Map<string, string>();
 export async function getBotUsername(): Promise<string | undefined> {
-  if (botUsername) return botUsername;
   const bot = resolveBotToken();
   if (!("token" in bot)) return undefined;
-  const { result } = await callBotApi(bot.token, "getMe", {});
-  const username = (result as { username?: unknown } | undefined)?.username;
-  if (typeof username === "string" && /^[A-Za-z0-9_]{5,64}$/.test(username)) botUsername = username;
-  return botUsername;
+  const cached = botUsernames.get(bot.token);
+  if (cached) return cached;
+  const identity = await getBotIdentity(bot.token);
+  if (identity) botUsernames.set(bot.token, identity.username);
+  return identity?.username;
+}
+
+// The @username if it is already known, without asking Telegram.
+export function knownBotUsername(token: string | undefined) {
+  return token ? botUsernames.get(token) : undefined;
+}
+
+// Who a token belongs to, asked of Telegram: how a token entered for a new
+// shop is checked before it is saved.
+export async function getBotIdentity(token: string): Promise<{ id: string; username: string } | undefined> {
+  const { result } = await callBotApi(token, "getMe", {});
+  const me = result as { id?: unknown; username?: unknown } | undefined;
+  if (typeof me?.id !== "number" || typeof me.username !== "string" || !/^[A-Za-z0-9_]{5,64}$/.test(me.username)) return undefined;
+  return { id: String(me.id), username: me.username };
 }
 
 type TelegramUpdate = {
@@ -461,7 +545,7 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
       username: cleanUsername(message.from?.username),
       body,
       messageId: message.message_id,
-      ref: `${chatId}:${message.message_id}`,
+      ref: updateRef(bot.token, chatId, message.message_id),
       ...language,
     };
   }
@@ -483,8 +567,16 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
     // Telegram retries a webhook it thinks failed, for instance while this
     // instance is still waking up. Storing this key with a unique index makes
     // a retried update land once.
-    ref: `${chatId}:${message.message_id}`,
+    ref: updateRef(bot.token, chatId, message.message_id),
   };
+}
+
+// "<chat>:<message>" names a message within one bot. Q express's keeps the
+// form it always had; another shop's bot puts its own id in front, since two
+// bots number their messages to one person independently.
+function updateRef(token: string, chatId: string, messageId: number) {
+  const ref = `${chatId}:${messageId}`;
+  return activeBot().platform ? ref : `b${token.split(":")[0]}:${ref}`;
 }
 
 // A thumbs-up on the admin's own message says "delivered" without adding
@@ -517,14 +609,44 @@ export async function sendReplyHint(chatId: string, messageId: number, reason: "
 // reply is sent there too, and the customer can answer right in the bot.
 // ---------------------------------------------------------------------------
 
+// A page of the shop this bot belongs to, opened as the Mini App.
+function shopUrl(baseUrl: string, path: string) {
+  return `${baseUrl.replace(/\/+$/, "")}${activeBot().appPath}${path}`;
+}
+
+// What Q express's Mini App is told to open (its start parameter): the shop's
+// slug, and "__chat", "__orders" or "__deals" for one of its pages. The web
+// app reads it back (startAppPath in lib/telegram-mini-app.ts).
+export function startParam(appPath: string, path: string) {
+  const slug = appPath.replace(/^\/s\//, "");
+  const page = path.startsWith("/?chat=open")
+    ? "__chat"
+    : path.startsWith("/orders")
+      ? "__orders"
+      : path.startsWith("/catalog?sort=discount")
+        ? "__deals"
+        : "";
+  return `${slug}${page}`;
+}
+
+// A button that opens a page of the shop inside Telegram. Q express's bot
+// opens it as its own Mini App; another shop's bot links to Q express's Mini
+// App at that page, so the customer is always signed in by Q express's bot.
+function appButton(text: string, baseUrl: string, path: string) {
+  const bot = activeBot();
+  if (bot.platform) return { text, web_app: { url: shopUrl(baseUrl, path) } };
+  if (bot.miniAppBot) return { text, url: `https://t.me/${bot.miniAppBot}?startapp=${startParam(bot.appPath, path)}` };
+  return { text, url: shopUrl(baseUrl, path) };
+}
+
 function webAppButton(text: string, baseUrl: string, path: string) {
-  return { inline_keyboard: [[{ text, web_app: { url: `${baseUrl.replace(/\/+$/, "")}${path}` } }]] };
+  return { inline_keyboard: [[appButton(text, baseUrl, path)]] };
 }
 
 // The customer-facing messages below take the customer's language; Uzbek
-// unless told otherwise.
+// unless told otherwise. {shop} is the name of the shop the bot belongs to.
 function botText(lang: Lang, key: keyof typeof botMessages.uz, params?: Record<string, string | number>) {
-  return translate(botMessages, lang, key, params);
+  return translate(botMessages, lang, key, { shop: escapeHtml(activeBot().shopName), ...params });
 }
 
 export function customerReplyText(body: string, lang: Lang = "uz") {
@@ -620,21 +742,26 @@ export function welcomeMessage(
       const name = escapeHtml(shorten(inScript(offer.name, lang), 60));
       return `▫️ ${name}: <b>${formatSum(offer.price, lang)}</b> <s>${formatSum(offer.oldPrice!, lang)}</s> (−${percent}%)`;
     });
+  const bot = activeBot();
+  // Q express's own promises (the town, the minutes) are not another shop's
+  // to make; the free first delivery is whatever the shop has switched on.
   const caption = [
-    botText(lang, "welcomeTitle"),
-    botText(lang, "welcomeTagline"),
+    botText(lang, bot.platform ? "welcomeTitle" : "welcomeTitleShop"),
+    ...(bot.platform ? [botText(lang, "welcomeTagline")] : []),
     RULE,
-    botText(lang, "welcomeSpeed"),
+    ...(bot.platform ? [botText(lang, "welcomeSpeed")] : []),
     ...(hours ? [botText(lang, "welcomeHours", { open: escapeHtml(hours.openTime), close: escapeHtml(hours.closeTime) })] : []),
-    botText(lang, "welcomeFreeDelivery"),
+    ...(bot.freeFirstDelivery ? [botText(lang, "welcomeFreeDelivery")] : []),
     botText(lang, "welcomePayment"),
     ...(deals.length ? [RULE, botText(lang, "welcomeDeals"), ...deals] : []),
     RULE,
-    botText(lang, "welcomeHint"),
+    // Another shop's buttons lead to Q express's Mini App, so it says so.
+    botText(lang, bot.platform ? "welcomeHint" : "welcomeHintShop"),
   ].join("\n");
-  const app = (text: string, path: string) => ({ text, web_app: { url: `${root}${path}` } });
+  const app = (text: string, path: string) => appButton(text, root, path);
   return {
-    photo: `${root}/brand/q-express-logo.png`,
+    // Only Q express has a banner; another shop's welcome is text alone.
+    photo: bot.platform ? `${root}/brand/q-express-logo.png` : undefined,
     caption,
     parse_mode: "HTML",
     reply_markup: {
@@ -655,7 +782,10 @@ export async function sendWelcome(
 ) {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
-  const { sent, error } = await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, ...welcomeMessage(baseUrl, offers, hours, lang) });
+  const { photo, caption, ...rest } = welcomeMessage(baseUrl, offers, hours, lang);
+  const { sent, error } = photo
+    ? await callBotApi(bot.token, "sendPhoto", { chat_id: chatId, photo, caption, ...rest })
+    : await callBotApi(bot.token, "sendMessage", { chat_id: chatId, text: caption, disable_web_page_preview: true, ...rest });
   return error === undefined ? { sent } : { sent, error };
 }
 
@@ -666,9 +796,15 @@ export async function sendWelcome(
 export async function registerMenuButton(baseUrl: string, chatId?: string, lang: Lang = "uz"): Promise<TelegramResult> {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
+  // Another shop's bot has no Mini App of its own (see appButton): its menu
+  // button stays Telegram's default, and its messages carry the links.
+  if (!activeBot().platform) {
+    const { sent, error } = await callBotApi(bot.token, "setChatMenuButton", { ...(chatId ? { chat_id: chatId } : {}), menu_button: { type: "default" } });
+    return error === undefined ? { sent } : { sent, error };
+  }
   const { sent, error } = await callBotApi(bot.token, "setChatMenuButton", {
     ...(chatId ? { chat_id: chatId } : {}),
-    menu_button: { type: "web_app", text: translate(botMessages, lang, "menuButton"), web_app: { url: `${baseUrl.replace(/\/+$/, "")}/` } },
+    menu_button: { type: "web_app", text: translate(botMessages, lang, "menuButton"), web_app: { url: shopUrl(baseUrl, "/") } },
   });
   return error === undefined ? { sent } : { sent, error };
 }
@@ -722,6 +858,9 @@ export function botConfigured() {
   return "token" in resolveBotToken();
 }
 
+// Checked against the current bot only, which for sign-in is always Q
+// express's. Never against another shop's bot: its owner holds the token and
+// could sign launch data for any Telegram user (see /customer/telegram).
 export function verifyWebAppInitData(initData: string, now = Date.now()): string | undefined {
   const bot = resolveBotToken();
   if (!("token" in bot) || !initData) return undefined;

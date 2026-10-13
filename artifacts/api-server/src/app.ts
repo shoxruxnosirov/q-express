@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { readAdminSession } from "./lib/admin-auth";
 import { requestLang, translate } from "./lib/i18n";
 import { commonMessages } from "./lib/messages";
 
@@ -39,6 +40,15 @@ app.use(
 );
 app.use(cors());
 app.use(cookieParser());
+// A shop's card may hold up to 100 000 characters in each of three languages,
+// well past the parser's default 100 KB. Only that route gets the larger
+// limit: everything else, the unauthenticated routes included, keeps the
+// default. A body read here is not read again by the parser below.
+// Only for a request carrying a validly signed admin cookie: a stranger's
+// large body is cut off at the default limit before anything reads 1 MB.
+// The /admin guard still checks the session properly afterwards.
+const cardJson = express.json({ limit: "1mb" });
+app.use("/api/admin/shops/:id/card", (req, res, next) => (readAdminSession(req) ? cardJson(req, res, next) : next()));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -69,6 +79,10 @@ if (clientDirSetting) {
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof Error && error.name === "ZodError") {
     return res.status(400).json({ error: translate(commonMessages, requestLang(req), "invalidInput") });
+  }
+  // A body over the limit above: a client error, not the server's.
+  if ((error as { type?: unknown })?.type === "entity.too.large") {
+    return res.status(413).json({ error: translate(commonMessages, requestLang(req), "invalidInput") });
   }
   req.log.error({ error }, "Unhandled API error");
   return res.status(500).json({ error: translate(commonMessages, requestLang(req), "serverError") });

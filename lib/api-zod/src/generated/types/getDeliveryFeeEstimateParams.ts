@@ -5,8 +5,14 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ShopParameter } from './shopParameter';
 
 export type GetDeliveryFeeEstimateParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
 /**
  * The address line an order would carry, "12-dom, 5-xonadon".
  * @minLength 3

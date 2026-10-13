@@ -3,8 +3,9 @@ import { db } from "@workspace/db";
 import { ordersTable } from "@workspace/db/schema";
 import { linkedTelegramChatIds } from "./admin-directory";
 import { logger } from "./logger";
+import { isArchived, loadShop, shopBot, type ShopRow } from "./shops";
 import { formatTashkent } from "./store-hours";
-import { sendPreorderReminder } from "./telegram";
+import { sendPreorderReminder, withBot } from "./telegram";
 
 // Admins get a Telegram nudge 15 minutes before a pre-order is due.
 //
@@ -60,11 +61,16 @@ export async function sendDueReminders(now = new Date()) {
     ));
 
   if (due.length === 0) return 0;
-  const chats = await linkedTelegramChatIds();
+  // Each reminder goes to the admins of the order's shop, through its bot.
+  const shops = new Map<number, { shop: ShopRow | undefined; chats: string[] }>();
+  for (const shopId of new Set(due.map((order) => order.shopId))) {
+    shops.set(shopId, { shop: await loadShop(shopId), chats: await linkedTelegramChatIds(shopId) });
+  }
   let sent = due.length;
   for (const order of due) {
     const minutesLeft = Math.ceil((order.scheduledFor!.getTime() - now.getTime()) / MINUTE_MS);
-    const result = await sendPreorderReminder(
+    const { shop, chats } = shops.get(order.shopId)!;
+    const reminder = () => sendPreorderReminder(
       {
         orderNumber: order.orderNumber,
         customerName: order.customerName,
@@ -76,6 +82,14 @@ export async function sendDueReminders(now = new Date()) {
       },
       chats,
     );
+    // A shop gone or archived has no bot to send through: the order stays
+    // marked, rather than being tried again every minute until it is stale.
+    if (!shop || isArchived(shop)) {
+      logger.warn({ orderId: order.id, shopId: order.shopId }, "Pre-order reminder skipped: shop archived or gone");
+      sent -= 1;
+      continue;
+    }
+    const result = await withBot(await shopBot(shop), reminder);
     if (!result.sent) {
       // Reached no chat at all (Telegram down, a timeout): released, so the
       // next check tries again. It still stops once the order is half an

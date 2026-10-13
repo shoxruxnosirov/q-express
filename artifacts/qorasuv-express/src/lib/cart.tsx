@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import { Product } from '@workspace/api-client-react';
+import { productShopId, useShop } from './shop';
 
 const CART_STORAGE_KEY = 'qorasuv-cart-v2';
 const LEGACY_CART_STORAGE_KEY = 'qorasuv-cart';
@@ -18,6 +19,7 @@ export type CartContextValue = {
   subtotal: number;
   setLine: (line: CartLine) => void;
   remove: (productId: number) => void;
+  // Empties the current shop's cart only.
   clear: () => void;
   pickerProduct: Product | null;
   openPicker: (product: Product) => void;
@@ -63,12 +65,42 @@ function readStoredLines(raw: string | null, allowLegacy = false): CartLine[] {
   }
 }
 
-const CartContext = createContext<CartContextValue | null>(null);
+// Every shop has a cart of its own (the owner's choice): inside a shop the
+// cart holds, counts and orders only that shop's products, and Q express's
+// cart is separate from the others. The lines of every shop are kept together
+// on the device; each shop's pages see their own.
+type CartStore = {
+  allLines: CartLine[];
+  setLine: (line: CartLine) => void;
+  remove: (productId: number) => void;
+  removeShop: (shopId: number) => void;
+  pickerProduct: Product | null;
+  openPicker: (product: Product) => void;
+  closePicker: () => void;
+};
 
-export function useCart() {
-  const context = useContext(CartContext);
-  if (!context) throw new Error('Cart must be inside CartProvider');
-  return context;
+const CartContext = createContext<CartStore | null>(null);
+
+export function useCart(): CartContextValue {
+  const store = useContext(CartContext);
+  if (!store) throw new Error('Cart must be inside CartProvider');
+  // Until another shop's id is known (its list still loading) its cart shows
+  // empty rather than another shop's products.
+  const { shopId } = useShop();
+  return useMemo(() => {
+    const lines = shopId === undefined ? [] : store.allLines.filter(line => productShopId(line.product) === shopId);
+    return {
+      lines,
+      count: lines.length,
+      subtotal: roundMoney(lines.reduce((sum, line) => sum + roundMoney(line.purchaseMode === 'amount' ? (line.amount || 0) : line.quantity * line.product.price), 0)),
+      setLine: store.setLine,
+      remove: store.remove,
+      clear: () => { if (shopId !== undefined) store.removeShop(shopId); },
+      pickerProduct: store.pickerProduct,
+      openPicker: store.openPicker,
+      closePicker: store.closePicker,
+    };
+  }, [store, shopId]);
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -93,10 +125,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [lines, loaded]);
 
-  const value = useMemo(() => ({
-    lines,
-    count: lines.length,
-    subtotal: roundMoney(lines.reduce((sum, line) => sum + roundMoney(line.purchaseMode === 'amount' ? (line.amount || 0) : line.quantity * line.product.price), 0)),
+  const value = useMemo<CartStore>(() => ({
+    allLines: lines,
     setLine: (line: CartLine) => setLines(current => {
       const idx = current.findIndex(l => l.productId === line.productId);
       if (idx >= 0) {
@@ -107,7 +137,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       return [...current, line];
     }),
     remove: (id: number) => setLines(current => current.filter(l => l.productId !== id)),
-    clear: () => setLines([]),
+    removeShop: (shopId: number) => setLines(current => current.filter(l => productShopId(l.product) !== shopId)),
     pickerProduct,
     openPicker: setPickerProduct,
     closePicker: () => setPickerProduct(null)

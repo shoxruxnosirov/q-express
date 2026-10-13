@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { __test, openTelegramLink, postEvent } from "../src/lib/telegram-mini-app.ts";
+import { __test, openTelegramLink, postEvent, startAppPath } from "../src/lib/telegram-mini-app.ts";
 
 const { captureInitData, insideTelegram, readSessionToken, setInitData } = __test;
 
@@ -86,4 +86,26 @@ test("launch data counts only inside Telegram, not in a plain tab opened from a 
   const framed = { self: {}, parent: {} };
   assert.equal(insideTelegram(framed), true, "Telegram Web runs the shop in a frame");
   assert.equal(insideTelegram({ ...top, external: { notify() {} } }), true);
+});
+
+test("another shop's bot opens Q express's Mini App at that shop's page", () => {
+  assert.equal(startAppPath("oila-market"), "/s/oila-market");
+  assert.equal(startAppPath("oila-market__chat"), "/s/oila-market/?chat=open");
+  assert.equal(startAppPath("oila-market__orders"), "/s/oila-market/orders");
+  assert.equal(startAppPath("oila-market__deals"), "/s/oila-market/catalog?sort=discount");
+  // Anything else opens Q express as usual.
+  assert.equal(startAppPath(""), undefined);
+  assert.equal(startAppPath(null), undefined);
+  assert.equal(startAppPath("../admin"), undefined);
+  assert.equal(startAppPath("oila-market__admin"), undefined);
+});
+
+test("the start parameter is read from the query, the fragment or the launch data, on launch only", () => {
+  const data = encodeURIComponent("user=%7B%7D&start_param=oila-market__chat&hash=x");
+  const read = __test.launchStartParam;
+  assert.equal(read({ search: "?tgWebAppStartParam=oila-market", hash: `#tgWebAppData=${data}` }), "oila-market");
+  assert.equal(read({ search: "", hash: `#tgWebAppData=${data}&tgWebAppStartParam=oila-market__orders` }), "oila-market__orders");
+  assert.equal(read({ search: "", hash: `#tgWebAppData=${data}` }), "oila-market__chat");
+  // A reload without launch data stays on the page it is on.
+  assert.equal(read({ search: "?tgWebAppStartParam=oila-market", hash: "" }), null);
 });

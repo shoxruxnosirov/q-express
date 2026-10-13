@@ -88,9 +88,9 @@ before(async () => {
   categoryId = category.rows[0].id;
   // Orders for right now need the shop open; make it open all day so the suite
   // passes at any hour, and put the previous hours back afterwards.
-  const hours = await query("select open_time, close_time, accepting_orders from store_settings where id = 1");
+  const hours = await query("select open_time, close_time, accepting_orders from shops where id = 1");
   previousHours = hours.rows[0];
-  await query("update store_settings set open_time = '00:00', close_time = '00:00', accepting_orders = true where id = 1");
+  await query("update shops set open_time = '00:00', close_time = '00:00', accepting_orders = true where id = 1");
   const products = await query(
     `insert into products
        (category_id, name, description, image_url, price, unit, stock, active)
@@ -152,7 +152,7 @@ after(async () => {
   if (adminId != null) await query("delete from admins where id = $1", [adminId]);
   if (previousHours) {
     await query(
-      "update store_settings set open_time = $1, close_time = $2, accepting_orders = $3 where id = 1",
+      "update shops set open_time = $1, close_time = $2, accepting_orders = $3 where id = 1",
       [previousHours.open_time, previousHours.close_time, previousHours.accepting_orders],
     );
   }

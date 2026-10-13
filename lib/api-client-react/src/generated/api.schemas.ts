@@ -29,6 +29,7 @@ export const ProductUnit = {
 
 export interface Product {
   id: number;
+  shop_id: number;
   category_id: number;
   category: string;
   name: string;
@@ -94,6 +95,8 @@ export const OrderPaymentMethod = {
 
 export interface Order {
   id: number;
+  shop_id: number;
+  shop_name: string;
   order_number: string;
   customer_name: string;
   phone: string;
@@ -264,6 +267,9 @@ export const AdminAccountRole = {
 
 export interface AdminAccount {
   id: number;
+  shop_id: number;
+  /** A super admin of Q express, who runs the platform and may act in any shop. */
+  platform_super_admin: boolean;
   username: string;
   display_name: string;
   role: AdminAccountRole;
@@ -273,9 +279,146 @@ export interface AdminAccount {
   created_at: string;
 }
 
+/**
+ * Rich HTML per language, made in the admin's editor.
+ */
+export interface ShopCard {
+  /** @maxLength 100000 */
+  uz?: string;
+  /** @maxLength 100000 */
+  ru?: string;
+  /** @maxLength 100000 */
+  en?: string;
+}
+
+export interface Shop {
+  id: number;
+  slug: string;
+  name: string;
+  /** Q express, the platform's own shop. */
+  is_platform: boolean;
+  card: ShopCard;
+  sort_order: number;
+  delivery_fee: number;
+  /** The first order to each flat is delivered free. */
+  free_first_delivery: boolean;
+}
+
 export interface AdminSession {
   authenticated: boolean;
   admin?: AdminAccount;
+  shop?: Shop | null;
+}
+
+/**
+ * Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.
+ */
+export type AdminShopBotStatus = typeof AdminShopBotStatus[keyof typeof AdminShopBotStatus];
+
+
+export const AdminShopBotStatus = {
+  unknown: 'unknown',
+  connecting: 'connecting',
+  connected: 'connected',
+  failed: 'failed',
+} as const;
+
+export type AdminShop = Shop & ({
+  order_prefix: string;
+  active: boolean;
+  open_time: string;
+  close_time: string;
+  accepting_orders: boolean;
+  /** @nullable */
+  bot_username: string | null;
+  bot_configured: boolean;
+  /** Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try. */
+  bot_status: AdminShopBotStatus;
+  /**
+     * What Telegram answered when the bot failed to connect.
+     * @nullable
+     */
+  bot_error: string | null;
+  /** @nullable */
+  owner_chat_id: string | null;
+  /**
+     * When the shop was "deleted" (archived); null while in business.
+     * @nullable
+     */
+  archived_at: string | null;
+  created_at: string;
+});
+
+export interface AdminShopCreateInput {
+  /**
+     * @minLength 2
+     * @maxLength 60
+     */
+  name: string;
+  /** @pattern ^[a-z0-9][a-z0-9-]{1,39}$ */
+  slug: string;
+  /** @pattern ^[A-Z]{2,4}$ */
+  order_prefix: string;
+  /** @maxLength 100 */
+  bot_token: string;
+  /**
+     * @maxLength 20
+     * @nullable
+     */
+  owner_chat_id?: string | null;
+  /** @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$ */
+  open_time: string;
+  /** @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$ */
+  close_time: string;
+  /**
+     * @minimum 0
+     * @maximum 10000000
+     */
+  delivery_fee: number;
+  free_first_delivery: boolean;
+  card?: ShopCard;
+  super_admin: AdminCreateInput;
+}
+
+export interface AdminShopUpdateInput {
+  /**
+     * @minLength 2
+     * @maxLength 60
+     */
+  name?: string;
+  /** @pattern ^[a-z0-9][a-z0-9-]{1,39}$ */
+  slug?: string;
+  /** @pattern ^[A-Z]{2,4}$ */
+  order_prefix?: string;
+  active?: boolean;
+  sort_order?: number;
+  /** @maxLength 100 */
+  bot_token?: string;
+  /**
+     * @maxLength 20
+     * @nullable
+     */
+  owner_chat_id?: string | null;
+  /** @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$ */
+  open_time?: string;
+  /** @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$ */
+  close_time?: string;
+  accepting_orders?: boolean;
+  /**
+     * @minimum 0
+     * @maximum 10000000
+     */
+  delivery_fee?: number;
+  free_first_delivery?: boolean;
+}
+
+export interface AdminShopCreated {
+  shop: AdminShop;
+  admin: AdminAccount;
+}
+
+export interface ShopCardInput {
+  card: ShopCard;
 }
 
 export interface TelegramLink {
@@ -549,9 +692,14 @@ export interface CustomerSession {
   current: boolean;
 }
 
+/**
+ * A shop's customer. Until they have ordered in the shop being acted in, name, phone and addresses are empty and only their Telegram name shows.
+ */
 export interface AdminCustomer {
   id: number;
   blocked: boolean;
+  /** Blocked by Q express on the account or a device, in every shop. Only Q express can lift it. */
+  blocked_everywhere: boolean;
   blocked_at: string | null;
   /** The admin who blocked them. */
   blocked_by: string | null;
@@ -578,6 +726,8 @@ export interface AdminCustomer {
 export interface CustomerBlockInput {
   /** @maxLength 200 */
   reason?: string;
+  /** In another shop, a platform super admin blocks the customer on every shop (in Q express a block always holds everywhere). */
+  everywhere?: boolean;
 }
 
 export interface WeeklyLeaderboardEntry {
@@ -702,7 +852,25 @@ export interface AdminChatThread {
   unread_count: number;
 }
 
+/**
+ * The shop's slug; Q express when left out.
+ */
+export type ShopParameter = string;
+
+export type ListCategoriesParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+};
+
 export type ListProductsParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
 search?: string;
 category?: string;
 sort?: ListProductsSort;
@@ -721,11 +889,24 @@ export const ListProductsSort = {
 
 export type GetDeliveryFeeEstimateParams = {
 /**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+/**
  * The address line an order would carry, "12-dom, 5-xonadon".
  * @minLength 3
  * @maxLength 200
  */
 address: string;
+};
+
+export type GetCustomerLoginLinkParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
 };
 
 export type ListAdminOrdersParams = {
@@ -742,4 +923,44 @@ export const ListAdminOrdersStatus = {
   delivered: 'delivered',
   cancelled: 'cancelled',
 } as const;
+
+export type StartChatSessionParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+};
+
+export type GetChatTranscriptParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+};
+
+export type SendChatMessageParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+};
+
+export type GetStoreStatusParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+};
+
+export type GetWeeklyLeaderboardParams = {
+/**
+ * The shop's slug; Q express when left out.
+ * @maxLength 40
+ */
+shop?: ShopParameter;
+};
 

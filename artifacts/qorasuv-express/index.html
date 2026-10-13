@@ -1,7 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- The app translates itself (uz/ru/en). A browser translator rewrites the
+     text nodes React owns, and the next update crashes the page, so it is
+     turned off; lang is the default language, replaced once the app loads. -->
+<html lang="uz" translate="no" class="notranslate">
   <head>
     <meta charset="UTF-8" />
+    <meta name="google" content="notranslate" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <title>Q express</title>
     <meta name="description" content="Q express — vaqtini qadrlaydiganlar uchun" />

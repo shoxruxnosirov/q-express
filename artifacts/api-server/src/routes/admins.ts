@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   AdminLoginBody,
   AdminSetupBody,
@@ -23,10 +23,11 @@ import {
   setAdminSessionCookie,
   verifyPassword,
 } from "../lib/admin-auth";
-import { adminAccountDto, signedInAdmin, type AdminRow } from "../lib/admin-directory";
+import { adminAccountDto, adminShopId, isPlatformSuperAdmin, signedInAdmin, type AdminRow } from "../lib/admin-directory";
 import { isUniqueViolation } from "../lib/pg-error";
 import { createRateLimiter } from "../lib/rate-window";
-import { getBotUsername } from "../lib/telegram";
+import { isArchived, loadShop, shopBot, shopDto } from "../lib/shops";
+import { getBotUsername, withBot } from "../lib/telegram";
 
 const router: IRouter = Router();
 
@@ -58,8 +59,9 @@ function chargeFailure(req: Request, username: string) {
 const TOO_MANY = "Juda ko‘p urinish. 15 daqiqadan keyin qayta urinib ko‘ring.";
 const WRONG_LOGIN = "Login yoki parol noto‘g‘ri";
 
-function sessionBody(admin: AdminRow) {
-  return { authenticated: true, admin: adminAccountDto(admin) };
+async function sessionBody(admin: AdminRow) {
+  const shop = await loadShop(admin.shopId);
+  return { authenticated: true, admin: adminAccountDto(admin), shop: shop ? shopDto(shop) : null };
 }
 
 async function findByUsername(username: string) {
@@ -74,8 +76,17 @@ async function loadSessionAdmin(req: Request) {
   if (!claim) return undefined;
   const [admin] = await db.select().from(adminsTable).where(eq(adminsTable.id, claim.adminId)).limit(1);
   if (!admin || admin.sessionVersion !== claim.version || admin.passwordHash === null) return undefined;
+  // An archived shop's admins are signed out until the shop is restored.
+  if (await inArchivedShop(admin)) return undefined;
   return admin;
 }
+
+async function inArchivedShop(admin: AdminRow) {
+  const shop = await loadShop(admin.shopId);
+  return Boolean(shop && isArchived(shop));
+}
+
+const SHOP_ARCHIVED = "Do‘koningiz arxivlangan. Q express bilan bog‘laning.";
 
 router.post("/admin/auth", async (req, res, next) => {
   try {
@@ -98,9 +109,11 @@ router.post("/admin/auth", async (req, res, next) => {
       chargeFailure(req, username);
       return res.status(401).json({ error: WRONG_LOGIN });
     }
+    // Said only after the right password, so it tells a stranger nothing.
+    if (await inArchivedShop(admin)) return res.status(403).json({ error: SHOP_ARCHIVED });
 
     setAdminSessionCookie(res, admin.id, admin.sessionVersion);
-    return res.json(sessionBody(admin));
+    return res.json(await sessionBody(admin));
   } catch (error) {
     return next(error);
   }
@@ -141,7 +154,7 @@ router.post("/admin/setup", async (req, res, next) => {
     if (!updated) return res.status(401).json({ error: "Bu hisob allaqachon sozlangan" });
 
     setAdminSessionCookie(res, updated.id, updated.sessionVersion);
-    return res.json(sessionBody(updated));
+    return res.json(await sessionBody(updated));
   } catch (error) {
     return next(error);
   }
@@ -150,7 +163,7 @@ router.post("/admin/setup", async (req, res, next) => {
 router.get("/admin/session", async (req, res, next) => {
   try {
     const admin = await loadSessionAdmin(req);
-    return res.json(admin ? sessionBody(admin) : { authenticated: false });
+    return res.json(admin ? await sessionBody(admin) : { authenticated: false });
   } catch (error) {
     return next(error);
   }
@@ -171,6 +184,18 @@ router.use("/admin", async (req, res, next) => {
       return res.status(403).json({ error: "Avval parolingizni almashtiring", must_change_password: true });
     }
     res.locals.admin = admin;
+    // An admin acts in their own shop. A platform super admin may act in any
+    // shop by naming it in X-Admin-Shop (the dashboard's shop switcher). A shop
+    // that does not exist (a stale choice kept on the device) is ignored, so
+    // the dashboard still loads and the switcher can be used again.
+    const requested = Number(req.get("x-admin-shop"));
+    const switched = Number.isSafeInteger(requested) && requested > 0 && requested !== admin.shopId && isPlatformSuperAdmin(admin)
+      ? await loadShop(requested)
+      : undefined;
+    const shop = switched ?? (await loadShop(admin.shopId));
+    if (!shop) return res.status(500).json({ error: "Adminning do‘koni topilmadi" });
+    res.locals.shopId = shop.id;
+    res.locals.shop = shop;
     return next();
   } catch (error) {
     return next(error);
@@ -202,7 +227,7 @@ router.post("/admin/me/password", async (req, res, next) => {
       .where(eq(adminsTable.id, admin.id))
       .returning();
     setAdminSessionCookie(res, updated.id, updated.sessionVersion);
-    return res.json(sessionBody(updated));
+    return res.json(await sessionBody(updated));
   } catch (error) {
     return next(error);
   }
@@ -219,7 +244,10 @@ export function telegramLinkHash(code: string) {
 router.post("/admin/me/telegram", async (_req, res, next) => {
   try {
     const admin = signedInAdmin(res);
-    const username = await getBotUsername();
+    // Through the bot of the admin's own shop: that is where their shop's
+    // orders and messages will reach them.
+    const shop = await loadShop(admin.shopId);
+    const username = shop ? await withBot(await shopBot(shop), () => getBotUsername()) : undefined;
     if (!username) return res.status(503).json({ error: "Telegram bot sozlanmagan" });
 
     const code = randomBytes(16).toString("hex");
@@ -245,26 +273,46 @@ router.delete("/admin/me/telegram", async (_req, res, next) => {
       .set({ telegramChatId: null, telegramLinkHash: null, telegramLinkExpiresAt: null })
       .where(eq(adminsTable.id, admin.id))
       .returning();
-    return res.json(sessionBody(updated));
+    return res.json(await sessionBody(updated));
   } catch (error) {
     return next(error);
   }
 });
 
 // ---------------------------------------------------------------------------
-// Managing admins: super admins only
+// Managing admins: super admins only, each within their own shop. A platform
+// super admin manages the admins of whichever shop they act in, which is how a
+// new shop gets its first super admin.
 // ---------------------------------------------------------------------------
 
+// The guard above only lets a platform super admin act outside their own
+// shop, so a super admin is always one of the shop being acted in.
 function requireSuperAdmin(res: Response) {
-  if (signedInAdmin(res).role === "super_admin") return true;
+  const admin = signedInAdmin(res);
+  if (admin.role === "super_admin") return true;
   res.status(403).json({ error: "Bu amal faqat super admin uchun" });
   return false;
+}
+
+// An admin of the shop being acted in, or nothing: another shop's admins
+// answer exactly like missing ones.
+async function shopAdmin(res: Response, id: number) {
+  const [target] = await db
+    .select()
+    .from(adminsTable)
+    .where(and(eq(adminsTable.id, id), eq(adminsTable.shopId, adminShopId(res))))
+    .limit(1);
+  return target;
 }
 
 router.get("/admin/admins", async (_req, res, next) => {
   try {
     if (!requireSuperAdmin(res)) return;
-    const rows = await db.select().from(adminsTable).orderBy(adminsTable.role, adminsTable.username);
+    const rows = await db
+      .select()
+      .from(adminsTable)
+      .where(eq(adminsTable.shopId, adminShopId(res)))
+      .orderBy(adminsTable.role, adminsTable.username);
     // role sorts 'admin' before 'super_admin'; show super admins first.
     rows.sort((a, b) => (a.role === b.role ? 0 : a.role === "super_admin" ? -1 : 1));
     return res.json(rows.map(adminAccountDto));
@@ -286,6 +334,7 @@ router.post("/admin/admins", async (req, res, next) => {
       const [created] = await db
         .insert(adminsTable)
         .values({
+          shopId: adminShopId(res),
           username,
           displayName: input.display_name.trim(),
           role: input.role,
@@ -308,7 +357,7 @@ router.post("/admin/admins/:id/password", async (req, res, next) => {
     if (!requireSuperAdmin(res)) return;
     const { id } = ResetAdminPasswordParams.parse(req.params);
     const { temporary_password } = ResetAdminPasswordBody.parse(req.body);
-    const [target] = await db.select().from(adminsTable).where(eq(adminsTable.id, id)).limit(1);
+    const target = await shopAdmin(res, id);
     if (!target) return res.status(404).json({ error: "Admin topilmadi" });
     const problem = newPasswordProblem(temporary_password, target.username);
     if (problem) return res.status(400).json({ error: problem });
@@ -333,15 +382,21 @@ router.delete("/admin/admins/:id", async (req, res, next) => {
   try {
     if (!requireSuperAdmin(res)) return;
     const { id } = DeleteAdminParams.parse(req.params);
-    // Locking every super admin row serialises two deletions racing each
-    // other, which could otherwise remove the last two at the same moment.
+    const shopId = adminShopId(res);
+    // Locking every super admin row of the shop serialises two deletions
+    // racing each other, which could otherwise remove its last two at once.
     const outcome = await db.transaction(async (tx) => {
       const supers = await tx
         .select({ id: adminsTable.id })
         .from(adminsTable)
-        .where(eq(adminsTable.role, "super_admin"))
+        .where(and(eq(adminsTable.role, "super_admin"), eq(adminsTable.shopId, shopId)))
         .for("update");
-      const [target] = await tx.select().from(adminsTable).where(eq(adminsTable.id, id)).limit(1).for("update");
+      const [target] = await tx
+        .select()
+        .from(adminsTable)
+        .where(and(eq(adminsTable.id, id), eq(adminsTable.shopId, shopId)))
+        .limit(1)
+        .for("update");
       if (!target) return "missing" as const;
       if (target.role === "super_admin" && supers.length <= 1) return "last-super" as const;
       await tx.delete(adminsTable).where(eq(adminsTable.id, id));

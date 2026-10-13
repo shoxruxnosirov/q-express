@@ -12,9 +12,10 @@ import {
 import { Ban, Globe, LogOut, Send } from 'lucide-react';
 import { apiErrorMessage } from './AdminLogin';
 import { useAsk, useConfirm } from '@/components/ConfirmDialog';
+import { dateTimeLabel } from '@/lib/tashkent-time';
 
 const date = (value: string) =>
-  new Intl.DateTimeFormat('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  dateTimeLabel(new Date(value));
 
 // Enough of a user agent to tell two phones apart, without the noise.
 function deviceLabel(session: CustomerSession) {

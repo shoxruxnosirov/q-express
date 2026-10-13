@@ -21,7 +21,7 @@ const noAutoFix = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: fals
 // A readable temporary password the super admin can pass on by voice or chat.
 // The admin must replace it on first sign-in, so it only has to be unguessable
 // for a short while.
-function temporaryPassword() {
+export function temporaryPassword() {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   const bytes = crypto.getRandomValues(new Uint8Array(10));
   return Array.from(bytes, byte => alphabet[byte % alphabet.length]).join('');

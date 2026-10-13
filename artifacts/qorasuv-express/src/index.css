@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import './styles/rich-text.css';
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
@@ -88,8 +89,13 @@ body {
   color: hsl(var(--foreground));
   font-family: var(--app-font-sans);
 }
-button, input, select { font: inherit; }
-button { cursor: pointer; }
+/* In the base layer, so a control's own text-* and font-* classes win: left
+   unlayered, this beat every Tailwind utility and set every button in the
+   text and weight of the page around it. */
+@layer base {
+  button, input, select { font: inherit; }
+  button { cursor: pointer; }
+}
 
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slide { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: translateX(0); } }

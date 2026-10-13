@@ -7,9 +7,14 @@
  */
 import type { DeliveryAddress } from './deliveryAddress';
 
+/**
+ * A shop's customer. Until they have ordered in the shop being acted in, name, phone and addresses are empty and only their Telegram name shows.
+ */
 export interface AdminCustomer {
   id: number;
   blocked: boolean;
+  /** Blocked by Q express on the account or a device, in every shop. Only Q express can lift it. */
+  blocked_everywhere: boolean;
   blocked_at: Date | null;
   /** The admin who blocked them. */
   blocked_by: string | null;

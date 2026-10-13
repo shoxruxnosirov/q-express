@@ -9,4 +9,6 @@
 export interface CustomerBlockInput {
   /** @maxLength 200 */
   reason?: string;
+  /** In another shop, a platform super admin blocks the customer on every shop (in Q express a block always holds everywhere). */
+  everywhere?: boolean;
 }

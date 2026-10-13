@@ -141,8 +141,8 @@ export function AdminCategoryRow({
           : 'border-dashed border-[hsl(var(--muted-foreground)/.4)] bg-[hsl(var(--muted)/.35)]'
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+        <div className="flex min-w-[150px] flex-1 items-center gap-2.5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#e8efdc] text-[hsl(var(--primary))]">
             <Icon size={17} />
           </span>
@@ -168,7 +168,7 @@ export function AdminCategoryRow({
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
             type="button"
             aria-label={category.active ? `${category.name} kategoriyasini yashirish` : `${category.name} kategoriyasini ko‘rsatish`}

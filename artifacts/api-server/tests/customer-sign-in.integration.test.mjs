@@ -138,7 +138,7 @@ before(async () => {
   if (!fresh) return;
   writeFileSync(LOG, "");
   // Open all day, so orders are taken whatever the clock says.
-  await q(`update store_settings set open_time = '00:00', close_time = '00:00', accepting_orders = true`);
+  await q(`update shops set open_time = '00:00', close_time = '00:00', accepting_orders = true`);
   // --import takes a URL; a bare Windows path such as D:... is read as scheme "d:".
   server = spawn(process.execPath, ["--import", pathToFileURL(join(here, "telegram-stub.mjs")).href, resolve(here, "../dist/index.mjs")], {
     env: {
@@ -355,7 +355,10 @@ test("a Telegram user who only ever wrote to the bot becomes a customer", async 
   const chats = (await admin.call("GET", "/admin/chats")).body;
   const theirs = chats.find((c) => c.telegram_username === "dilshod_uz");
   assert.equal(theirs.telegram_name, "Dilshod");
-  assert.match(plain(lastTo(OWNER_CHAT).text), /👤 Dilshod/);
+  // Not yet a customer of the shop: known by their Telegram name alone.
+  assert.match(plain(lastTo(OWNER_CHAT).text), /Dilshod \(@dilshod_uz\)/);
+  assert.match(plain(lastTo(OWNER_CHAT).text), /👤 Noma’lum mijoz/);
+  assert.equal(theirs.phone, "");
   // Opening the shop later shows the same account and conversation.
   const later = new Device("dilshod");
   assert.equal((await later.launch({ id: 6001, first_name: "Dilshod" })).status, 200);
@@ -608,7 +611,7 @@ test("the shop answers in the customer's language and remembers it on the accoun
   assert.equal((await ivan.call("PATCH", "/customer/me", { language: "fr" })).status, 400, "only the four languages");
   // The bot writes to them in their language.
   await writeToBot(5010, "hello", "Ivan");
-  const thread = (await admin.call("GET", "/admin/chats")).body.find((c) => c.customer_name === "Ivan");
+  const thread = (await admin.call("GET", "/admin/chats")).body.find((c) => c.telegram_name === "Ivan");
   await admin.call("POST", `/admin/chats/${thread.id}/messages`, { body: "Hi Ivan" });
   const reply = lastTo(5010);
   assert.doesNotMatch(plain(reply.text), /javobi/, "not the Uzbek header");

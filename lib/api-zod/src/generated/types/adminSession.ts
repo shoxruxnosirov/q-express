@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AdminAccount } from './adminAccount';
+import type { Shop } from './shop';
 
 export interface AdminSession {
   authenticated: boolean;
   admin?: AdminAccount;
+  shop?: Shop | null;
 }

@@ -4,6 +4,7 @@ import { getGetStoreStatusQueryKey, useGetStoreStatus } from '@workspace/api-cli
 import { clockTime, dayLabel } from '@/lib/tashkent-time';
 import { useT } from '@/i18n';
 import messages from '@/i18n/messages/storeClosed';
+import { useShop } from '@/lib/shop';
 
 // A strip under the header while the shop is shut, so nobody fills a cart
 // expecting a delivery in fifteen minutes.
@@ -16,7 +17,9 @@ function midSentenceFor(lang: string) {
 export function StoreClosedBanner() {
   const { t, lang } = useT(messages);
   const midSentence = midSentenceFor(lang);
-  const status = useGetStoreStatus({ query: { queryKey: getGetStoreStatusQueryKey(), refetchInterval: 60_000 } });
+  // The hours of the shop being shown.
+  const { params } = useShop();
+  const status = useGetStoreStatus(params, { query: { queryKey: getGetStoreStatusQueryKey(params), refetchInterval: 60_000 } });
   const data = status.data;
   if (!data || data.open_now) return null;
   return (

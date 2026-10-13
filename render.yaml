@@ -45,6 +45,12 @@ services:
         generateValue: true
       - key: TELEGRAM_BOT_MODE
         value: legacy
+      # The @username (without @) of the bot the mode above selects. Other
+      # shops' bots link customers to its Mini App, and with this set they can
+      # from the first message after a start, before Telegram has been asked.
+      # A value naming the other bot is overridden, with a warning in the log.
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
       # Product images are uploaded from the admin panel to Cloudinary. The
       # browser uploads directly, so the image bytes never wait on this free
       # instance waking from sleep; the API only signs each upload and deletes

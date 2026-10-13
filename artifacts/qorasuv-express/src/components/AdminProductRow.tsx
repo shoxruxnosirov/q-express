@@ -267,8 +267,10 @@ export function AdminProductRow({
           : 'border-dashed border-[hsl(var(--muted-foreground)/.4)] bg-[hsl(var(--muted)/.35)]'
       }`}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* On a narrow screen the buttons go under the name rather than squeeze
+          it to a few letters. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-[200px] flex-1 items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[hsl(var(--muted))]">
             {product.image_url
               ? <img src={product.image_url} alt="" loading="lazy" className="h-full w-full object-cover" />
@@ -300,7 +302,7 @@ export function AdminProductRow({
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {soldOut ? (
             <button
               type="button"

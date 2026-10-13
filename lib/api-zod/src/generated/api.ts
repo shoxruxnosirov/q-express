@@ -20,6 +20,14 @@ export const HealthCheckResponse = zod.object({
 /**
  * @summary List active product categories
  */
+export const listCategoriesQueryShopMax = 40;
+
+
+
+export const ListCategoriesQueryParams = zod.object({
+  "shop": zod.coerce.string().max(listCategoriesQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const ListCategoriesResponseItem = zod.object({
   "id": zod.number().int(),
   "name": zod.string(),
@@ -33,7 +41,12 @@ export const ListCategoriesResponse = zod.array(ListCategoriesResponseItem)
 /**
  * @summary List products
  */
+export const listProductsQueryShopMax = 40;
+
+
+
 export const ListProductsQueryParams = zod.object({
+  "shop": zod.coerce.string().max(listProductsQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.'),
   "search": zod.coerce.string().optional(),
   "category": zod.coerce.string().optional(),
   "sort": zod.enum(['popular', 'price_asc', 'price_desc', 'newest', 'discount']).optional()
@@ -45,6 +58,7 @@ export const listProductsResponseStockMin = 0;
 
 export const ListProductsResponseItem = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
   "category_id": zod.number().int(),
   "category": zod.string(),
   "name": zod.string(),
@@ -73,6 +87,7 @@ export const getProductResponseStockMin = 0;
 
 export const GetProductResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
   "category_id": zod.number().int(),
   "category": zod.string(),
   "name": zod.string(),
@@ -100,6 +115,8 @@ export const listOrdersResponseItemsItemRequestedAmountMin = 0.01;
 
 export const ListOrdersResponseItem = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "shop_name": zod.string(),
   "order_number": zod.string(),
   "customer_name": zod.string(),
   "phone": zod.string(),
@@ -173,6 +190,8 @@ export const createOrderResponseItemsItemRequestedAmountMin = 0.01;
 
 export const CreateOrderResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "shop_name": zod.string(),
   "order_number": zod.string(),
   "customer_name": zod.string(),
   "phone": zod.string(),
@@ -206,12 +225,15 @@ export const CreateOrderResponse = zod.object({
  * The first order to a flat (dom and xonadon) has free delivery, whoever places it and from whichever account.
  * @summary Estimate the delivery fee for an address
  */
+export const getDeliveryFeeEstimateQueryShopMax = 40;
+
 export const getDeliveryFeeEstimateQueryAddressMin = 3;
 export const getDeliveryFeeEstimateQueryAddressMax = 200;
 
 
 
 export const GetDeliveryFeeEstimateQueryParams = zod.object({
+  "shop": zod.coerce.string().max(getDeliveryFeeEstimateQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.'),
   "address": zod.coerce.string().min(getDeliveryFeeEstimateQueryAddressMin).max(getDeliveryFeeEstimateQueryAddressMax).describe('The address line an order would carry, "12-dom, 5-xonadon".')
 })
 
@@ -237,6 +259,8 @@ export const getOrderResponseItemsItemRequestedAmountMin = 0.01;
 
 export const GetOrderResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "shop_name": zod.string(),
   "order_number": zod.string(),
   "customer_name": zod.string(),
   "phone": zod.string(),
@@ -393,6 +417,14 @@ export const ReplaceCustomerAddressesResponse = zod.object({
  * Accounts, the chat and the profile live in Telegram. A browser shows this link to send people there.
  * @summary The bot, where the shop opens as the Mini App
  */
+export const getCustomerLoginLinkQueryShopMax = 40;
+
+
+
+export const GetCustomerLoginLinkQueryParams = zod.object({
+  "shop": zod.coerce.string().max(getCustomerLoginLinkQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const GetCustomerLoginLinkResponse = zod.object({
   "url": zod.string()
 })
@@ -472,6 +504,7 @@ export const listAdminCustomersResponseAddressesItemXonadonMax = 10;
 export const ListAdminCustomersResponseItem = zod.object({
   "id": zod.number().int(),
   "blocked": zod.boolean(),
+  "blocked_everywhere": zod.boolean().describe('Blocked by Q express on the account or a device, in every shop. Only Q express can lift it.'),
   "blocked_at": zod.coerce.date().nullable(),
   "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
   "block_reason": zod.string().nullable(),
@@ -491,7 +524,7 @@ export const ListAdminCustomersResponseItem = zod.object({
   "dom": zod.string().max(listAdminCustomersResponseAddressesItemDomMax),
   "xonadon": zod.string().max(listAdminCustomersResponseAddressesItemXonadonMax)
 }))
-})
+}).describe('A shop\'s customer. Until they have ordered in the shop being acted in, name, phone and addresses are empty and only their Telegram name shows.')
 export const ListAdminCustomersResponse = zod.array(ListAdminCustomersResponseItem)
 
 
@@ -508,7 +541,8 @@ export const blockCustomerBodyReasonMax = 200;
 
 
 export const BlockCustomerBody = zod.object({
-  "reason": zod.string().max(blockCustomerBodyReasonMax).optional()
+  "reason": zod.string().max(blockCustomerBodyReasonMax).optional(),
+  "everywhere": zod.boolean().optional().describe('In another shop, a platform super admin blocks the customer on every shop (in Q express a block always holds everywhere).')
 })
 
 export const blockCustomerResponseAddressesItemDomMax = 10;
@@ -520,6 +554,7 @@ export const blockCustomerResponseAddressesItemXonadonMax = 10;
 export const BlockCustomerResponse = zod.object({
   "id": zod.number().int(),
   "blocked": zod.boolean(),
+  "blocked_everywhere": zod.boolean().describe('Blocked by Q express on the account or a device, in every shop. Only Q express can lift it.'),
   "blocked_at": zod.coerce.date().nullable(),
   "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
   "block_reason": zod.string().nullable(),
@@ -539,7 +574,7 @@ export const BlockCustomerResponse = zod.object({
   "dom": zod.string().max(blockCustomerResponseAddressesItemDomMax),
   "xonadon": zod.string().max(blockCustomerResponseAddressesItemXonadonMax)
 }))
-})
+}).describe('A shop\'s customer. Until they have ordered in the shop being acted in, name, phone and addresses are empty and only their Telegram name shows.')
 
 
 /**
@@ -549,15 +584,16 @@ export const UnblockCustomerParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
-export const unblockCustomerResponseAddressesItemDomMax = 10;
+export const unblockCustomerResponseOneAddressesItemDomMax = 10;
 
-export const unblockCustomerResponseAddressesItemXonadonMax = 10;
+export const unblockCustomerResponseOneAddressesItemXonadonMax = 10;
 
 
 
-export const UnblockCustomerResponse = zod.object({
+export const UnblockCustomerResponse = zod.union([zod.object({
   "id": zod.number().int(),
   "blocked": zod.boolean(),
+  "blocked_everywhere": zod.boolean().describe('Blocked by Q express on the account or a device, in every shop. Only Q express can lift it.'),
   "blocked_at": zod.coerce.date().nullable(),
   "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
   "block_reason": zod.string().nullable(),
@@ -574,10 +610,50 @@ export const UnblockCustomerResponse = zod.object({
   "last_order_at": zod.coerce.date().nullable(),
   "created_at": zod.coerce.date(),
   "addresses": zod.array(zod.object({
-  "dom": zod.string().max(unblockCustomerResponseAddressesItemDomMax),
-  "xonadon": zod.string().max(unblockCustomerResponseAddressesItemXonadonMax)
+  "dom": zod.string().max(unblockCustomerResponseOneAddressesItemDomMax),
+  "xonadon": zod.string().max(unblockCustomerResponseOneAddressesItemXonadonMax)
 }))
+}).describe('A shop\'s customer. Until they have ordered in the shop being acted in, name, phone and addresses are empty and only their Telegram name shows.'),zod.null()])
+
+
+/**
+ * For a platform super admin working in another shop: lifts that shop's block, the block on the account and its device blocks. In Q express the plain unblock already does this.
+ * @summary Lift every block a customer has here, Q express's included (platform super admins only)
+ */
+export const UnblockCustomerEverywhereParams = zod.object({
+  "id": zod.coerce.number().int()
 })
+
+export const unblockCustomerEverywhereResponseOneAddressesItemDomMax = 10;
+
+export const unblockCustomerEverywhereResponseOneAddressesItemXonadonMax = 10;
+
+
+
+export const UnblockCustomerEverywhereResponse = zod.union([zod.object({
+  "id": zod.number().int(),
+  "blocked": zod.boolean(),
+  "blocked_everywhere": zod.boolean().describe('Blocked by Q express on the account or a device, in every shop. Only Q express can lift it.'),
+  "blocked_at": zod.coerce.date().nullable(),
+  "blocked_by": zod.string().nullable().describe('The admin who blocked them.'),
+  "block_reason": zod.string().nullable(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "phone_verified": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "telegram_name": zod.string().nullable().describe('The name Telegram shows for the customer.'),
+  "telegram_username": zod.string().nullable().describe('The customer\'s Telegram @username, without the @, if they have one.'),
+  "active_sessions": zod.number().int().describe('Devices currently signed in (neither revoked nor blocked).'),
+  "blocked_devices": zod.number().int().describe('Devices an admin blocked. Any blocked device makes blocked true, since the Telegram account is refused everywhere.'),
+  "order_count": zod.number().int(),
+  "total_spent": zod.number(),
+  "last_order_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "addresses": zod.array(zod.object({
+  "dom": zod.string().max(unblockCustomerEverywhereResponseOneAddressesItemDomMax),
+  "xonadon": zod.string().max(unblockCustomerEverywhereResponseOneAddressesItemXonadonMax)
+}))
+}).describe('A shop\'s customer. Until they have ordered in the shop being acted in, name, phone and addresses are empty and only their Telegram name shows.'),zod.null()])
 
 
 /**
@@ -639,7 +715,8 @@ export const blockCustomerSessionBodyReasonMax = 200;
 
 
 export const BlockCustomerSessionBody = zod.object({
-  "reason": zod.string().max(blockCustomerSessionBodyReasonMax).optional()
+  "reason": zod.string().max(blockCustomerSessionBodyReasonMax).optional(),
+  "everywhere": zod.boolean().optional().describe('In another shop, a platform super admin blocks the customer on every shop (in Q express a block always holds everywhere).')
 })
 
 export const BlockCustomerSessionResponse = zod.object({
@@ -693,10 +770,20 @@ export const AdminLoginBody = zod.object({
   "password": zod.string().min(1).max(adminLoginBodyPasswordMax)
 })
 
+export const adminLoginResponseShopOneCardUzMax = 100000;
+
+export const adminLoginResponseShopOneCardRuMax = 100000;
+
+export const adminLoginResponseShopOneCardEnMax = 100000;
+
+
+
 export const AdminLoginResponse = zod.object({
   "authenticated": zod.boolean(),
   "admin": zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -704,7 +791,21 @@ export const AdminLoginResponse = zod.object({
   "has_password": zod.boolean(),
   "telegram_linked": zod.boolean(),
   "created_at": zod.coerce.date()
-}).optional()
+}).optional(),
+  "shop": zod.union([zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(adminLoginResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(adminLoginResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(adminLoginResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}),zod.null()]).optional()
 })
 
 
@@ -727,10 +828,20 @@ export const AdminSetupBody = zod.object({
   "new_password": zod.string().min(adminSetupBodyNewPasswordMin).max(adminSetupBodyNewPasswordMax)
 })
 
+export const adminSetupResponseShopOneCardUzMax = 100000;
+
+export const adminSetupResponseShopOneCardRuMax = 100000;
+
+export const adminSetupResponseShopOneCardEnMax = 100000;
+
+
+
 export const AdminSetupResponse = zod.object({
   "authenticated": zod.boolean(),
   "admin": zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -738,7 +849,21 @@ export const AdminSetupResponse = zod.object({
   "has_password": zod.boolean(),
   "telegram_linked": zod.boolean(),
   "created_at": zod.coerce.date()
-}).optional()
+}).optional(),
+  "shop": zod.union([zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(adminSetupResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(adminSetupResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(adminSetupResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}),zod.null()]).optional()
 })
 
 
@@ -757,10 +882,20 @@ export const ChangeOwnAdminPasswordBody = zod.object({
   "new_password": zod.string().min(changeOwnAdminPasswordBodyNewPasswordMin).max(changeOwnAdminPasswordBodyNewPasswordMax)
 })
 
+export const changeOwnAdminPasswordResponseShopOneCardUzMax = 100000;
+
+export const changeOwnAdminPasswordResponseShopOneCardRuMax = 100000;
+
+export const changeOwnAdminPasswordResponseShopOneCardEnMax = 100000;
+
+
+
 export const ChangeOwnAdminPasswordResponse = zod.object({
   "authenticated": zod.boolean(),
   "admin": zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -768,7 +903,21 @@ export const ChangeOwnAdminPasswordResponse = zod.object({
   "has_password": zod.boolean(),
   "telegram_linked": zod.boolean(),
   "created_at": zod.coerce.date()
-}).optional()
+}).optional(),
+  "shop": zod.union([zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(changeOwnAdminPasswordResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(changeOwnAdminPasswordResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(changeOwnAdminPasswordResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}),zod.null()]).optional()
 })
 
 
@@ -784,10 +933,20 @@ export const CreateTelegramLinkResponse = zod.object({
 /**
  * @summary Stop Telegram notifications for this admin
  */
+export const unlinkTelegramResponseShopOneCardUzMax = 100000;
+
+export const unlinkTelegramResponseShopOneCardRuMax = 100000;
+
+export const unlinkTelegramResponseShopOneCardEnMax = 100000;
+
+
+
 export const UnlinkTelegramResponse = zod.object({
   "authenticated": zod.boolean(),
   "admin": zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -795,7 +954,21 @@ export const UnlinkTelegramResponse = zod.object({
   "has_password": zod.boolean(),
   "telegram_linked": zod.boolean(),
   "created_at": zod.coerce.date()
-}).optional()
+}).optional(),
+  "shop": zod.union([zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(unlinkTelegramResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(unlinkTelegramResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(unlinkTelegramResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}),zod.null()]).optional()
 })
 
 
@@ -804,6 +977,8 @@ export const UnlinkTelegramResponse = zod.object({
  */
 export const ListAdminsResponseItem = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -836,6 +1011,8 @@ export const CreateAdminBody = zod.object({
 
 export const CreateAdminResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -874,6 +1051,8 @@ export const ResetAdminPasswordBody = zod.object({
 
 export const ResetAdminPasswordResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -887,10 +1066,20 @@ export const ResetAdminPasswordResponse = zod.object({
 /**
  * @summary Check the operator session
  */
+export const getAdminSessionResponseShopOneCardUzMax = 100000;
+
+export const getAdminSessionResponseShopOneCardRuMax = 100000;
+
+export const getAdminSessionResponseShopOneCardEnMax = 100000;
+
+
+
 export const GetAdminSessionResponse = zod.object({
   "authenticated": zod.boolean(),
   "admin": zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -898,17 +1087,41 @@ export const GetAdminSessionResponse = zod.object({
   "has_password": zod.boolean(),
   "telegram_linked": zod.boolean(),
   "created_at": zod.coerce.date()
-}).optional()
+}).optional(),
+  "shop": zod.union([zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(getAdminSessionResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(getAdminSessionResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(getAdminSessionResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}),zod.null()]).optional()
 })
 
 
 /**
  * @summary Sign out of the operator dashboard
  */
+export const adminLogoutResponseShopOneCardUzMax = 100000;
+
+export const adminLogoutResponseShopOneCardRuMax = 100000;
+
+export const adminLogoutResponseShopOneCardEnMax = 100000;
+
+
+
 export const AdminLogoutResponse = zod.object({
   "authenticated": zod.boolean(),
   "admin": zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
   "username": zod.string(),
   "display_name": zod.string(),
   "role": zod.enum(['super_admin', 'admin']),
@@ -916,7 +1129,21 @@ export const AdminLogoutResponse = zod.object({
   "has_password": zod.boolean(),
   "telegram_linked": zod.boolean(),
   "created_at": zod.coerce.date()
-}).optional()
+}).optional(),
+  "shop": zod.union([zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(adminLogoutResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(adminLogoutResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(adminLogoutResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}),zod.null()]).optional()
 })
 
 
@@ -955,6 +1182,8 @@ export const listAdminOrdersResponseItemsItemRequestedAmountMin = 0.01;
 
 export const ListAdminOrdersResponseItem = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "shop_name": zod.string(),
   "order_number": zod.string(),
   "customer_name": zod.string(),
   "phone": zod.string(),
@@ -1005,6 +1234,8 @@ export const updateAdminOrderStatusResponseItemsItemRequestedAmountMin = 0.01;
 
 export const UpdateAdminOrderStatusResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "shop_name": zod.string(),
   "order_number": zod.string(),
   "customer_name": zod.string(),
   "phone": zod.string(),
@@ -1191,6 +1422,7 @@ export const createAdminProductResponseStockMin = 0;
 
 export const CreateAdminProductResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
   "category_id": zod.number().int(),
   "category": zod.string(),
   "name": zod.string(),
@@ -1247,6 +1479,7 @@ export const updateAdminProductResponseStockMin = 0;
 
 export const UpdateAdminProductResponse = zod.object({
   "id": zod.number().int(),
+  "shop_id": zod.number().int(),
   "category_id": zod.number().int(),
   "category": zod.string(),
   "name": zod.string(),
@@ -1288,6 +1521,14 @@ export const CreateAdminUploadTicketResponse = zod.object({
  * Idempotent. Returns the existing thread when the browser already holds a valid chat cookie, otherwise creates one and sets the cookie.
  * @summary Open or resume this browser's conversation
  */
+export const startChatSessionQueryShopMax = 40;
+
+
+
+export const StartChatSessionQueryParams = zod.object({
+  "shop": zod.coerce.string().max(startChatSessionQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const startChatSessionBodyNameMax = 80;
 
 export const startChatSessionBodyPhoneMax = 32;
@@ -1309,6 +1550,14 @@ export const StartChatSessionResponse = zod.object({
 /**
  * @summary Read this browser's conversation
  */
+export const getChatTranscriptQueryShopMax = 40;
+
+
+
+export const GetChatTranscriptQueryParams = zod.object({
+  "shop": zod.coerce.string().max(getChatTranscriptQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const GetChatTranscriptResponse = zod.object({
   "thread_id": zod.number().int(),
   "messages": zod.array(zod.object({
@@ -1324,6 +1573,14 @@ export const GetChatTranscriptResponse = zod.object({
 /**
  * @summary Send a message as the customer
  */
+export const sendChatMessageQueryShopMax = 40;
+
+
+
+export const SendChatMessageQueryParams = zod.object({
+  "shop": zod.coerce.string().max(sendChatMessageQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const sendChatMessageBodyBodyMax = 1000;
 
 
@@ -1414,8 +1671,463 @@ export const SendAdminChatMessageResponse = zod.object({
 
 
 /**
+ * @summary The shops on the platform, Q express first
+ */
+export const listShopsResponseCardUzMax = 100000;
+
+export const listShopsResponseCardRuMax = 100000;
+
+export const listShopsResponseCardEnMax = 100000;
+
+
+
+export const ListShopsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(listShopsResponseCardUzMax).optional(),
+  "ru": zod.string().max(listShopsResponseCardRuMax).optional(),
+  "en": zod.string().max(listShopsResponseCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+})
+export const ListShopsResponse = zod.array(ListShopsResponseItem)
+
+
+/**
+ * Admins of Q express see every shop (they may edit any shop's card); another shop's admins see only their own.
+ * @summary The shops this admin may see
+ */
+export const listAdminShopsResponseOneCardUzMax = 100000;
+
+export const listAdminShopsResponseOneCardRuMax = 100000;
+
+export const listAdminShopsResponseOneCardEnMax = 100000;
+
+
+
+export const ListAdminShopsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(listAdminShopsResponseOneCardUzMax).optional(),
+  "ru": zod.string().max(listAdminShopsResponseOneCardRuMax).optional(),
+  "en": zod.string().max(listAdminShopsResponseOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+}))
+export const ListAdminShopsResponse = zod.array(ListAdminShopsResponseItem)
+
+
+/**
+ * @summary Create a shop with its bot and first super admin (platform super admins only)
+ */
+export const createAdminShopBodyNameMin = 2;
+export const createAdminShopBodyNameMax = 60;
+
+export const createAdminShopBodySlugRegExp = new RegExp('^[a-z0-9][a-z0-9-]{1,39}$');
+export const createAdminShopBodyOrderPrefixRegExp = new RegExp('^[A-Z]{2,4}$');
+export const createAdminShopBodyBotTokenMax = 100;
+
+export const createAdminShopBodyOwnerChatIdMax = 20;
+
+export const createAdminShopBodyOpenTimeRegExp = new RegExp('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+export const createAdminShopBodyCloseTimeRegExp = new RegExp('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+export const createAdminShopBodyDeliveryFeeMin = 0;
+export const createAdminShopBodyDeliveryFeeMax = 10000000;
+
+export const createAdminShopBodyCardUzMax = 100000;
+
+export const createAdminShopBodyCardRuMax = 100000;
+
+export const createAdminShopBodyCardEnMax = 100000;
+
+export const createAdminShopBodySuperAdminUsernameRegExp = new RegExp('^[a-z0-9_.-]{3,32}$');
+export const createAdminShopBodySuperAdminDisplayNameMin = 2;
+export const createAdminShopBodySuperAdminDisplayNameMax = 60;
+
+export const createAdminShopBodySuperAdminTemporaryPasswordMin = 8;
+export const createAdminShopBodySuperAdminTemporaryPasswordMax = 128;
+
+
+
+export const CreateAdminShopBody = zod.object({
+  "name": zod.string().min(createAdminShopBodyNameMin).max(createAdminShopBodyNameMax),
+  "slug": zod.string().regex(createAdminShopBodySlugRegExp),
+  "order_prefix": zod.string().regex(createAdminShopBodyOrderPrefixRegExp),
+  "bot_token": zod.string().max(createAdminShopBodyBotTokenMax),
+  "owner_chat_id": zod.string().max(createAdminShopBodyOwnerChatIdMax).nullish(),
+  "open_time": zod.string().regex(createAdminShopBodyOpenTimeRegExp),
+  "close_time": zod.string().regex(createAdminShopBodyCloseTimeRegExp),
+  "delivery_fee": zod.number().min(createAdminShopBodyDeliveryFeeMin).max(createAdminShopBodyDeliveryFeeMax),
+  "free_first_delivery": zod.boolean(),
+  "card": zod.object({
+  "uz": zod.string().max(createAdminShopBodyCardUzMax).optional(),
+  "ru": zod.string().max(createAdminShopBodyCardRuMax).optional(),
+  "en": zod.string().max(createAdminShopBodyCardEnMax).optional()
+}).optional().describe('Rich HTML per language, made in the admin\'s editor.'),
+  "super_admin": zod.object({
+  "username": zod.string().regex(createAdminShopBodySuperAdminUsernameRegExp),
+  "display_name": zod.string().min(createAdminShopBodySuperAdminDisplayNameMin).max(createAdminShopBodySuperAdminDisplayNameMax),
+  "role": zod.enum(['super_admin', 'admin']),
+  "temporary_password": zod.string().min(createAdminShopBodySuperAdminTemporaryPasswordMin).max(createAdminShopBodySuperAdminTemporaryPasswordMax)
+})
+})
+
+export const createAdminShopResponseShopOneCardUzMax = 100000;
+
+export const createAdminShopResponseShopOneCardRuMax = 100000;
+
+export const createAdminShopResponseShopOneCardEnMax = 100000;
+
+
+
+export const CreateAdminShopResponse = zod.object({
+  "shop": zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(createAdminShopResponseShopOneCardUzMax).optional(),
+  "ru": zod.string().max(createAdminShopResponseShopOneCardRuMax).optional(),
+  "en": zod.string().max(createAdminShopResponseShopOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+})),
+  "admin": zod.object({
+  "id": zod.number().int(),
+  "shop_id": zod.number().int(),
+  "platform_super_admin": zod.boolean().describe('A super admin of Q express, who runs the platform and may act in any shop.'),
+  "username": zod.string(),
+  "display_name": zod.string(),
+  "role": zod.enum(['super_admin', 'admin']),
+  "must_change_password": zod.boolean(),
+  "has_password": zod.boolean(),
+  "telegram_linked": zod.boolean(),
+  "created_at": zod.coerce.date()
+})
+})
+
+
+/**
+ * @summary Change a shop's settings (platform super admins only)
+ */
+export const UpdateAdminShopParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const updateAdminShopBodyNameMin = 2;
+export const updateAdminShopBodyNameMax = 60;
+
+export const updateAdminShopBodySlugRegExp = new RegExp('^[a-z0-9][a-z0-9-]{1,39}$');
+export const updateAdminShopBodyOrderPrefixRegExp = new RegExp('^[A-Z]{2,4}$');
+export const updateAdminShopBodyBotTokenMax = 100;
+
+export const updateAdminShopBodyOwnerChatIdMax = 20;
+
+export const updateAdminShopBodyOpenTimeRegExp = new RegExp('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+export const updateAdminShopBodyCloseTimeRegExp = new RegExp('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+export const updateAdminShopBodyDeliveryFeeMin = 0;
+export const updateAdminShopBodyDeliveryFeeMax = 10000000;
+
+
+
+export const UpdateAdminShopBody = zod.object({
+  "name": zod.string().min(updateAdminShopBodyNameMin).max(updateAdminShopBodyNameMax).optional(),
+  "slug": zod.string().regex(updateAdminShopBodySlugRegExp).optional(),
+  "order_prefix": zod.string().regex(updateAdminShopBodyOrderPrefixRegExp).optional(),
+  "active": zod.boolean().optional(),
+  "sort_order": zod.number().int().optional(),
+  "bot_token": zod.string().max(updateAdminShopBodyBotTokenMax).optional(),
+  "owner_chat_id": zod.string().max(updateAdminShopBodyOwnerChatIdMax).nullish(),
+  "open_time": zod.string().regex(updateAdminShopBodyOpenTimeRegExp).optional(),
+  "close_time": zod.string().regex(updateAdminShopBodyCloseTimeRegExp).optional(),
+  "accepting_orders": zod.boolean().optional(),
+  "delivery_fee": zod.number().min(updateAdminShopBodyDeliveryFeeMin).max(updateAdminShopBodyDeliveryFeeMax).optional(),
+  "free_first_delivery": zod.boolean().optional()
+})
+
+export const updateAdminShopResponseOneCardUzMax = 100000;
+
+export const updateAdminShopResponseOneCardRuMax = 100000;
+
+export const updateAdminShopResponseOneCardEnMax = 100000;
+
+
+
+export const UpdateAdminShopResponse = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(updateAdminShopResponseOneCardUzMax).optional(),
+  "ru": zod.string().max(updateAdminShopResponseOneCardRuMax).optional(),
+  "en": zod.string().max(updateAdminShopResponseOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+}))
+
+
+/**
+ * Sets the webhook and menu button again and answers with the shop and its bot status. For when the status shows the bot did not connect.
+ * @summary Point the shop's bot at this server again (platform super admins only)
+ */
+export const ConnectAdminShopBotParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const connectAdminShopBotResponseOneCardUzMax = 100000;
+
+export const connectAdminShopBotResponseOneCardRuMax = 100000;
+
+export const connectAdminShopBotResponseOneCardEnMax = 100000;
+
+
+
+export const ConnectAdminShopBotResponse = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(connectAdminShopBotResponseOneCardUzMax).optional(),
+  "ru": zod.string().max(connectAdminShopBotResponseOneCardRuMax).optional(),
+  "en": zod.string().max(connectAdminShopBotResponseOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+}))
+
+
+/**
+ * The shop leaves the storefront and is hidden, its bot stops, and its admins can no longer sign in. Its orders, chats and customers are kept, and the shop can be restored. Q express itself cannot be archived.
+ * @summary "Delete" a shop: archive it (platform super admins only)
+ */
+export const ArchiveAdminShopParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const archiveAdminShopResponseOneCardUzMax = 100000;
+
+export const archiveAdminShopResponseOneCardRuMax = 100000;
+
+export const archiveAdminShopResponseOneCardEnMax = 100000;
+
+
+
+export const ArchiveAdminShopResponse = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(archiveAdminShopResponseOneCardUzMax).optional(),
+  "ru": zod.string().max(archiveAdminShopResponseOneCardRuMax).optional(),
+  "en": zod.string().max(archiveAdminShopResponseOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+}))
+
+
+/**
+ * Its admins may sign in again and its bot is connected again. It stays hidden from customers until shown.
+ * @summary Bring an archived shop back (platform super admins only)
+ */
+export const RestoreAdminShopParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const restoreAdminShopResponseOneCardUzMax = 100000;
+
+export const restoreAdminShopResponseOneCardRuMax = 100000;
+
+export const restoreAdminShopResponseOneCardEnMax = 100000;
+
+
+
+export const RestoreAdminShopResponse = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(restoreAdminShopResponseOneCardUzMax).optional(),
+  "ru": zod.string().max(restoreAdminShopResponseOneCardRuMax).optional(),
+  "en": zod.string().max(restoreAdminShopResponseOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+}))
+
+
+/**
+ * Allowed to the admins of Q express and to the shop's own admins.
+ * @summary Replace a shop's storefront card
+ */
+export const UpdateShopCardParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const updateShopCardBodyCardUzMax = 100000;
+
+export const updateShopCardBodyCardRuMax = 100000;
+
+export const updateShopCardBodyCardEnMax = 100000;
+
+
+
+export const UpdateShopCardBody = zod.object({
+  "card": zod.object({
+  "uz": zod.string().max(updateShopCardBodyCardUzMax).optional(),
+  "ru": zod.string().max(updateShopCardBodyCardRuMax).optional(),
+  "en": zod.string().max(updateShopCardBodyCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.')
+})
+
+export const updateShopCardResponseOneCardUzMax = 100000;
+
+export const updateShopCardResponseOneCardRuMax = 100000;
+
+export const updateShopCardResponseOneCardEnMax = 100000;
+
+
+
+export const UpdateShopCardResponse = zod.object({
+  "id": zod.number().int(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "is_platform": zod.boolean().describe('Q express, the platform\'s own shop.'),
+  "card": zod.object({
+  "uz": zod.string().max(updateShopCardResponseOneCardUzMax).optional(),
+  "ru": zod.string().max(updateShopCardResponseOneCardRuMax).optional(),
+  "en": zod.string().max(updateShopCardResponseOneCardEnMax).optional()
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "sort_order": zod.number().int(),
+  "delivery_fee": zod.number(),
+  "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
+}).and(zod.object({
+  "order_prefix": zod.string(),
+  "active": zod.boolean(),
+  "open_time": zod.string(),
+  "close_time": zod.string(),
+  "accepting_orders": zod.boolean(),
+  "bot_username": zod.string().nullable(),
+  "bot_configured": zod.boolean(),
+  "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
+  "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
+  "owner_chat_id": zod.string().nullable(),
+  "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
+  "created_at": zod.coerce.date()
+}))
+
+
+/**
  * @summary Whether the shop takes orders now, and the times it can deliver
  */
+export const getStoreStatusQueryShopMax = 40;
+
+
+
+export const GetStoreStatusQueryParams = zod.object({
+  "shop": zod.coerce.string().max(getStoreStatusQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const GetStoreStatusResponse = zod.object({
   "open_now": zod.boolean().describe('Open by the hours and not paused, so an order for right now is taken.'),
   "accepting_orders": zod.boolean().describe('False while an admin has paused all orders.'),
@@ -1454,6 +2166,14 @@ export const UpdateStoreHoursResponse = zod.object({
 /**
  * @summary Get the weekly customer leaderboard
  */
+export const getWeeklyLeaderboardQueryShopMax = 40;
+
+
+
+export const GetWeeklyLeaderboardQueryParams = zod.object({
+  "shop": zod.coerce.string().max(getWeeklyLeaderboardQueryShopMax).optional().describe('The shop\'s slug; Q express when left out.')
+})
+
 export const GetWeeklyLeaderboardResponseItem = zod.object({
   "rank": zod.number().int(),
   "customer_name": zod.string(),
