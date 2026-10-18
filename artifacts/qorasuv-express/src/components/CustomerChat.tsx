@@ -228,7 +228,7 @@ export function CustomerChat() {
         data-testid="button-open-chat"
         aria-label={t('openChat')}
         onClick={() => setOpen(true)}
-        className="tap fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[hsl(var(--primary))] text-white shadow-[0_12px_28px_rgba(22,116,96,.32)] transition hover:scale-105"
+        className="tap phone-corner fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[hsl(var(--primary))] text-white shadow-[0_12px_28px_rgba(22,116,96,.32)] transition hover:scale-105"
       >
         <MessageCircle size={22} />
         {unread && (
@@ -244,7 +244,7 @@ export function CustomerChat() {
   return (
     <div
       data-testid="panel-chat"
-      className="fixed bottom-5 right-5 z-40 flex h-[min(520px,75dvh)] w-[min(360px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[0_18px_48px_rgba(20,40,34,.22)]"
+      className="phone-corner fixed bottom-5 right-5 z-40 flex h-[min(520px,75dvh)] w-[min(360px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[0_18px_48px_rgba(20,40,34,.22)]"
     >
       <div className="flex items-center justify-between gap-3 bg-[hsl(var(--primary))] px-4 py-3 text-white">
         <div>

@@ -6,6 +6,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The storefront looks as it does on a phone on every screen, a computer's
+   Telegram and browser too (html.phone-layout, set by the Shell outside
+   /admin): its wider-screen classes (sm: md: lg: xl: 2xl:) take effect only
+   outside it, so the admin pages keep their wide layout. Same widths as
+   Tailwind's own. */
+@custom-variant sm { @media (width >= 40rem) { &:where(:not(.phone-layout *)) { @slot; } } }
+@custom-variant md { @media (width >= 48rem) { &:where(:not(.phone-layout *)) { @slot; } } }
+@custom-variant lg { @media (width >= 64rem) { &:where(:not(.phone-layout *)) { @slot; } } }
+@custom-variant xl { @media (width >= 80rem) { &:where(:not(.phone-layout *)) { @slot; } } }
+@custom-variant 2xl { @media (width >= 96rem) { &:where(:not(.phone-layout *)) { @slot; } } }
+
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -112,4 +123,37 @@ body {
 .soft-shadow { box-shadow: var(--shadow-sm); }
 .deep-shadow { box-shadow: var(--shadow-md); }
 .tap:active { transform: translateY(1px) scale(.99); }
+
+/* The phone column (see the variants at the top): as wide as a large phone,
+   in the middle of a wider window, the rest of it a quiet margin. */
+html.phone-layout { --phone-width: 430px; --phone-side: max(0px, calc(50% - var(--phone-width) / 2)); }
+html.phone-layout body { background: hsl(var(--muted)); }
+html.phone-layout #root {
+  max-width: var(--phone-width);
+  min-height: 100dvh;
+  margin-inline: auto;
+  background: hsl(var(--background));
+  box-shadow: 0 0 0 1px hsl(var(--border)), 0 0 60px rgba(31, 63, 52, .08);
+}
+/* Layers fixed to the window (menus, sheets, banners) span the column only;
+   the chat button keeps to the column's corner. A percentage of a fixed
+   layer's left is of the window, so 50% is its middle. */
+html.phone-layout .phone-span { left: var(--phone-side); right: var(--phone-side); }
+html.phone-layout .phone-corner { right: calc(var(--phone-side) + 1.25rem); }
+
+/* A shop's card over its background picture: the text white over a soft
+   shade, whatever photo is behind it. */
+.shop-banner-photo .rich-text-content {
+  --tx: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+}
+/* Over a photo every word is white and nothing is painted behind it: a colour
+   or a coloured box chosen for the plain card (judged against white) could
+   vanish on the picture, or cover it. Colours apply on a card without one. */
+.shop-banner-photo .rich-text-content,
+.shop-banner-photo .rich-text-content * {
+  color: #ffffff !important;
+  background-color: transparent !important;
+  border-color: rgba(255, 255, 255, .45) !important;
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; scroll-behavior: auto !important; transition-duration: .01ms !important; } }

@@ -23,7 +23,7 @@ import {
   usersTable,
 } from "@workspace/db/schema";
 import { adminShopId, isPlatformSuperAdmin, signedInAdmin } from "../lib/admin-directory";
-import { PLATFORM_SHOP_ID, publicBaseUrl, requestShop, shopBot } from "../lib/shops";
+import { PLATFORM_SHOP_ID, publicBaseUrl, requestShop, shopAppPath, shopBot } from "../lib/shops";
 import {
   AccountLimitError,
   BlockedMergeError,
@@ -47,7 +47,7 @@ import { CHAT_SESSION_COOKIE } from "../lib/chat-session";
 import { clearCustomerCookie } from "../lib/customer-session";
 import { flatKey } from "../lib/order-rules";
 import { normalizeUzPhone } from "../lib/phone";
-import { botConfigured, getBotUsername, verifyWebAppInitData, webAppUser, registerMenuButton, withBot } from "../lib/telegram";
+import { botConfigured, envBotContext, getBotUsername, startParam, verifyWebAppInitData, webAppUser, registerMenuButton, withBot } from "../lib/telegram";
 import { requestLang, translate, type Lang } from "../lib/i18n";
 import { accountMessages, commonMessages } from "../lib/messages";
 
@@ -146,6 +146,13 @@ router.get("/customer/login", async (req, res, next) => {
   try {
     // The bot of the shop the page shows.
     const shop = await requestShop(req.query.shop);
+    // A shop on another shop's bot: /start there greets that bot's own shop,
+    // so the link opens this shop's page in Q express's Mini App instead.
+    if (shop && shop.botShopId !== null) {
+      const platformBot = await withBot(envBotContext(), () => getBotUsername());
+      if (!platformBot) return res.status(503).json({ error: say(requestLang(req), "botNotConfigured") });
+      return res.json({ url: `https://t.me/${platformBot}?startapp=${startParam(shopAppPath(shop), "/")}` });
+    }
     const username = shop ? await withBot(await shopBot(shop), () => getBotUsername()) : undefined;
     if (!username) return res.status(503).json({ error: say(requestLang(req), "botNotConfigured") });
     return res.json({ url: `https://t.me/${username}` });

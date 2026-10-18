@@ -959,6 +959,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UploadTicket"
+  /admin/uploads/discard:
+    post:
+      operationId: discardAdminUpload
+      tags: [admin]
+      summary: Delete a picture uploaded but never saved
+      description: >-
+        Best effort. The file is deleted only when it lies in our upload folder
+        and no product or shop uses it, so a picture in use is never lost.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadDiscardInput"
+      responses:
+        "204":
+          description: Deleted, or nothing to delete
   /chat/session:
     post:
       operationId: startChatSession
@@ -1658,9 +1675,23 @@ components:
         en:
           type: string
           maxLength: 100000
+    ShopImageInput:
+      type: object
+      description: >-
+        A picture uploaded to our Cloudinary account from the admin's browser:
+        its delivery URL and public id, which must name that very file.
+      required: [url, public_id]
+      properties:
+        url:
+          type: string
+          maxLength: 500
+        public_id:
+          type: string
+          minLength: 1
+          maxLength: 255
     Shop:
       type: object
-      required: [id, slug, name, is_platform, card, sort_order, delivery_fee, free_first_delivery]
+      required: [id, slug, name, is_platform, card, background_url, icon_url, sort_order, delivery_fee, free_first_delivery]
       properties:
         id:
           type: integer
@@ -1673,6 +1704,12 @@ components:
           description: Q express, the platform's own shop.
         card:
           $ref: "#/components/schemas/ShopCard"
+        background_url:
+          description: The card's background picture, cropped 4:3; null for none.
+          type: [string, "null"]
+        icon_url:
+          description: The shop's square icon; null for none.
+          type: [string, "null"]
         sort_order:
           type: integer
         delivery_fee:
@@ -1684,7 +1721,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/Shop"
         - type: object
-          required: [order_prefix, active, open_time, close_time, accepting_orders, bot_username, bot_configured, bot_status, bot_error, owner_chat_id, archived_at, created_at]
+          required: [order_prefix, active, open_time, close_time, accepting_orders, bot_shop_id, bot_username, bot_configured, bot_status, bot_error, owner_chat_id, archived_at, created_at]
           properties:
             order_prefix:
               type: string
@@ -1696,6 +1733,11 @@ components:
               type: string
             accepting_orders:
               type: boolean
+            bot_shop_id:
+              description: >-
+                The shop whose bot this shop speaks through (1 for Q express's);
+                null when it has a bot of its own.
+              type: [integer, "null"]
             bot_username:
               type: [string, "null"]
             bot_configured:
@@ -1719,7 +1761,7 @@ components:
               format: date-time
     AdminShopCreateInput:
       type: object
-      required: [name, slug, order_prefix, bot_token, open_time, close_time, delivery_fee, free_first_delivery, super_admin]
+      required: [name, slug, order_prefix, open_time, close_time, delivery_fee, free_first_delivery, super_admin]
       properties:
         name:
           type: string
@@ -1734,6 +1776,12 @@ components:
         bot_token:
           type: string
           maxLength: 100
+        bot_shop_id:
+          description: >-
+            Speak through this shop's bot (1 for Q express's) instead of a bot
+            of its own; null for its own bot. A token of a bot already on the
+            platform is taken as that bot too.
+          type: [integer, "null"]
         owner_chat_id:
           type: [string, "null"]
           maxLength: 20
@@ -1751,6 +1799,14 @@ components:
           type: boolean
         card:
           $ref: "#/components/schemas/ShopCard"
+        background:
+          oneOf:
+            - $ref: "#/components/schemas/ShopImageInput"
+            - type: "null"
+        icon:
+          oneOf:
+            - $ref: "#/components/schemas/ShopImageInput"
+            - type: "null"
         super_admin:
           $ref: "#/components/schemas/AdminCreateInput"
     AdminShopUpdateInput:
@@ -1773,6 +1829,12 @@ components:
         bot_token:
           type: string
           maxLength: 100
+        bot_shop_id:
+          description: >-
+            Speak through this shop's bot (1 for Q express's) instead of a bot
+            of its own; null for its own bot. A token of a bot already on the
+            platform is taken as that bot too.
+          type: [integer, "null"]
         owner_chat_id:
           type: [string, "null"]
           maxLength: 20
@@ -1804,6 +1866,16 @@ components:
       properties:
         card:
           $ref: "#/components/schemas/ShopCard"
+        background:
+          description: A new background; null removes it, left out keeps it.
+          oneOf:
+            - $ref: "#/components/schemas/ShopImageInput"
+            - type: "null"
+        icon:
+          description: A new icon; null removes it, left out keeps it.
+          oneOf:
+            - $ref: "#/components/schemas/ShopImageInput"
+            - type: "null"
     TelegramLink:
       type: object
       required: [url, expires_at]
@@ -2254,6 +2326,14 @@ components:
           type: integer
         low_stock_count:
           type: integer
+    UploadDiscardInput:
+      type: object
+      required: [public_id]
+      properties:
+        public_id:
+          type: string
+          minLength: 1
+          maxLength: 255
     UploadTicket:
       type: object
       required: [cloud_name, api_key, timestamp, folder, signature, expires_in]

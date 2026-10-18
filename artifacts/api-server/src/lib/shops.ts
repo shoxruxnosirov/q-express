@@ -134,6 +134,21 @@ export function isBotTokenShape(token: string) {
 // order must not hang on a slow getMe. Until it is known, the buttons open the
 // shop's page in the browser instead.
 export async function shopBot(shop: ShopRow): Promise<BotContext> {
+  // A shop on another shop's bot (Q express's or any other's) speaks through
+  // that bot, as itself: its name, its pages, its owner's chat, its admins.
+  const host = await botHost(shop);
+  if (host !== shop) {
+    const hostBot = await shopBot(host);
+    return {
+      ...hostBot,
+      shopId: shop.id,
+      shopName: shop.name,
+      ownerChatId: shop.ownerChatId ?? undefined,
+      appPath: shopAppPath(shop),
+      freeFirstDelivery: shop.freeFirstDelivery,
+      token: isArchived(shop) ? undefined : hostBot.token,
+    };
+  }
   const platform = envBotContext();
   if (isPlatformShop(shop)) {
     return { ...platform, shopId: shop.id, shopName: shop.name, freeFirstDelivery: shop.freeFirstDelivery };
@@ -153,6 +168,28 @@ export async function shopBot(shop: ShopRow): Promise<BotContext> {
     webhookPath: `/api/telegram/webhook/${shop.id}`,
     freeFirstDelivery: shop.freeFirstDelivery,
   };
+}
+
+// The shop whose bot this shop speaks through: itself, or the shop named in
+// bot_shop_id (one level only: a host has a bot of its own). Telegram sends a
+// bot's updates to one address, the host's webhook, which also serves the
+// shops on it (routes/store.ts).
+export async function botHost(shop: ShopRow): Promise<ShopRow> {
+  // Followed a few steps, should two edits at once have chained two shops
+  // (a shop joining another just as that one joined a third).
+  let host = shop;
+  for (let step = 0; step < 3 && host.botShopId !== null && host.botShopId !== host.id; step++) {
+    const next = await loadShop(host.botShopId);
+    if (!next) break;
+    host = next;
+  }
+  return host.botShopId === null || host.botShopId === host.id ? host : shop;
+}
+
+// A host and the shops on its bot, archived ones left out.
+export async function botFamily(host: ShopRow): Promise<ShopRow[]> {
+  const shops = await listShops();
+  return [host, ...shops.filter((shop) => shop.botShopId === host.id && shop.id !== host.id && !isArchived(shop))];
 }
 
 // Q express's bot @username as the Render dashboard names it
@@ -228,15 +265,22 @@ export function connectPlatformBot(baseUrl: string) {
   return connectBot(envBotContext(), baseUrl);
 }
 
-export async function connectShopBot(shop: ShopRow, baseUrl: string) {
-  if (!isPlatformShop(shop)) await learnPlatformBotUsername();
-  return connectBot(await shopBot(shop), baseUrl);
+// A shop on another shop's bot connects that bot: its webhook is the host's.
+export async function connectShopBot(shop: ShopRow, baseUrl: string): Promise<BotStatus> {
+  const host = await botHost(shop);
+  if (isPlatformShop(host)) {
+    if (host === shop) return connectBot(await shopBot(shop), baseUrl);
+    return connectPlatformBot(baseUrl);
+  }
+  await learnPlatformBotUsername();
+  return connectBot(await shopBot(host), baseUrl);
 }
 
 // The same without making the caller wait: a request that has already saved
 // the shop answers at once, and the outcome shows as the shop's bot status.
 export function connectShopBotLater(shop: ShopRow, baseUrl: string) {
-  botStatuses.set(shop.id, { state: "connecting", error: null, at: new Date() });
+  const hostId = shop.botShopId ?? shop.id;
+  botStatuses.set(hostId, { state: "connecting", error: null, at: new Date() });
   void connectShopBot(shop, baseUrl).catch((error) => logger.warn({ shopId: shop.id, error }, "Telegram bot not connected"));
 }
 
@@ -244,6 +288,8 @@ export function connectShopBotLater(shop: ShopRow, baseUrl: string) {
 // before archiving, while its token still opens the bot. Best effort: the
 // webhook ignores an archived shop anyway.
 export async function disconnectShopBot(shop: ShopRow) {
+  // A shop on another shop's bot leaves that bot listening for the others.
+  if (shop.botShopId !== null) return;
   botStatuses.delete(shop.id);
   if (isPlatformShop(shop)) return;
   try {
@@ -261,6 +307,8 @@ export function shopDto(shop: ShopRow) {
     name: shop.name,
     is_platform: isPlatformShop(shop),
     card: shop.card ?? {},
+    background_url: shop.backgroundUrl,
+    icon_url: shop.iconUrl,
     sort_order: shop.sortOrder,
     delivery_fee: Number(shop.deliveryFee),
     free_first_delivery: shop.freeFirstDelivery,
@@ -268,7 +316,45 @@ export function shopDto(shop: ShopRow) {
 }
 
 // What an admin of the platform sees of a shop. Never the token itself.
-export function adminShopDto(shop: ShopRow) {
+// What the platform's admins see of the bot a shop speaks through: its own,
+// or its host's (bot_shop_id), whose status is the host's.
+function botFields(shop: ShopRow, shops: readonly ShopRow[]) {
+  const hostId = shop.botShopId !== null && shop.botShopId !== shop.id ? shop.botShopId : shop.id;
+  const host = hostId === shop.id ? shop : shops.find((row) => row.id === hostId);
+  const platformBot = hostId === PLATFORM_SHOP_ID;
+  return {
+    bot_shop_id: hostId === shop.id ? null : hostId,
+    bot_username: isPlatformShop(shop)
+      ? null
+      : platformBot
+        ? (knownBotUsername(envBotContext().token) ?? configuredPlatformBotUsername() ?? null)
+        : (host?.botUsername ?? null),
+    // A host archived meanwhile speaks for no one.
+    bot_configured: Boolean(host && !(hostId !== shop.id && isArchived(host))) && (platformBot || Boolean(host && decryptBotToken(host.botTokenEnc))),
+    // Unknown until this process has tried, as in development without a
+    // public address.
+    bot_status: botStatus(hostId)?.state ?? "unknown",
+    bot_error: botStatus(hostId)?.error ?? null,
+  };
+}
+
+// The id of the bot a shop speaks through (its own, or its host's), as
+// Telegram knows it; undefined when there is none. A change of it means every
+// chat linked to the shop has to start the new bot.
+export function effectiveBotId(shop: ShopRow, shops: readonly ShopRow[]): string | undefined {
+  const host = shop.botShopId !== null && shop.botShopId !== shop.id ? shops.find((row) => row.id === shop.botShopId) : shop;
+  if (!host) return undefined;
+  if (isPlatformShop(host)) return envBotContext().token?.split(":")[0];
+  return host.botId ?? undefined;
+}
+
+// The admin view with the shop list read now, so a shop on another shop's bot
+// names that bot correctly even right after a restart or a change.
+export async function adminShopView(shop: ShopRow) {
+  return adminShopDto(shop, await listShops());
+}
+
+export function adminShopDto(shop: ShopRow, shops: readonly ShopRow[]) {
   return {
     ...shopDto(shop),
     order_prefix: shop.orderPrefix,
@@ -276,12 +362,7 @@ export function adminShopDto(shop: ShopRow) {
     open_time: shop.openTime,
     close_time: shop.closeTime,
     accepting_orders: shop.acceptingOrders,
-    bot_username: isPlatformShop(shop) ? null : shop.botUsername,
-    bot_configured: isPlatformShop(shop) ? true : Boolean(decryptBotToken(shop.botTokenEnc)),
-    // Unknown until this process has tried, as in development without a
-    // public address.
-    bot_status: botStatus(shop.id)?.state ?? "unknown",
-    bot_error: botStatus(shop.id)?.error ?? null,
+    ...botFields(shop, shops),
     owner_chat_id: isPlatformShop(shop) ? null : shop.ownerChatId,
     archived_at: shop.archivedAt ? shop.archivedAt.toISOString() : null,
     created_at: shop.createdAt.toISOString(),

@@ -6,7 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ShopCard } from './shopCard';
+import type { ShopImageInput } from './shopImageInput';
 
 export interface ShopCardInput {
   card: ShopCard;
+  /** A new background; null removes it, left out keeps it. */
+  background?: ShopImageInput | null;
+  /** A new icon; null removes it, left out keeps it. */
+  icon?: ShopImageInput | null;
 }

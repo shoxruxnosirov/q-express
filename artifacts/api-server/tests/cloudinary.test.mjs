@@ -6,6 +6,8 @@ import {
   deleteImage,
   isCloudinaryConfigured,
   isOwnImageUrl,
+  isOwnStoredImage,
+  urlNamesPublicId,
 } from "../src/lib/cloudinary.ts";
 
 const keys = ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"];
@@ -137,4 +139,30 @@ test("an unconfigured delete is a no-op that never calls out", async () => {
   const outcome = await deleteImage("abc");
   assert.equal(outcome.deleted, false);
   assert.equal(called, false);
+});
+
+test("a public id must name the very file its URL delivers", () => {
+  const url = "https://res.cloudinary.com/qorasuv/image/upload/v1712/qorasuv-express/products/abc123.webp";
+  assert.equal(urlNamesPublicId(url, "qorasuv-express/products/abc123"), true);
+  assert.equal(urlNamesPublicId(url, "qorasuv-express/products/other"), false);
+  assert.equal(urlNamesPublicId(url, "abc"), false, "a suffix of the name is not the file");
+  assert.equal(urlNamesPublicId(url, ""), false);
+  assert.equal(urlNamesPublicId("not a url", "abc123"), false);
+});
+
+test("a stored image is ours only in our own cloud and under its own id", () => {
+  configure();
+  const url = "https://res.cloudinary.com/qorasuv/image/upload/v1/qorasuv-express/products/bg1.jpg";
+  assert.equal(isOwnStoredImage(url, "qorasuv-express/products/bg1"), true);
+  assert.equal(isOwnStoredImage(url, "qorasuv-express/products/bg2"), false);
+  assert.equal(isOwnStoredImage("https://res.cloudinary.com/someone-else/image/upload/v1/qorasuv-express/products/bg1.jpg", "qorasuv-express/products/bg1"), false);
+  assert.equal(isOwnStoredImage(undefined, "qorasuv-express/products/bg1"), false);
+  // Only the plain address an upload answers with, in our folder.
+  assert.equal(isOwnStoredImage("https://res.cloudinary.com/qorasuv/image/upload/qorasuv-express/products/bg1.jpg", "qorasuv-express/products/bg1"), true, "no version is fine");
+  assert.equal(isOwnStoredImage("https://res.cloudinary.com/qorasuv/image/fetch/https://evil.test/qorasuv-express/products/bg1.jpg", "qorasuv-express/products/bg1"), false, "never a fetch of someone else's picture");
+  assert.equal(isOwnStoredImage("https://res.cloudinary.com/qorasuv/image/upload/c_fill,w_10/v1/qorasuv-express/products/bg1.jpg", "qorasuv-express/products/bg1"), false, "no transformations");
+  assert.equal(isOwnStoredImage("https://res.cloudinary.com/qorasuv/image/upload/v1/other/bg1.jpg", "other/bg1"), false, "only our folder");
+  assert.equal(isOwnStoredImage("https://res.cloudinary.com/qorasuv/image/upload/v1/x/qorasuv-express/products/bg1.jpg", "qorasuv-express/products/bg1"), false, "the whole path is the file");
+  for (const key of keys) delete process.env[key];
+  assert.equal(isOwnStoredImage(url, "qorasuv-express/products/bg1"), false, "without our cloud nothing is ours");
 });

@@ -10,15 +10,22 @@ import {
   useRestoreAdminShop,
   useUpdateAdminShop,
   type AdminShop,
+  type AdminShopCreateInput,
   type AdminShopUpdateInput,
+  type ShopImageInput,
 } from '@workspace/api-client-react';
 import { Archive, ArchiveRestore, Bot, Check, ExternalLink, LoaderCircle, Palette, Plus, RefreshCw, Settings2, Store, Trash2 } from 'lucide-react';
 import { apiErrorMessage } from './AdminLogin';
 import { useAsk } from '@/components/ConfirmDialog';
 import { temporaryPassword } from './AdminAccounts';
 import { RichHtmlField, type MultiLang } from '@/components/rich-text';
+import { ImageField } from '@/components/ImageField';
+import { ShopIcon } from '@/components/ShopCards';
+import { type UploadedImage } from '@/lib/images';
+import { usePictureUploads } from '@/lib/use-picture-uploads';
 import { sanitizeHtml } from '@/lib/rich-html';
 import { useAdminShop } from '@/lib/admin-shop';
+import { PLATFORM_SHOP_ID } from '@/lib/shop';
 import { dateLabel } from '@/lib/tashkent-time';
 
 // The shops on the platform. Q express's admins see them all and may open any
@@ -55,11 +62,75 @@ export function cleanCard(card: MultiLang): MultiLang {
   return result;
 }
 
+// The bot part of a settings save: only what changed. Back to a bot of its own
+// without a token is sent as is, and the server says a token is needed.
+function botChange(settings: Settings, shop: AdminShop): Partial<AdminShopUpdateInput> {
+  if (settings.bot_shop_id) {
+    const host = Number(settings.bot_shop_id);
+    return host === shop.bot_shop_id ? {} : { bot_shop_id: host };
+  }
+  if (settings.bot_token) return { bot_token: settings.bot_token, ...(shop.bot_shop_id !== null ? { bot_shop_id: null } : {}) };
+  return shop.bot_shop_id !== null ? { bot_shop_id: null } : {};
+}
+
+// Which bot a shop speaks through: a new bot of its own (its token), or one
+// already on the platform, Q express's or another shop's. One bot may serve
+// several shops; a token of a bot already here is taken as that bot.
+function BotFields({ value, onChange, creating, saved }: { value: Settings; onChange: (patch: Partial<Settings>) => void; creating: boolean; saved?: AdminShop }) {
+  const { shops } = useAdminShop();
+  // Bots a shop may join: Q express's, and every shop's own bot.
+  const hosts = shops.filter(shop => shop.id !== saved?.id && !shop.archived_at && (shop.is_platform || (shop.bot_shop_id === null && shop.bot_username)));
+  const shared = value.bot_shop_id !== '';
+  const botName = (shop: AdminShop) => shop.is_platform ? 'Q express boti' : `${shop.name} boti (@${shop.bot_username})`;
+  const host = saved?.bot_shop_id ? shops.find(shop => shop.id === saved.bot_shop_id) : undefined;
+  const tab = (on: boolean) => `rounded-full border px-3 py-1.5 text-[11px] font-bold ${on ? 'border-transparent bg-[hsl(var(--primary))] text-white' : 'border-[hsl(var(--border))]'}`;
+  return (
+    <div className="sm:col-span-2">
+      <p className="text-xs font-bold">Telegram bot</p>
+      {/* The saved token is never sent back to the page, so the box is empty
+          when editing; this says which bot is in use. */}
+      {saved && (
+        <span data-testid={`text-current-bot-${saved.id}`} className={`mt-1.5 block rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${saved.bot_configured ? 'bg-[#e8efdc] text-[hsl(var(--primary))]' : 'bg-[#fdf0ed] text-[#9d493e]'}`}>
+          {host
+            ? saved.bot_configured
+              ? `Hozirgi bot: ${botName(host)}${host.is_platform && saved.bot_username ? ` (@${saved.bot_username})` : ''}. Buyurtma va xabarlar shu bot orqali keladi.`
+              : `Hozirgi bot: ${botName(host)}, lekin uning tokenini o‘qib bo‘lmadi: tokenni ${host.name} sozlamalarida qayta kiriting yoki boshqa bot tanlang.`
+            : saved.bot_configured
+              ? `Hozirgi bot: @${saved.bot_username ?? '—'}. Token saqlangan, xavfsizlik uchun bu yerda ko‘rsatilmaydi. Botni almashtirish uchungina yangi token kiriting.`
+              : `Saqlangan tokenni o‘qib bo‘lmadi${saved.bot_username ? ` (@${saved.bot_username})` : ''}: tokenni qayta kiriting.`}
+        </span>
+      )}
+      <div role="radiogroup" aria-label="Telegram bot" className="mt-2 flex flex-wrap gap-2">
+        <button type="button" role="radio" aria-checked={!shared} data-testid="button-bot-own" onClick={() => onChange({ bot_shop_id: '' })} className={tab(!shared)}>O‘z boti (token)</button>
+        <button type="button" role="radio" aria-checked={shared} data-testid="button-bot-shared" disabled={hosts.length === 0} onClick={() => onChange({ bot_shop_id: String(hosts.find(item => item.id === saved?.bot_shop_id)?.id ?? hosts[0]?.id ?? ''), bot_token: '' })} className={`${tab(shared)} disabled:opacity-50`}>Mavjud bot</button>
+      </div>
+      {shared ? (
+        <label className="mt-2 block text-xs font-bold">Qaysi bot
+          {/* A saved bot no longer on offer (its shop archived, or on another
+              bot itself) is not shown as chosen: the admin picks one. */}
+          <select required value={hosts.some(shop => String(shop.id) === value.bot_shop_id) ? value.bot_shop_id : ''} onChange={event => onChange({ bot_shop_id: event.target.value })} data-testid="select-bot-shop" className={input}>
+            <option value="" disabled>Botni tanlang</option>
+            {hosts.map(shop => <option key={shop.id} value={shop.id}>{botName(shop)}</option>)}
+          </select>
+          <span className="mt-1 block text-[11px] font-normal text-[hsl(var(--muted-foreground))]">Bitta bot bir nechta do‘konga xizmat qiladi: bu do‘kon buyurtmalari va xabarlari shu bot orqali o‘z adminlariga boradi. Botga to‘g‘ridan-to‘g‘ri /start bosgan yoki yozgan mijoz esa bot egasi do‘koniga tushadi.</span>
+        </label>
+      ) : (
+        <label className="mt-2 block text-xs font-bold">Bot tokeni
+          <input required={creating} value={value.bot_token} onChange={event => onChange({ bot_token: event.target.value.trim() })} placeholder={creating || saved?.bot_shop_id ? '123456789:AA…' : 'O‘zgartirmaslik uchun bo‘sh qoldiring'} autoComplete="off" {...noAutoFix} className={`${input} mono`} />
+          <span className="mt-1 block text-[11px] font-normal text-[hsl(var(--muted-foreground))]">BotFather'da yaratilgan bot tokeni. Q express yoki boshqa do‘kon botining tokenini qo‘ysangiz, do‘kon o‘sha botga ulanadi.</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 type Settings = {
   name: string;
   slug: string;
   order_prefix: string;
   bot_token: string;
+  // "" for a bot of its own (bot_token), else the id of the shop whose bot it uses.
+  bot_shop_id: string;
   owner_chat_id: string;
   open_time: string;
   close_time: string;
@@ -67,7 +138,7 @@ type Settings = {
   free_first_delivery: boolean;
 };
 
-function SettingsFields({ value, onChange, platform, creating }: { value: Settings; onChange: (next: Settings) => void; platform: boolean; creating: boolean }) {
+function SettingsFields({ value, onChange, platform, creating, saved }: { value: Settings; onChange: (next: Settings) => void; platform: boolean; creating: boolean; saved?: AdminShop }) {
   const set = (patch: Partial<Settings>) => onChange({ ...value, ...patch });
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -96,10 +167,7 @@ function SettingsFields({ value, onChange, platform, creating }: { value: Settin
         Har bir xonadonga birinchi yetkazish bepul
       </label>
       {!platform && <>
-        <label className="block text-xs font-bold sm:col-span-2">Telegram bot tokeni
-          <input required={creating} value={value.bot_token} onChange={event => set({ bot_token: event.target.value.trim() })} placeholder={creating ? '123456789:AA…' : 'O‘zgartirmaslik uchun bo‘sh qoldiring'} autoComplete="off" {...noAutoFix} className={`${input} mono`} />
-          <span className="mt-1 block text-[11px] font-normal text-[hsl(var(--muted-foreground))]">Do‘kon uchun BotFather'da alohida bot yarating va tokenini shu yerga qo‘ying. Q express botiga hech narsa tushmaydi.</span>
-        </label>
+        <BotFields value={value} onChange={set} creating={creating} saved={saved} />
         <label className="block text-xs font-bold sm:col-span-2">Egasining Telegram chat ID raqami (ixtiyoriy)
           <input value={value.owner_chat_id} onChange={event => set({ owner_chat_id: event.target.value.trim() })} placeholder="123456789" inputMode="numeric" {...noAutoFix} className={input} />
           <span className="mt-1 block text-[11px] font-normal text-[hsl(var(--muted-foreground))]">Har bir buyurtma shu chatga ham boradi. Adminlar esa o‘z Telegramini «Profilim» bo‘limidan ulaydi.</span>
@@ -110,53 +178,117 @@ function SettingsFields({ value, onChange, platform, creating }: { value: Settin
 }
 
 const emptySettings: Settings = {
-  name: '', slug: '', order_prefix: '', bot_token: '', owner_chat_id: '',
+  name: '', slug: '', order_prefix: '', bot_token: '', bot_shop_id: '', owner_chat_id: '',
   open_time: '08:00', close_time: '22:00', delivery_fee: '5000', free_first_delivery: false,
 };
+
+export function asInput(image: UploadedImage): ShopImageInput {
+  return { url: image.url, public_id: image.publicId };
+}
+
+// The shop's two pictures: the background of its card, cropped 4:3, and its
+// square icon. Picked here, uploaded when the form is saved.
+export function ShopPictureFields({ background, icon, onBackground, onIcon, currentBackground, currentIcon, onRemoveBackground, onRemoveIcon, disabled, withIcon = true }: {
+  background: File | null;
+  icon: File | null;
+  onBackground: (file: File | null) => void;
+  onIcon: (file: File | null) => void;
+  currentBackground?: string | null;
+  currentIcon?: string | null;
+  onRemoveBackground?: () => void;
+  onRemoveIcon?: () => void;
+  disabled?: boolean;
+  /** Q express keeps its own logo. */
+  withIcon?: boolean;
+}) {
+  return (
+    <div className="grid gap-4 rounded-2xl bg-[hsl(var(--muted)/.6)] p-4 sm:grid-cols-2">
+      <div>
+        <p className="text-xs font-extrabold">Kartochka foni</p>
+        <p className="mb-2 mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">4:3 ramkaga kesiladi. Rasm bo‘lsa, kartochka matni doim oq bo‘ladi (ranglar faqat rasmsiz kartochkada).</p>
+        <ImageField format="background" currentUrl={currentBackground} file={background} onPick={onBackground} onRemove={onRemoveBackground ?? (() => onBackground(null))} disabled={disabled} testId="field-shop-background" />
+      </div>
+      {withIcon && <div>
+        <p className="text-xs font-extrabold">Do‘kon ikonkasi</p>
+        <p className="mb-2 mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">Kvadrat; sarlavhada va boshqa do‘konlar ro‘yxatida nom yonida turadi.</p>
+        <ImageField format="icon" currentUrl={currentIcon} file={icon} onPick={onIcon} onRemove={onRemoveIcon ?? (() => onIcon(null))} disabled={disabled} testId="field-shop-icon" />
+      </div>}
+    </div>
+  );
+}
 
 function CreateShop({ onDone }: { onDone: (text: string) => void }) {
   const qc = useQueryClient();
   const create = useCreateAdminShop();
   const [settings, setSettings] = useState<Settings>(emptySettings);
   const [card, setCard] = useState<MultiLang>({});
+  const [background, setBackground] = useState<File | null>(null);
+  const [icon, setIcon] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const uploads = usePictureUploads();
+  useEffect(() => uploads.keepOnly([background, icon]), [background, icon, uploads]);
   const [owner, setOwner] = useState({ display_name: '', username: '' });
   const [error, setError] = useState('');
   const [created, setCreated] = useState<{ shop: string; username: string; password: string; bot: string | null } | null>(null);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
+    // The pictures go up first: a shop is never created pointing at a file
+    // that failed to arrive.
+    let pictures: Pick<AdminShopCreateInput, 'background' | 'icon'> = {};
+    // From the upload to the save's answer no picture of this form is deleted.
+    const end = uploads.begin();
+    if (background || icon) {
+      setUploading(true);
+      try {
+        pictures = {
+          background: background ? asInput(await uploads.upload(background)) : null,
+          icon: icon ? asInput(await uploads.upload(icon)) : null,
+        };
+      } catch (failure) {
+        setUploading(false);
+        end();
+        return setError(failure instanceof Error ? failure.message : 'Rasm yuklanmadi.');
+      }
+      setUploading(false);
+    }
     const password = temporaryPassword();
     create.mutate({
       data: {
         name: settings.name.trim(),
         slug: settings.slug,
         order_prefix: settings.order_prefix,
-        bot_token: settings.bot_token,
+        ...(settings.bot_shop_id ? { bot_shop_id: Number(settings.bot_shop_id) } : { bot_token: settings.bot_token }),
         owner_chat_id: settings.owner_chat_id || null,
         open_time: settings.open_time,
         close_time: settings.close_time,
         delivery_fee: Number(settings.delivery_fee),
         free_first_delivery: settings.free_first_delivery,
         card: cleanCard(card),
+        ...pictures,
         super_admin: { display_name: owner.display_name.trim(), username: owner.username.trim().toLowerCase(), role: 'super_admin', temporary_password: password },
       },
     }, {
       onSuccess: result => {
+        uploads.saved();
         setCreated({ shop: result.shop.name, username: result.admin.username, password, bot: result.shop.bot_username });
         setSettings(emptySettings);
         setCard({});
+        setBackground(null);
+        setIcon(null);
         setOwner({ display_name: '', username: '' });
         qc.invalidateQueries({ queryKey: getListAdminShopsQueryKey() });
         qc.invalidateQueries({ queryKey: getListShopsQueryKey() });
         onDone(`${result.shop.name} qo‘shildi.`);
       },
       onError: err => setError(apiErrorMessage(err, 'Do‘kon qo‘shilmadi.')),
+      onSettled: end,
     });
   };
 
   return (
-    <form onSubmit={submit} data-testid="form-create-shop" className="space-y-5 rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6">
+    <form onSubmit={event => void submit(event)} data-testid="form-create-shop" className="space-y-5 rounded-[22px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 sm:p-6">
       <div className="flex items-center gap-2"><Plus size={18} className="text-[hsl(var(--primary))]" /><h2 className="text-sm font-extrabold">Yangi do‘kon</h2></div>
       <SettingsFields value={settings} onChange={setSettings} platform={false} creating />
       <div className="rounded-2xl bg-[hsl(var(--muted)/.6)] p-4">
@@ -176,9 +308,10 @@ function CreateShop({ onDone }: { onDone: (text: string) => void }) {
         <RichHtmlField name="Do‘kon ko‘rinishi" value={card} onChange={setCard} />
         <p className="mt-2 text-[11px] text-[hsl(var(--muted-foreground))]">Keyin ham «Ko‘rinish» bo‘limida o‘zgartirsa bo‘ladi.</p>
       </div>
+      <ShopPictureFields background={background} icon={icon} onBackground={setBackground} onIcon={setIcon} disabled={uploading || create.isPending} />
       {error && <p role="alert" className="rounded-xl bg-[#fdf0ed] p-3 text-xs font-semibold text-[#9d493e]">{error}</p>}
-      <button type="submit" disabled={create.isPending} data-testid="button-create-shop" className="tap flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] text-xs font-extrabold text-white disabled:opacity-50">
-        {create.isPending && <LoaderCircle size={14} className="animate-spin" />} Do‘kon yaratish
+      <button type="submit" disabled={uploading || create.isPending} data-testid="button-create-shop" className="tap flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] text-xs font-extrabold text-white disabled:opacity-50">
+        {(uploading || create.isPending) && <LoaderCircle size={14} className="animate-spin" />} {uploading ? 'Rasmlar yuklanmoqda…' : 'Do‘kon yaratish'}
       </button>
       {created && (
         <p role="status" data-testid="text-shop-created" className="rounded-xl bg-[#fff6dc] p-3 text-xs font-semibold text-[#7a4f07]">
@@ -197,7 +330,7 @@ function EditShop({ shop, onDone }: { shop: AdminShop; onDone: (text: string, is
   const qc = useQueryClient();
   const update = useUpdateAdminShop();
   const [settings, setSettings] = useState<Settings>({
-    name: shop.name, slug: shop.slug, order_prefix: shop.order_prefix, bot_token: '', owner_chat_id: shop.owner_chat_id ?? '',
+    name: shop.name, slug: shop.slug, order_prefix: shop.order_prefix, bot_token: '', bot_shop_id: shop.bot_shop_id ? String(shop.bot_shop_id) : '', owner_chat_id: shop.owner_chat_id ?? '',
     open_time: shop.open_time, close_time: shop.close_time, delivery_fee: String(shop.delivery_fee), free_first_delivery: shop.free_first_delivery,
   });
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -212,21 +345,28 @@ function EditShop({ shop, onDone }: { shop: AdminShop; onDone: (text: string, is
       ...(shop.is_platform ? {} : {
         slug: settings.slug,
         owner_chat_id: settings.owner_chat_id || null,
-        ...(settings.bot_token ? { bot_token: settings.bot_token } : {}),
+        ...botChange(settings, shop),
       }),
     };
     update.mutate({ id: shop.id, data }, {
       onSuccess: saved => {
         qc.invalidateQueries({ queryKey: getListAdminShopsQueryKey() });
         qc.invalidateQueries({ queryKey: getListShopsQueryKey() });
-        onDone(`${saved.name} saqlandi.`);
+        // Another bot: the links made through the old one were dropped by the
+        // server, and the owner's chat has to start the new bot too.
+        // Its own bot's name is stored, so a change of it is certain; Q express's
+        // is learnt at start and may be missing, so it is not compared.
+        const botMoved = saved.bot_shop_id !== shop.bot_shop_id || (saved.bot_shop_id === null && saved.bot_username !== shop.bot_username);
+        onDone(botMoved
+          ? `${saved.name} saqlandi. Bot almashdi: do‘kon adminlari «Profilim» bo‘limida Telegramni qayta ulasin, egasi esa yangi botga /start bossin, aks holda xabarlar bormaydi.`
+          : `${saved.name} saqlandi.`);
       },
       onError: err => onDone(apiErrorMessage(err, 'Saqlab bo‘lmadi.'), true),
     });
   };
   return (
     <form onSubmit={submit} data-testid={`form-edit-shop-${shop.id}`} className="mt-4 space-y-4 border-t border-[hsl(var(--border))] pt-4">
-      <SettingsFields value={settings} onChange={setSettings} platform={shop.is_platform} creating={false} />
+      <SettingsFields value={settings} onChange={setSettings} platform={shop.is_platform} creating={false} saved={shop} />
       {shop.is_platform && <p className="text-[11px] text-[hsl(var(--muted-foreground))]">Q express boti va asosiy chati Render sozlamalarida (TELEGRAM_*) qoladi.</p>}
       <button type="submit" disabled={update.isPending} data-testid={`button-save-shop-${shop.id}`} className="tap flex h-11 items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] px-5 text-xs font-extrabold text-white disabled:opacity-50">
         {update.isPending && <LoaderCircle size={14} className="animate-spin" />} Saqlash
@@ -248,7 +388,7 @@ function BotStatusLine({ shop, onMessage }: { shop: AdminShop; onMessage: (text:
     },
     onError: err => onMessage(apiErrorMessage(err, 'Botni ulab bo‘lmadi.'), true),
   });
-  if (!shop.is_platform && !shop.bot_username) return null;
+  if (!shop.is_platform && !shop.bot_username && shop.bot_shop_id === null) return null;
   const busy = connect.isPending || shop.bot_status === 'connecting';
   const text = busy ? 'Bot ulanmoqda…'
     : shop.bot_status === 'connected' ? 'Bot ulangan'
@@ -271,7 +411,9 @@ function BotStatusLine({ shop, onMessage }: { shop: AdminShop; onMessage: (text:
 function ShopRow({ shop, canManage, onMessage }: { shop: AdminShop; canManage: boolean; onMessage: (text: string, isError?: boolean) => void }) {
   const qc = useQueryClient();
   const update = useUpdateAdminShop();
-  const { switchTo } = useAdminShop();
+  const { switchTo, shops } = useAdminShop();
+  // The shop whose bot this one shares, named in the row.
+  const botHost = shop.bot_shop_id === null ? undefined : shop.bot_shop_id === PLATFORM_SHOP_ID ? 'Q express' : shops.find(item => item.id === shop.bot_shop_id)?.name ?? 'boshqa do‘kon';
   const [, setLocation] = useLocation();
   const [editing, setEditing] = useState(false);
   const toggleActive = () => update.mutate({ id: shop.id, data: { active: !shop.active } }, {
@@ -335,13 +477,13 @@ function ShopRow({ shop, canManage, onMessage }: { shop: AdminShop; canManage: b
     <div data-testid={`row-shop-${shop.id}`} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="flex items-center gap-2 text-sm font-extrabold"><Store size={16} className="text-[hsl(var(--primary))]" />{shop.name}{!shop.active && <span className="rounded-full bg-[#fdecea] px-2 py-0.5 text-[10px] font-bold text-[#8c1d18]">yashirin</span>}{shop.is_platform && <span className="rounded-full bg-[#25483e] px-2 py-0.5 text-[10px] font-bold text-white">platforma</span>}</p>
+          <p className="flex items-center gap-2 text-sm font-extrabold">{shop.icon_url ? <ShopIcon url={shop.icon_url} className="h-6 w-6 rounded-lg" /> : <Store size={16} className="text-[hsl(var(--primary))]" />}{shop.name}{!shop.active && <span className="rounded-full bg-[#fdecea] px-2 py-0.5 text-[10px] font-bold text-[#8c1d18]">yashirin</span>}{shop.is_platform && <span className="rounded-full bg-[#25483e] px-2 py-0.5 text-[10px] font-bold text-white">platforma</span>}</p>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[hsl(var(--muted-foreground))]">
             <a href={storefront} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[hsl(var(--primary))]">{storefront} <ExternalLink size={11} /></a>
             <span>#{shop.order_prefix}-…</span>
             <span>{shop.open_time}–{shop.close_time}{shop.accepting_orders ? '' : ' · to‘xtatilgan'}</span>
             <span>Yetkazish: {money(shop.delivery_fee)}{shop.free_first_delivery ? ' · birinchisi bepul' : ''}</span>
-            {!shop.is_platform && <span className="inline-flex items-center gap-1"><Bot size={11} />{shop.bot_username ? `@${shop.bot_username}` : 'bot kiritilmagan'}{!shop.bot_configured && ' · token o‘qilmadi, qayta kiriting'}</span>}
+            {!shop.is_platform && <span className="inline-flex items-center gap-1"><Bot size={11} />{shop.bot_username ? `@${shop.bot_username}` : botHost ? `${botHost} boti` : 'bot kiritilmagan'}{botHost && ` · ${botHost} bilan umumiy`}{!shop.bot_configured && (botHost ? ' · bot egasining tokeni o‘qilmadi' : ' · token o‘qilmadi, qayta kiriting')}</span>}
           </div>
           {canManage && <BotStatusLine shop={shop} onMessage={onMessage} />}
         </div>

@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 // for one upload into one folder, and nothing else.
 
 const CLOUDINARY_API = "https://api.cloudinary.com/v1_1";
-const UPLOAD_FOLDER = "qorasuv-express/products";
+export const UPLOAD_FOLDER = "qorasuv-express/products";
 // Cloudinary rejects a signature whose timestamp has drifted too far, and a
 // stale one is useless to an attacker. One minute is enough for a person to
 // pick a file.
@@ -98,6 +98,58 @@ export function isOwnImageUrl(url: string) {
   if (parsed.protocol !== "https:") return false;
   if (parsed.hostname !== "res.cloudinary.com") return false;
   return parsed.pathname.startsWith(`/${config.cloudName}/`);
+}
+
+// A Cloudinary delivery URL ends in "/<public id>.<format>" (after any
+// transformations and version). The id claimed must be that very file, not
+// some other file of the same account.
+export function urlNamesPublicId(imageUrl: string, publicId: string) {
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(imageUrl).pathname);
+  } catch {
+    return false;
+  }
+  const withoutFormat = path.replace(/\.[A-Za-z0-9]+$/, "");
+  return publicId !== "" && (path.endsWith(`/${publicId}`) || withoutFormat.endsWith(`/${publicId}`));
+}
+
+// A public id is a claim that we own the file and may delete it later. Only
+// honour it when the URL really points into our own Cloudinary account and
+// names that file. Otherwise a wrong value would either make us delete a
+// stranger's file or, worse, delete ours while a page still shows a foreign
+// link.
+//
+// Exactly the address an upload answers with (secure_url): our cloud, a plain
+// upload ("/image/upload/", an optional version, no transformations and never
+// "/image/fetch/", which would have our account fetch someone else's
+// picture), and the file in our own folder.
+export function isOwnStoredImage(imageUrl: string | undefined, publicId: string) {
+  const config = readConfig();
+  if (!imageUrl || !config || !isOwnImageUrl(imageUrl)) return false;
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(imageUrl).pathname);
+  } catch {
+    return false;
+  }
+  const match = new RegExp(`^/${escapeRegExp(config.cloudName)}/image/upload/(?:v\\d+/)?(.+?)(?:\\.[A-Za-z0-9]+)?$`).exec(path);
+  return Boolean(match) && match![1] === publicId && publicId.startsWith(`${STORE_FOLDER}/`);
+}
+
+// Every picture of ours lives under this folder (see UPLOAD_FOLDER).
+const STORE_FOLDER = "qorasuv-express";
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// A copy of one of our pictures `width` pixels wide, in the lightest format
+// the viewer reads (as the web app asks for it, lib/images.ts); any other
+// link comes back as it is.
+export function sizedImageUrl(url: string, width: number) {
+  const match = /^(https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\/)(.+)$/.exec(url);
+  return match ? `${match[1]}f_auto,q_auto,c_limit,w_${width}/${match[2]}` : url;
 }
 
 export type DeleteOutcome = { deleted: boolean; reason?: string };

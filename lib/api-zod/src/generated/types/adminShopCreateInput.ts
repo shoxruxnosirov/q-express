@@ -7,6 +7,7 @@
  */
 import type { AdminCreateInput } from './adminCreateInput';
 import type { ShopCard } from './shopCard';
+import type { ShopImageInput } from './shopImageInput';
 
 export interface AdminShopCreateInput {
   /**
@@ -19,7 +20,12 @@ export interface AdminShopCreateInput {
   /** @pattern ^[A-Z]{2,4}$ */
   order_prefix: string;
   /** @maxLength 100 */
-  bot_token: string;
+  bot_token?: string;
+  /**
+     * Speak through this shop's bot (1 for Q express's) instead of a bot of its own; null for its own bot. A token of a bot already on the platform is taken as that bot too.
+     * @nullable
+     */
+  bot_shop_id?: number | null;
   /**
      * @maxLength 20
      * @nullable
@@ -36,5 +42,7 @@ export interface AdminShopCreateInput {
   delivery_fee: number;
   free_first_delivery: boolean;
   card?: ShopCard;
+  background?: ShopImageInput | null;
+  icon?: ShopImageInput | null;
   super_admin: AdminCreateInput;
 }

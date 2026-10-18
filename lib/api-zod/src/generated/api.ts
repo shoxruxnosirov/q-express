@@ -802,6 +802,8 @@ export const AdminLoginResponse = zod.object({
   "ru": zod.string().max(adminLoginResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(adminLoginResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -860,6 +862,8 @@ export const AdminSetupResponse = zod.object({
   "ru": zod.string().max(adminSetupResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(adminSetupResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -914,6 +918,8 @@ export const ChangeOwnAdminPasswordResponse = zod.object({
   "ru": zod.string().max(changeOwnAdminPasswordResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(changeOwnAdminPasswordResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -965,6 +971,8 @@ export const UnlinkTelegramResponse = zod.object({
   "ru": zod.string().max(unlinkTelegramResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(unlinkTelegramResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1098,6 +1106,8 @@ export const GetAdminSessionResponse = zod.object({
   "ru": zod.string().max(getAdminSessionResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(getAdminSessionResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1140,6 +1150,8 @@ export const AdminLogoutResponse = zod.object({
   "ru": zod.string().max(adminLogoutResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(adminLogoutResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1518,6 +1530,21 @@ export const CreateAdminUploadTicketResponse = zod.object({
 
 
 /**
+ * Best effort. The file is deleted only when it lies in our upload folder and no product or shop uses it, so a picture in use is never lost.
+ * @summary Delete a picture uploaded but never saved
+ */
+export const discardAdminUploadBodyPublicIdMax = 255;
+
+
+
+export const DiscardAdminUploadBody = zod.object({
+  "public_id": zod.string().min(1).max(discardAdminUploadBodyPublicIdMax)
+})
+
+export const DiscardAdminUploadResponse = zod.void()
+
+
+/**
  * Idempotent. Returns the existing thread when the browser already holds a valid chat cookie, otherwise creates one and sets the cookie.
  * @summary Open or resume this browser's conversation
  */
@@ -1691,6 +1718,8 @@ export const ListShopsResponseItem = zod.object({
   "ru": zod.string().max(listShopsResponseCardRuMax).optional(),
   "en": zod.string().max(listShopsResponseCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1720,6 +1749,8 @@ export const ListAdminShopsResponseItem = zod.object({
   "ru": zod.string().max(listAdminShopsResponseOneCardRuMax).optional(),
   "en": zod.string().max(listAdminShopsResponseOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1729,6 +1760,7 @@ export const ListAdminShopsResponseItem = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
@@ -1763,6 +1795,14 @@ export const createAdminShopBodyCardRuMax = 100000;
 
 export const createAdminShopBodyCardEnMax = 100000;
 
+export const createAdminShopBodyBackgroundOneUrlMax = 500;
+
+export const createAdminShopBodyBackgroundOnePublicIdMax = 255;
+
+export const createAdminShopBodyIconOneUrlMax = 500;
+
+export const createAdminShopBodyIconOnePublicIdMax = 255;
+
 export const createAdminShopBodySuperAdminUsernameRegExp = new RegExp('^[a-z0-9_.-]{3,32}$');
 export const createAdminShopBodySuperAdminDisplayNameMin = 2;
 export const createAdminShopBodySuperAdminDisplayNameMax = 60;
@@ -1776,7 +1816,8 @@ export const CreateAdminShopBody = zod.object({
   "name": zod.string().min(createAdminShopBodyNameMin).max(createAdminShopBodyNameMax),
   "slug": zod.string().regex(createAdminShopBodySlugRegExp),
   "order_prefix": zod.string().regex(createAdminShopBodyOrderPrefixRegExp),
-  "bot_token": zod.string().max(createAdminShopBodyBotTokenMax),
+  "bot_token": zod.string().max(createAdminShopBodyBotTokenMax).optional(),
+  "bot_shop_id": zod.number().int().nullish().describe('Speak through this shop\'s bot (1 for Q express\'s) instead of a bot of its own; null for its own bot. A token of a bot already on the platform is taken as that bot too.'),
   "owner_chat_id": zod.string().max(createAdminShopBodyOwnerChatIdMax).nullish(),
   "open_time": zod.string().regex(createAdminShopBodyOpenTimeRegExp),
   "close_time": zod.string().regex(createAdminShopBodyCloseTimeRegExp),
@@ -1787,6 +1828,14 @@ export const CreateAdminShopBody = zod.object({
   "ru": zod.string().max(createAdminShopBodyCardRuMax).optional(),
   "en": zod.string().max(createAdminShopBodyCardEnMax).optional()
 }).optional().describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background": zod.union([zod.object({
+  "url": zod.string().max(createAdminShopBodyBackgroundOneUrlMax),
+  "public_id": zod.string().min(1).max(createAdminShopBodyBackgroundOnePublicIdMax)
+}).describe('A picture uploaded to our Cloudinary account from the admin\'s browser: its delivery URL and public id, which must name that very file.'),zod.null()]).optional(),
+  "icon": zod.union([zod.object({
+  "url": zod.string().max(createAdminShopBodyIconOneUrlMax),
+  "public_id": zod.string().min(1).max(createAdminShopBodyIconOnePublicIdMax)
+}).describe('A picture uploaded to our Cloudinary account from the admin\'s browser: its delivery URL and public id, which must name that very file.'),zod.null()]).optional(),
   "super_admin": zod.object({
   "username": zod.string().regex(createAdminShopBodySuperAdminUsernameRegExp),
   "display_name": zod.string().min(createAdminShopBodySuperAdminDisplayNameMin).max(createAdminShopBodySuperAdminDisplayNameMax),
@@ -1814,6 +1863,8 @@ export const CreateAdminShopResponse = zod.object({
   "ru": zod.string().max(createAdminShopResponseShopOneCardRuMax).optional(),
   "en": zod.string().max(createAdminShopResponseShopOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1823,6 +1874,7 @@ export const CreateAdminShopResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
@@ -1876,6 +1928,7 @@ export const UpdateAdminShopBody = zod.object({
   "active": zod.boolean().optional(),
   "sort_order": zod.number().int().optional(),
   "bot_token": zod.string().max(updateAdminShopBodyBotTokenMax).optional(),
+  "bot_shop_id": zod.number().int().nullish().describe('Speak through this shop\'s bot (1 for Q express\'s) instead of a bot of its own; null for its own bot. A token of a bot already on the platform is taken as that bot too.'),
   "owner_chat_id": zod.string().max(updateAdminShopBodyOwnerChatIdMax).nullish(),
   "open_time": zod.string().regex(updateAdminShopBodyOpenTimeRegExp).optional(),
   "close_time": zod.string().regex(updateAdminShopBodyCloseTimeRegExp).optional(),
@@ -1902,6 +1955,8 @@ export const UpdateAdminShopResponse = zod.object({
   "ru": zod.string().max(updateAdminShopResponseOneCardRuMax).optional(),
   "en": zod.string().max(updateAdminShopResponseOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1911,6 +1966,7 @@ export const UpdateAdminShopResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
@@ -1947,6 +2003,8 @@ export const ConnectAdminShopBotResponse = zod.object({
   "ru": zod.string().max(connectAdminShopBotResponseOneCardRuMax).optional(),
   "en": zod.string().max(connectAdminShopBotResponseOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -1956,6 +2014,7 @@ export const ConnectAdminShopBotResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
@@ -1992,6 +2051,8 @@ export const ArchiveAdminShopResponse = zod.object({
   "ru": zod.string().max(archiveAdminShopResponseOneCardRuMax).optional(),
   "en": zod.string().max(archiveAdminShopResponseOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -2001,6 +2062,7 @@ export const ArchiveAdminShopResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
@@ -2037,6 +2099,8 @@ export const RestoreAdminShopResponse = zod.object({
   "ru": zod.string().max(restoreAdminShopResponseOneCardRuMax).optional(),
   "en": zod.string().max(restoreAdminShopResponseOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -2046,6 +2110,7 @@ export const RestoreAdminShopResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
@@ -2070,6 +2135,14 @@ export const updateShopCardBodyCardRuMax = 100000;
 
 export const updateShopCardBodyCardEnMax = 100000;
 
+export const updateShopCardBodyBackgroundOneUrlMax = 500;
+
+export const updateShopCardBodyBackgroundOnePublicIdMax = 255;
+
+export const updateShopCardBodyIconOneUrlMax = 500;
+
+export const updateShopCardBodyIconOnePublicIdMax = 255;
+
 
 
 export const UpdateShopCardBody = zod.object({
@@ -2077,7 +2150,15 @@ export const UpdateShopCardBody = zod.object({
   "uz": zod.string().max(updateShopCardBodyCardUzMax).optional(),
   "ru": zod.string().max(updateShopCardBodyCardRuMax).optional(),
   "en": zod.string().max(updateShopCardBodyCardEnMax).optional()
-}).describe('Rich HTML per language, made in the admin\'s editor.')
+}).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background": zod.union([zod.object({
+  "url": zod.string().max(updateShopCardBodyBackgroundOneUrlMax),
+  "public_id": zod.string().min(1).max(updateShopCardBodyBackgroundOnePublicIdMax)
+}).describe('A picture uploaded to our Cloudinary account from the admin\'s browser: its delivery URL and public id, which must name that very file.'),zod.null()]).optional().describe('A new background; null removes it, left out keeps it.'),
+  "icon": zod.union([zod.object({
+  "url": zod.string().max(updateShopCardBodyIconOneUrlMax),
+  "public_id": zod.string().min(1).max(updateShopCardBodyIconOnePublicIdMax)
+}).describe('A picture uploaded to our Cloudinary account from the admin\'s browser: its delivery URL and public id, which must name that very file.'),zod.null()]).optional().describe('A new icon; null removes it, left out keeps it.')
 })
 
 export const updateShopCardResponseOneCardUzMax = 100000;
@@ -2098,6 +2179,8 @@ export const UpdateShopCardResponse = zod.object({
   "ru": zod.string().max(updateShopCardResponseOneCardRuMax).optional(),
   "en": zod.string().max(updateShopCardResponseOneCardEnMax).optional()
 }).describe('Rich HTML per language, made in the admin\'s editor.'),
+  "background_url": zod.string().nullable().describe('The card\'s background picture, cropped 4:3; null for none.'),
+  "icon_url": zod.string().nullable().describe('The shop\'s square icon; null for none.'),
   "sort_order": zod.number().int(),
   "delivery_fee": zod.number(),
   "free_first_delivery": zod.boolean().describe('The first order to each flat is delivered free.')
@@ -2107,6 +2190,7 @@ export const UpdateShopCardResponse = zod.object({
   "open_time": zod.string(),
   "close_time": zod.string(),
   "accepting_orders": zod.boolean(),
+  "bot_shop_id": zod.number().int().nullable().describe('The shop whose bot this shop speaks through (1 for Q express\'s); null when it has a bot of its own.'),
   "bot_username": zod.string().nullable(),
   "bot_configured": zod.boolean(),
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),

@@ -654,6 +654,26 @@ test("every order line tells the admins how many, at what price, for how much", 
   assert.match(orderLineText({ name: "<b>x</b>", quantity: 1, unit: "dona", price: 1, total: 1 }), /&lt;b&gt;x&lt;\/b&gt;/, "names are escaped");
 });
 
+test("an order line's name opens the product's picture, the link itself unseen", async () => {
+  configureInbound();
+  const { orderLineText, itemsWithinLimit } = await import("../src/lib/telegram.ts");
+  const line = { name: "Non", quantity: 3, unit: "dona", price: 4000, total: 12000 };
+  const stored = "https://res.cloudinary.com/qe/image/upload/v17/qorasuv-express/products/non.webp";
+  assert.match(
+    orderLineText({ ...line, image_url: stored }),
+    /<a href="https:\/\/res\.cloudinary\.com\/qe\/image\/upload\/f_auto,q_auto,c_limit,w_800\/v17\/qorasuv-express\/products\/non\.webp">Non<\/a>/,
+    "a light copy of our picture",
+  );
+  assert.match(orderLineText({ ...line, image_url: "https://example.com/non.jpg" }), /<a href="https:\/\/example\.com\/non\.jpg">Non<\/a>/, "another site's picture as it is");
+  for (const bad of ["javascript:alert(1)", "http://example.com/x.jpg", 'https://x.test/a"><b>x', undefined]) {
+    assert.doesNotMatch(orderLineText({ ...line, image_url: bad }), /<a /, `no link for ${bad}`);
+  }
+  // The addresses do not count against the list's length: as many lines fit.
+  const plain = Array.from({ length: 200 }, (_, i) => orderLineText({ ...line, name: `Mahsulot ${i}` }));
+  const linked = Array.from({ length: 200 }, (_, i) => orderLineText({ ...line, name: `Mahsulot ${i}`, image_url: stored }));
+  assert.equal(itemsWithinLimit(linked).split("\n").length, itemsWithinLimit(plain).split("\n").length);
+});
+
 test("the order notification lists every line with its count, and the payment in Uzbek", async () => {
   configureInbound();
   let text;
@@ -676,6 +696,34 @@ test("the order notification lists every line with its count, and the payment in
   assert.match(text, /💰 Jami:/);
   assert.match(text, /🚚 Yetkazish: bepul 🎁/);
   assert.match(text, /To‘lov: 💵 Naqd/);
+});
+
+test("an order message Telegram refuses (400) goes again without picture links; a timeout is not resent", async () => {
+  configureInbound();
+  const item = { name: "Non", quantity: 1, unit: "dona", price: 4000, total: 4000, image_url: "https://example.com/non.jpg" };
+  const sent = [];
+  globalThis.fetch = async (_url, init) => {
+    const text = JSON.parse(init.body).text;
+    sent.push(text);
+    return text.includes("<a ")
+      ? new Response(JSON.stringify({ ok: false, error_code: 400 }), { status: 400 })
+      : new Response(JSON.stringify({ ok: true }));
+  };
+  const refused = await sendNewOrderNotification({ ...order, paymentMethod: "cash", items: [item] });
+  assert.equal(refused.sent, true);
+  assert.equal(sent.length, 2);
+  assert.match(sent[0], /<a href="https:\/\/example\.com\/non\.jpg">Non<\/a>/);
+  assert.doesNotMatch(sent[1], /<a /);
+  assert.match(sent[1], /▫️ Non —/);
+
+  sent.length = 0;
+  globalThis.fetch = async (_url, init) => {
+    sent.push(JSON.parse(init.body).text);
+    throw new Error("timeout");
+  };
+  const timedOut = await sendNewOrderNotification({ ...order, paymentMethod: "cash", items: [item] });
+  assert.equal(timedOut.sent, false);
+  assert.equal(sent.length, 1, "a message that may have arrived is not sent twice");
 });
 
 test("a very long order still reaches the admins, its list cut short and counted", async () => {

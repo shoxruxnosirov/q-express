@@ -14,6 +14,16 @@ export interface Shop {
   /** Q express, the platform's own shop. */
   is_platform: boolean;
   card: ShopCard;
+  /**
+     * The card's background picture, cropped 4:3; null for none.
+     * @nullable
+     */
+  background_url: string | null;
+  /**
+     * The shop's square icon; null for none.
+     * @nullable
+     */
+  icon_url: string | null;
   sort_order: number;
   delivery_fee: number;
   /** The first order to each flat is delivered free. */

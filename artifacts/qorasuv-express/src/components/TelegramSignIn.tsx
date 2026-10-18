@@ -121,7 +121,7 @@ export function TelegramSignIn() {
 
   if (!blocked) return null;
   return (
-    <div role="alert" data-testid="banner-telegram-blocked" className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-2 bg-[#8c1d18] px-4 py-2.5 text-center text-xs font-bold text-white">
+    <div role="alert" data-testid="banner-telegram-blocked" className="phone-span fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-2 bg-[#8c1d18] px-4 py-2.5 text-center text-xs font-bold text-white">
       <Ban size={14} /> {t('blocked')}
     </div>
   );

@@ -14,6 +14,11 @@ export type AdminShop = Shop & ({
   open_time: string;
   close_time: string;
   accepting_orders: boolean;
+  /**
+     * The shop whose bot this shop speaks through (1 for Q express's); null when it has a bot of its own.
+     * @nullable
+     */
+  bot_shop_id: number | null;
   /** @nullable */
   bot_username: string | null;
   bot_configured: boolean;

@@ -6,7 +6,9 @@ import {
   getListCategoriesQueryKey, getListProductsQueryKey, useCreateAdminCategory, useCreateAdminProduct,
   useListAdminCategories, useListAdminProducts,
 } from '@workspace/api-client-react';
-import { AdminImageField, AdminProductRow, FlagToggle, uploadProductImage } from '@/components/AdminProductRow';
+import { AdminProductRow, FlagToggle } from '@/components/AdminProductRow';
+import { ImageField } from '@/components/ImageField';
+import { usePictureUploads } from '@/lib/use-picture-uploads';
 import { AdminCategoryRow, CategoryIconPicker, SLUG_PATTERN, slugify } from '@/components/AdminCategoryRow';
 import { apiErrorMessage } from '@/pages/admin/AdminLogin';
 import { filterAdminProducts, matchesSearch, productHasStatus, PRODUCT_STATUSES, type ProductStatus } from '@/lib/admin-search';
@@ -76,6 +78,8 @@ export function AdminCatalogManager() {
   const [productImage, setProductImage] = useState<File | null>(null);
   const [productFlags, setProductFlags] = useState({ is_popular: false, is_new: true });
   const [uploading, setUploading] = useState(false);
+  const uploads = usePictureUploads();
+  useEffect(() => uploads.keepOnly([productImage]), [productImage, uploads]);
 
   const [categorySearch, setCategorySearch] = useState('');
   const [productSearch, setProductSearch] = useState('');
@@ -170,12 +174,15 @@ export function AdminCatalogManager() {
     }
     // Upload first: a product row is never created pointing at an image that
     // failed to arrive.
+    // From the upload to the save's answer no picture of this form is deleted.
+    const end = uploads.begin();
     setUploading(true);
     let uploaded;
     try {
-      uploaded = await uploadProductImage(productImage);
+      uploaded = await uploads.upload(productImage);
     } catch (error) {
       setUploading(false);
+      end();
       return fail(error instanceof Error ? error.message : 'Rasm yuklanmadi.');
     }
     setUploading(false);
@@ -196,12 +203,14 @@ export function AdminCatalogManager() {
       },
     }, {
       onSuccess: () => {
+        uploads.saved();
         setProduct({ ...emptyProduct, category_id: product.category_id });
         setProductImage(null);
         setProductFlags({ is_popular: false, is_new: true });
         done(`"${name}" qo‘shildi.`);
       },
       onError: error => fail(apiErrorMessage(error, 'Mahsulotni saqlab bo‘lmadi.')),
+      onSettled: end,
     });
   };
 
@@ -301,7 +310,7 @@ export function AdminCatalogManager() {
               <input required minLength={2} value={product.name} onChange={event => setProduct({ ...product, name: event.target.value })} placeholder="Mahsulot nomi" className={inputClass} />
               <input required minLength={2} value={product.description} onChange={event => setProduct({ ...product, description: event.target.value })} placeholder="Qisqa tavsif" className={inputClass} />
               <div className="sm:col-span-2">
-                <AdminImageField file={productImage} onPick={setProductImage} disabled={uploading || createProduct.isPending} />
+                <ImageField format="product" file={productImage} onPick={setProductImage} disabled={uploading || createProduct.isPending} />
               </div>
               <input required min="0" type="number" value={product.price} onChange={event => setProduct({ ...product, price: event.target.value })} placeholder="Narxi (so‘m)" className={inputClass} />
               <input min="0" type="number" value={product.old_price} onChange={event => setProduct({ ...product, old_price: event.target.value })} placeholder="Eski narx (ixtiyoriy)" className={inputClass} />

@@ -77,6 +77,7 @@ import type {
   TelegramLink,
   TelegramSession,
   TelegramSignInInput,
+  UploadDiscardInput,
   UploadTicket,
   WeeklyLeaderboardEntry
 } from './api.schemas';
@@ -3852,6 +3853,95 @@ export const useCreateAdminUploadTicket = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreateAdminUploadTicketMutationOptions(options));
+    }
+
+export const getDiscardAdminUploadUrl = () => {
+
+
+
+
+  return `/api/admin/uploads/discard`
+}
+
+/**
+ * Best effort. The file is deleted only when it lies in our upload folder and no product or shop uses it, so a picture in use is never lost.
+ * @summary Delete a picture uploaded but never saved
+ */
+export const discardAdminUpload = async (uploadDiscardInput: UploadDiscardInput, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<void>(getDiscardAdminUploadUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(uploadDiscardInput)
+  }
+);}
+
+
+
+
+
+export const getDiscardAdminUploadMutationKey = () => ['discardAdminUpload'] as const;
+
+export const getDiscardAdminUploadMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof discardAdminUpload>>, TError,DiscardAdminUploadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof discardAdminUpload>>, TError,DiscardAdminUploadMutationVariables, TContext> => {
+
+const mutationKey = getDiscardAdminUploadMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof discardAdminUpload>>, DiscardAdminUploadMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  discardAdminUpload(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DiscardAdminUploadMutationResult = NonNullable<Awaited<ReturnType<typeof discardAdminUpload>>>
+    export type DiscardAdminUploadMutationBody = BodyType<UploadDiscardInput>
+    export type DiscardAdminUploadMutationError = ErrorType<unknown>
+    export type DiscardAdminUploadMutationVariables = {data: BodyType<UploadDiscardInput>}
+
+    /**
+ * @summary Delete a picture uploaded but never saved
+ */
+export const useDiscardAdminUpload = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof discardAdminUpload>>, TError,DiscardAdminUploadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof discardAdminUpload>>,
+        TError,
+        DiscardAdminUploadMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDiscardAdminUploadMutationOptions(options));
     }
 
 export const getStartChatSessionUrl = (params?: StartChatSessionParams,) => {

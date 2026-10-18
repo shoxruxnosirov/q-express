@@ -5,6 +5,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -26,6 +27,12 @@ export const shopsTable = pgTable("shops", {
   active: boolean("active").notNull().default(true),
   // The storefront card: rich HTML per language ({ uz, ru, en }).
   card: jsonb("card").$type<Partial<Record<"uz" | "ru" | "en", string>>>().notNull().default({}),
+  // The card's background (cropped 4:3) and the shop's icon (square), files in
+  // our Cloudinary account; the public ids let a replaced file be deleted.
+  backgroundUrl: text("background_url"),
+  backgroundPublicId: text("background_public_id"),
+  iconUrl: text("icon_url"),
+  iconPublicId: text("icon_public_id"),
   openTime: text("open_time").notNull().default("06:00"),
   closeTime: text("close_time").notNull().default("23:00"),
   acceptingOrders: boolean("accepting_orders").notNull().default(true),
@@ -34,6 +41,9 @@ export const shopsTable = pgTable("shops", {
   botTokenEnc: text("bot_token_enc"),
   botId: text("bot_id").unique(),
   botUsername: text("bot_username"),
+  // Speaks through this shop's bot instead of one of its own (0015); NULL for
+  // its own bot (bot_token_enc), Q express's own included.
+  botShopId: integer("bot_shop_id").references((): AnyPgColumn => shopsTable.id),
   ownerChatId: text("owner_chat_id"),
   settingsUpdatedBy: integer("settings_updated_by").references((): AnyPgColumn => adminsTable.id, { onDelete: "set null" }),
   settingsUpdatedAt: timestamp("settings_updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -246,6 +256,16 @@ export const chatThreadsTable = pgTable("chat_threads", {
   // another device once they verify their phone.
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
 });
+
+// What a bot sent a customer for a conversation (0016): on a bot several
+// shops share, the customer's answer names the message it answers.
+export const botCustomerMessagesTable = pgTable("bot_customer_messages", {
+  botId: text("bot_id").notNull(),
+  chatId: text("chat_id").notNull(),
+  messageId: integer("message_id").notNull(),
+  threadId: integer("thread_id").notNull().references(() => chatThreadsTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.botId, table.chatId, table.messageId] })]);
 
 export const chatMessagesTable = pgTable("chat_messages", {
   id: serial("id").primaryKey(),

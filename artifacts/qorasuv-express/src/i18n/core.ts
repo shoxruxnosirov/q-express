@@ -67,3 +67,7 @@ const CURRENCY: Record<Lang, string> = { uz: 'so‘m', 'uz-Cyrl': 'сўм', ru: 
 export function formatMoney(value: number, lang: Lang) {
   return `${Math.round(value).toLocaleString('ru-RU')} ${CURRENCY[lang]}`;
 }
+
+export function currencyLabel(lang: Lang) {
+  return CURRENCY[lang];
+}

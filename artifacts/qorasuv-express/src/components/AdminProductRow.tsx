@@ -1,104 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, ImagePlus, LoaderCircle, PackageX, Pencil, ShoppingBasket, Sparkles, Star, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Eye, EyeOff, LoaderCircle, PackageX, Pencil, ShoppingBasket, Sparkles, Star, Trash2, X } from 'lucide-react';
 import {
-  createAdminUploadTicket,
   useDeleteAdminProduct,
   useUpdateAdminProduct,
   type AdminProduct,
 } from '@workspace/api-client-react';
 import { useConfirm } from '@/components/ConfirmDialog';
+import { ImageField } from '@/components/ImageField';
+import { sizedImage, type UploadedImage } from '@/lib/images';
+import { usePictureUploads } from '@/lib/use-picture-uploads';
 
 const money = (value: number) => `${Math.round(value).toLocaleString('ru-RU')} so'm`;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const UNITS = ['dona', 'kg', 'litr', 'qadoq'] as const;
 type Unit = (typeof UNITS)[number];
-
-export type UploadedImage = { url: string; publicId: string };
-
-// The signature authorises one upload and expires within a minute, so it is
-// fetched per file rather than cached. The bytes go straight from the browser
-// to Cloudinary and never pass through our own server, which sleeps when idle.
-export async function uploadProductImage(file: File): Promise<UploadedImage> {
-  if (!file.type.startsWith('image/')) throw new Error('Faqat rasm fayli yuklanadi.');
-  if (file.size > MAX_IMAGE_BYTES) throw new Error('Rasm hajmi 10 MB dan oshmasligi kerak.');
-
-  const ticket = await createAdminUploadTicket();
-  const form = new FormData();
-  form.append('file', file);
-  form.append('api_key', ticket.api_key);
-  form.append('timestamp', String(ticket.timestamp));
-  form.append('folder', ticket.folder);
-  form.append('signature', ticket.signature);
-
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${ticket.cloud_name}/image/upload`, {
-    method: 'POST',
-    body: form,
-  });
-  if (!response.ok) throw new Error('Rasm yuklanmadi. Qaytadan urinib ko‘ring.');
-  const payload = (await response.json()) as { secure_url?: string; public_id?: string };
-  if (!payload.secure_url || !payload.public_id) throw new Error('Rasm yuklandi, lekin manzili qaytmadi.');
-  return { url: payload.secure_url, publicId: payload.public_id };
-}
-
-// The picked file is held here and only uploaded when the form is saved, so
-// abandoning an edit leaves nothing behind in the image store.
-export function AdminImageField({
-  currentUrl,
-  file,
-  onPick,
-  disabled = false,
-}: {
-  currentUrl?: string;
-  file: File | null;
-  onPick: (file: File | null) => void;
-  disabled?: boolean;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<string | undefined>(currentUrl);
-
-  useEffect(() => {
-    if (!file) {
-      setPreview(currentUrl);
-      return;
-    }
-    const objectUrl = URL.createObjectURL(file);
-    setPreview(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [file, currentUrl]);
-
-  return (
-    <div className="flex items-center gap-3">
-      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
-        {preview
-          ? <img src={preview} alt="" className="h-full w-full object-cover" />
-          : <ShoppingBasket size={20} strokeWidth={1.3} className="text-[hsl(var(--muted-foreground))]" />}
-      </div>
-      <div className="min-w-0 flex-1">
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          disabled={disabled}
-          onChange={event => onPick(event.target.files?.[0] ?? null)}
-          className="hidden"
-        />
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => inputRef.current?.click()}
-          className="tap flex items-center gap-1.5 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-xs font-bold transition hover:border-[hsl(var(--primary))] hover:text-[hsl(var(--primary))] disabled:opacity-50"
-        >
-          <ImagePlus size={14} /> {preview ? 'Rasmni almashtirish' : 'Rasm tanlash'}
-        </button>
-        {file && (
-          <p className="mt-1 truncate text-[11px] text-[hsl(var(--muted-foreground))]">
-            {file.name} · saqlanganda yuklanadi
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export function FlagToggle({
   on,
@@ -154,7 +68,9 @@ export function AdminProductRow({
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const uploads = usePictureUploads();
   const [file, setFile] = useState<File | null>(null);
+  useEffect(() => uploads.keepOnly([file]), [file, uploads]);
   const draftFrom = (current: AdminProduct) => ({
     category_id: String(current.category_id),
     name: current.name,
@@ -211,12 +127,15 @@ export function AdminProductRow({
 
     // Upload before the mutation so a failed upload never half-updates the row.
     let uploaded: UploadedImage | null = null;
+    // From the upload to the save's answer no picture of this form is deleted.
+    const end = uploads.begin();
     if (file) {
       setUploading(true);
       try {
-        uploaded = await uploadProductImage(file);
+        uploaded = await uploads.upload(file);
       } catch (error) {
         setUploading(false);
+        end();
         return onError(error instanceof Error ? error.message : 'Rasm yuklanmadi.');
       }
       setUploading(false);
@@ -242,8 +161,9 @@ export function AdminProductRow({
         },
       },
       {
-        onSuccess: () => { close(); onDone('Mahsulot yangilandi.'); },
+        onSuccess: () => { uploads.saved(); close(); onDone('Mahsulot yangilandi.'); },
         onError: () => onError('Mahsulotni saqlab bo‘lmadi.'),
+        onSettled: end,
       },
     );
   };
@@ -273,7 +193,7 @@ export function AdminProductRow({
         <div className="flex min-w-[200px] flex-1 items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[hsl(var(--muted))]">
             {product.image_url
-              ? <img src={product.image_url} alt="" loading="lazy" className="h-full w-full object-cover" />
+              ? <img src={sizedImage(product.image_url, 200)} alt="" loading="lazy" className="h-full w-full object-cover" />
               : <ShoppingBasket size={16} className="text-[hsl(var(--muted-foreground))]" />}
           </div>
           <div className="min-w-0">
@@ -374,7 +294,7 @@ export function AdminProductRow({
 
       {open && (
         <div className="mt-3 grid gap-3 border-t border-[hsl(var(--border))] pt-3">
-          <AdminImageField currentUrl={product.image_url} file={file} onPick={setFile} disabled={busy} />
+          <ImageField format="product" currentUrl={product.image_url} file={file} onPick={setFile} disabled={busy} />
           <div className="grid gap-3 sm:grid-cols-2">
             <select
               value={draft.category_id}

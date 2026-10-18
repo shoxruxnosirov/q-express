@@ -1,7 +1,8 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, ilike, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import {
   CreateOrderBody,
+  DiscardAdminUploadBody,
   CreateAdminCategoryBody,
   CreateAdminProductBody,
   DeleteAdminCategoryParams,
@@ -30,6 +31,7 @@ import {
 import { db } from "@workspace/db";
 import {
   adminsTable,
+  botCustomerMessagesTable,
   categoriesTable,
   chatMessagesTable,
   chatThreadsTable,
@@ -44,6 +46,7 @@ import {
   isArchived,
   publicBaseUrl,
   listShops,
+  botFamily,
   loadShop,
   PLATFORM_SHOP_ID,
   requestShop,
@@ -63,7 +66,11 @@ import {
 } from "../lib/store-hours";
 import {
   acknowledgeAdminReply,
+  currentBotId,
+  ownerChatId,
   parseAdminUpdate,
+  type AdminUpdate,
+  type SentMessage,
   sendChatMessageNotification,
   sendCustomerEcho,
   sendLinkResult,
@@ -124,10 +131,12 @@ import {
 import { createRateLimiter } from "../lib/rate-window";
 import {
   createUploadTicket,
-  deleteImage,
   isCloudinaryConfigured,
-  isOwnImageUrl,
+  UPLOAD_FOLDER,
+  isOwnStoredImage,
 } from "../lib/cloudinary";
+import { discardStoredImage } from "../lib/stored-images";
+import { logger } from "../lib/logger";
 import {
   addMicroquantities,
   deriveAmountQuantityMicro,
@@ -458,54 +467,16 @@ function productDto(product: typeof productsTable.$inferSelect, category: string
   };
 }
 
-// An image_public_id is a claim that we own the file and may delete it later.
-// Only honour that claim when image_url really points into our own Cloudinary
-// account. Otherwise a wrong value would either make us delete a stranger's
-// file or, worse, delete ours while the product still displays a foreign link.
+// An image_public_id is a claim that we own the file and may delete it later
+// (see isOwnStoredImage).
 function resolveImagePublicId(
   imageUrl: string | undefined,
   imagePublicId: string | null | undefined,
 ) {
   if (imagePublicId === undefined) return undefined;
   if (imagePublicId === null) return null;
-  if (!imageUrl || !isOwnImageUrl(imageUrl) || !urlNamesPublicId(imageUrl, imagePublicId)) {
-    invalidOrder("imageUrlMismatch");
-  }
+  if (!isOwnStoredImage(imageUrl, imagePublicId)) invalidOrder("imageUrlMismatch");
   return imagePublicId;
-}
-
-// A Cloudinary delivery URL ends in "/<public id>.<format>" (after any
-// transformations and version). The id claimed must be that very file, not
-// some other file of the same account.
-function urlNamesPublicId(imageUrl: string, publicId: string) {
-  let path: string;
-  try {
-    path = decodeURIComponent(new URL(imageUrl).pathname);
-  } catch {
-    return false;
-  }
-  const withoutFormat = path.replace(/\.[A-Za-z0-9]+$/, "");
-  return publicId !== "" && (path.endsWith(`/${publicId}`) || withoutFormat.endsWith(`/${publicId}`));
-}
-
-// Deleting the stored file is best effort and never fails the request. The
-// database row is already written by the time this runs, so a failure leaves
-// an unreferenced file in Cloudinary rather than a product whose image is gone.
-// Shops share one Cloudinary account, and one file may be claimed by several
-// products (another shop pointing at the same file): it goes only once no
-// product at all still uses it.
-async function discardStoredImage(req: Request, publicId: string | null | undefined) {
-  if (!publicId) return;
-  const [stillUsed] = await db
-    .select({ id: productsTable.id })
-    .from(productsTable)
-    .where(eq(productsTable.imagePublicId, publicId))
-    .limit(1);
-  if (stillUsed) return;
-  const outcome = await deleteImage(publicId);
-  if (!outcome.deleted) {
-    req.log.warn({ publicId, reason: outcome.reason }, "Stored image delete failed");
-  }
 }
 
 function adminProductDto(product: typeof productsTable.$inferSelect, category: string) {
@@ -733,16 +704,17 @@ async function customerThread(
 // stored for the site either way.
 async function deliverReplyToCustomerTelegram(
   req: Request,
-  userId: number | null,
+  thread: { id: number; userId: number | null },
   body: string,
   linkedChatIds: readonly string[],
 ) {
-  if (userId === null) return;
-  const [owner] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  if (thread.userId === null) return;
+  const [owner] = await db.select().from(usersTable).where(eq(usersTable.id, thread.userId)).limit(1);
   if (!owner?.telegramId || owner.blockedAt) return;
   if (isAdminChat(owner.telegramId, linkedChatIds)) return;
   const sent = await sendCustomerReply(owner.telegramId, body, publicBaseUrl(req), accountLang(owner));
   if (!sent.sent) req.log.warn({ reason: sent.error }, "Telegram reply to customer failed");
+  await rememberBotMessage(owner.telegramId, sent, thread.id);
 }
 
 // Whether the customer a conversation belongs to is blocked, everywhere or by
@@ -1510,6 +1482,7 @@ router.post("/chat/messages", async (req, res, next) => {
       // in; the one the Mini App shows when none is saved yet.
       const echoed = await sendCustomerEcho(telegramId, message.body, isLang(customer.user.language) ? customer.user.language : lang);
       if (!echoed.sent) req.log.warn({ reason: echoed.error }, "Telegram chat echo to customer failed");
+      await rememberBotMessage(telegramId, echoed, thread.id);
     };
     // Through this shop's bot, to this shop's admins.
     await withBot(await shopBot(shop), () => Promise.all([notifyAdminsOfChat(req, thread, message.body, via, linkedChatIds), echo()]));
@@ -1547,7 +1520,9 @@ async function shopWebhook(shopId: number, req: Request, res: Response, next: (e
     const shop = await loadShop(shopId);
     if (!shop) return res.status(404).json({ error: "Not found" });
     // An archived shop's bot hears nothing; answered so Telegram stops retrying.
-    if (isArchived(shop)) return res.json({ ok: true });
+    // Nor does the old bot of a shop now on another shop's bot: that bot's
+    // webhook (its host's) serves it.
+    if (isArchived(shop) || shop.botShopId !== null) return res.json({ ok: true });
     return await withBot(await shopBot(shop), () => handleWebhook(shop, req, res));
   } catch (error) {
     return next(error);
@@ -1560,11 +1535,31 @@ async function handleWebhook(shop: ShopRow, req: Request, res: Response) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const recipients = await linkedTelegramRecipients(shop.id);
-    const update = parseAdminUpdate(req.body, recipients.map((recipient) => recipient.chatId));
+    // The shops on this bot besides its own (bot_shop_id): their admins and
+    // owners write to it too, to link their chat and to answer their shop's
+    // customers. A /start or a customer's own message is the bot's own shop's.
+    const family = await botFamily(shop);
+    const familyIds = family.map((member) => member.id);
+    const adminChats = recipients.map((recipient) => recipient.chatId);
+    for (const guest of family.slice(1)) {
+      adminChats.push(...(await linkedTelegramChatIds(guest.id)));
+      if (guest.ownerChatId) adminChats.push(guest.ownerChatId);
+    }
+    let update = parseAdminUpdate(req.body, adminChats);
+    // Another shop's admin or owner writing plain text that answers nothing is
+    // a customer here like anyone else. A reply to some other notice, a
+    // photo, or a text too long stays a hint to them, never a customer's
+    // message in a shop they do not work for.
+    const hintChat = update.kind === "hint" ? update.chatId : undefined;
+    const raw = (req.body as { message?: { text?: unknown; reply_to_message?: unknown } } | null)?.message;
+    const plainText = typeof raw?.text === "string" && raw.text.trim() !== "" && raw.reply_to_message === undefined;
+    if (hintChat !== undefined && plainText && !recipients.some((recipient) => recipient.chatId === hintChat)) {
+      update = parseAdminUpdate(req.body, recipients.map((recipient) => recipient.chatId));
+    }
     if (update.kind === "ignore") return res.json({ ok: true });
     // A hidden shop is closed to customers, in its bot as on the site: they
     // are neither greeted nor heard. Its admins keep their links and replies.
-    if (!shop.active && (update.kind === "welcome" || update.kind === "customer-message" || update.kind === "customer-unsupported")) {
+    if (!shop.active && (update.kind === "welcome" || update.kind === "customer-unsupported")) {
       return res.json({ ok: true });
     }
     // The shop works in private chats only. Added to a group or channel, the
@@ -1580,8 +1575,8 @@ async function handleWebhook(shop: ShopRow, req: Request, res: Response) {
         const [admin] = await tx
           .select()
           .from(adminsTable)
-          // Only this shop's admins link through this shop's bot.
-          .where(and(eq(adminsTable.telegramLinkHash, telegramLinkHash(update.code)), eq(adminsTable.shopId, shop.id)))
+          // Only the admins of the shops on this bot link through it.
+          .where(and(eq(adminsTable.telegramLinkHash, telegramLinkHash(update.code)), inArray(adminsTable.shopId, familyIds)))
           .limit(1)
           .for("update");
         if (!admin || !admin.telegramLinkExpiresAt || admin.telegramLinkExpiresAt < new Date()) return undefined;
@@ -1590,7 +1585,7 @@ async function handleWebhook(shop: ShopRow, req: Request, res: Response) {
         await tx
           .update(adminsTable)
           .set({ telegramChatId: null })
-          .where(and(eq(adminsTable.telegramChatId, update.chatId), eq(adminsTable.shopId, shop.id)));
+          .where(and(eq(adminsTable.telegramChatId, update.chatId), eq(adminsTable.shopId, admin.shopId)));
         const [updated] = await tx
           .update(adminsTable)
           .set({ telegramChatId: update.chatId, telegramLinkHash: null, telegramLinkExpiresAt: null })
@@ -1647,45 +1642,160 @@ async function handleWebhook(shop: ShopRow, req: Request, res: Response) {
       return res.json({ ok: true });
     }
     if (update.kind === "customer-message") {
-      if (await telegramBlockedInShop(update.telegramUserId, shop.id)) {
-        if (customerNoticeLimiter.allow(update.chatId)) {
-          await sendCustomerNotice(update.chatId, "blocked", await telegramUserLang(update.telegramUserId, update.languageCode));
-        }
-        return res.json({ ok: true });
+      // On a bot several shops share: the shop whose message they answer, or
+      // whose conversation they were last in; the bot's own shop otherwise.
+      const target = family.length > 1 ? await customerMessageShop(update, family) : shop;
+      // A hidden shop is closed to customers, in its bot as on the site.
+      if (!target.active) return res.json({ ok: true });
+      if (target !== shop) {
+        const targetRecipients = await linkedTelegramRecipients(target.id);
+        return await withBot(await shopBot(target), () => acceptCustomerMessage(target, update, targetRecipients, req, res));
       }
-      const customer = await telegramCustomer(update.telegramUserId, { name: update.name, username: update.username }, update.languageCode);
-      const { thread } = await customerThread(customer, shop.id);
-      if (!chatMessageLimiter.allow(thread.id)) {
-        if (customerNoticeLimiter.allow(update.chatId)) {
-          await sendCustomerNotice(update.chatId, "too-many", accountLang(customer, update.languageCode));
-        }
-        return res.json({ ok: true });
-      }
-      const [message] = await db
-        .insert(chatMessagesTable)
-        .values({ threadId: thread.id, sender: "customer", body: update.body, telegramRef: update.ref })
-        .onConflictDoNothing()
-        .returning();
-      // Telegram re-sent an update already stored.
-      if (!message) return res.json({ ok: true });
-      await db
-        .update(chatThreadsTable)
-        .set({ lastMessageAt: message.createdAt, customerReadAt: message.createdAt })
-        .where(eq(chatThreadsTable.id, thread.id));
-
-      const acknowledged = await acknowledgeAdminReply(update.chatId, update.messageId);
-      if (!acknowledged.sent) req.log.warn({ reason: acknowledged.error }, "Telegram customer message acknowledgement failed");
-      await notifyAdminsOfChat(req, thread, message.body, "bot", recipients.map((recipient) => recipient.chatId));
-      return res.json({ ok: true });
+      return await acceptCustomerMessage(shop, update, recipients, req, res);
     }
 
     const [thread] = await db
       .select()
       .from(chatThreadsTable)
-      // A thread of another shop is as good as missing to this bot.
-      .where(and(eq(chatThreadsTable.id, update.threadId), eq(chatThreadsTable.shopId, shop.id)))
+      // A thread of a shop not on this bot is as good as missing to it.
+      .where(and(eq(chatThreadsTable.id, update.threadId), inArray(chatThreadsTable.shopId, familyIds)))
       .limit(1);
     if (!thread) {
+      await sendReplyHint(update.chatId, update.messageId, "missing-thread");
+      return res.json({ ok: true });
+    }
+    // An answer in another shop's conversation is that shop's: its admins
+    // get the copy, its name heads it, from its own context on this bot.
+    const threadShop = family.find((member) => member.id === thread.shopId) ?? shop;
+    if (threadShop !== shop) {
+      const threadRecipients = await linkedTelegramRecipients(threadShop.id);
+      return await withBot(await shopBot(threadShop), () => answerInThread(threadShop, thread, update, threadRecipients, req, res));
+    }
+    return await answerInThread(shop, thread, update, recipients, req, res);
+  }
+}
+
+// A customer's own message to the bot, stored in their conversation with
+// `shop` under the same rules as the Mini App (not blocked, the same limit).
+// Writing to the bot is a way in by itself: a Telegram account the shop has
+// not met yet becomes a customer with its first message, ordered or not.
+async function acceptCustomerMessage(
+  shop: ShopRow,
+  update: Extract<AdminUpdate, { kind: "customer-message" }>,
+  recipients: Awaited<ReturnType<typeof linkedTelegramRecipients>>,
+  req: Request,
+  res: Response,
+) {
+  if (await telegramBlockedInShop(update.telegramUserId, shop.id)) {
+    if (customerNoticeLimiter.allow(update.chatId)) {
+      await sendCustomerNotice(update.chatId, "blocked", await telegramUserLang(update.telegramUserId, update.languageCode));
+    }
+    return res.json({ ok: true });
+  }
+  const customer = await telegramCustomer(update.telegramUserId, { name: update.name, username: update.username }, update.languageCode);
+  const { thread } = await customerThread(customer, shop.id);
+  if (!chatMessageLimiter.allow(thread.id)) {
+    if (customerNoticeLimiter.allow(update.chatId)) {
+      await sendCustomerNotice(update.chatId, "too-many", accountLang(customer, update.languageCode));
+    }
+    return res.json({ ok: true });
+  }
+  const [message] = await db
+    .insert(chatMessagesTable)
+    .values({ threadId: thread.id, sender: "customer", body: update.body, telegramRef: update.ref })
+    .onConflictDoNothing()
+    .returning();
+  // Telegram re-sent an update already stored.
+  if (!message) return res.json({ ok: true });
+  await db
+    .update(chatThreadsTable)
+    .set({ lastMessageAt: message.createdAt, customerReadAt: message.createdAt })
+    .where(eq(chatThreadsTable.id, thread.id));
+
+  const acknowledged = await acknowledgeAdminReply(update.chatId, update.messageId);
+  if (!acknowledged.sent) req.log.warn({ reason: acknowledged.error }, "Telegram customer message acknowledgement failed");
+  await notifyAdminsOfChat(req, thread, message.body, "bot", recipients.map((recipient) => recipient.chatId));
+  return res.json({ ok: true });
+}
+
+// Which shop on a shared bot a customer's own message is for. Their answer to
+// one of the bot's messages names it (bot_customer_messages); else the
+// conversation they were last in on this bot, if recent; else the bot's own
+// shop, as for anyone writing to it out of the blue.
+const LAST_CONVERSATION_DAYS = 7;
+async function customerMessageShop(update: Extract<AdminUpdate, { kind: "customer-message" }>, family: ShopRow[]): Promise<ShopRow> {
+  const [host] = family;
+  // A hidden shop hears no customer: its share goes to the bot's own shop.
+  const open = family.filter((member) => member.active);
+  const openIds = open.map((member) => member.id);
+  const botId = currentBotId();
+  if (botId && update.replyToMessageId !== undefined) {
+    const [answered] = await db
+      .select({ shopId: chatThreadsTable.shopId })
+      .from(botCustomerMessagesTable)
+      .innerJoin(chatThreadsTable, eq(chatThreadsTable.id, botCustomerMessagesTable.threadId))
+      .where(and(
+        eq(botCustomerMessagesTable.botId, botId),
+        eq(botCustomerMessagesTable.chatId, update.chatId),
+        eq(botCustomerMessagesTable.messageId, update.replyToMessageId),
+      ))
+      .limit(1);
+    // Answering that shop's own message: theirs, a block included.
+    const answeredShop = answered && open.find((member) => member.id === answered.shopId);
+    if (answeredShop) return answeredShop;
+  }
+  if (openIds.length === 0) return host;
+  const recent = await db
+    .select({ shopId: chatThreadsTable.shopId })
+    .from(chatThreadsTable)
+    .innerJoin(usersTable, eq(usersTable.id, chatThreadsTable.userId))
+    .where(and(
+      eq(usersTable.telegramId, update.telegramUserId),
+      inArray(chatThreadsTable.shopId, openIds),
+      sql`${chatThreadsTable.lastMessageAt} > now() - make_interval(days => ${LAST_CONVERSATION_DAYS})`,
+    ))
+    .orderBy(desc(chatThreadsTable.lastMessageAt));
+  // The latest conversation with a shop that still hears them: a shop that
+  // blocked them does not keep the whole bot from them.
+  for (const { shopId } of recent) {
+    const member = open.find((item) => item.id === shopId);
+    if (member && !(await telegramBlockedInShop(update.telegramUserId, member.id))) return member;
+  }
+  return host;
+}
+
+// What the bot sent a customer for a conversation, so their answer to it finds
+// that conversation again (customerMessageShop). Best effort: a missed record
+// only means an answer to it goes by the last conversation instead.
+async function rememberBotMessage(chatId: string, sent: SentMessage, threadId: number) {
+  const botId = currentBotId();
+  if (!sent.sent || sent.messageId === undefined || !botId) return;
+  try {
+    await db.insert(botCustomerMessagesTable).values({ botId, chatId, messageId: sent.messageId, threadId }).onConflictDoNothing();
+    // Now and then the old ones go: an answer to a message two months old
+    // is routed by the last conversation instead.
+    if (Math.random() < 0.02) {
+      await db.delete(botCustomerMessagesTable).where(sql`${botCustomerMessagesTable.createdAt} < now() - interval '60 days'`);
+    }
+  } catch (error) {
+    logger.warn({ error }, "Bot message not recorded");
+  }
+}
+
+// An admin's answer, written in Telegram, in a conversation of `shop`.
+async function answerInThread(
+  shop: ShopRow,
+  thread: typeof chatThreadsTable.$inferSelect,
+  update: { chatId: string; messageId: number; body: string; ref: string },
+  recipients: Awaited<ReturnType<typeof linkedTelegramRecipients>>,
+  req: Request,
+  res: Response,
+) {
+  {
+    // Only the shop's own admins and owner answer in its conversations; on a
+    // bot several shops share, another shop's admin is no one here.
+    const owner = ownerChatId();
+    if (!recipients.some((recipient) => recipient.chatId === update.chatId) && owner !== update.chatId) {
       await sendReplyHint(update.chatId, update.messageId, "missing-thread");
       return res.json({ ok: true });
     }
@@ -1733,7 +1843,7 @@ async function handleWebhook(shop: ShopRow, req: Request, res: Response) {
       update.chatId,
     );
     if (!copied.sent) req.log.warn({ reason: copied.error }, "Telegram reply copy failed");
-    await deliverReplyToCustomerTelegram(req, thread.userId, message.body, recipients.map((recipient) => recipient.chatId));
+    await deliverReplyToCustomerTelegram(req, thread, message.body, recipients.map((recipient) => recipient.chatId));
     return res.json({ ok: true });
   }
 }
@@ -2011,23 +2121,29 @@ router.patch("/admin/products/:id", async (req, res, next) => {
       if (!category) return res.status(400).json({ error: CATEGORY_NOT_FOUND });
     }
 
-    const [product] = await db
-      .update(productsTable)
-      .set(update)
-      .where(inShop)
-      .returning();
-    if (!product) return res.status(404).json({ error: "Product not found" });
+    // The image in use is read again under the row's lock, in the same
+    // transaction as the change: two edits at once each retire the file the
+    // other replaced, never the same one twice.
+    const changed = await db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({ imagePublicId: productsTable.imagePublicId })
+        .from(productsTable)
+        .where(inShop)
+        .for("update");
+      if (!before) return undefined;
+      const [row] = await tx.update(productsTable).set(update).where(inShop).returning();
+      return { before, product: row };
+    });
+    if (!changed?.product) return res.status(404).json({ error: "Product not found" });
+    const { before, product } = changed;
     const [category] = await db
       .select({ name: categoriesTable.name })
       .from(categoriesTable)
       .where(eq(categoriesTable.id, product.categoryId))
       .limit(1);
     // The row now points at the new image, so the previous file is orphaned.
-    if (
-      existingProduct.imagePublicId &&
-      existingProduct.imagePublicId !== product.imagePublicId
-    ) {
-      await discardStoredImage(req, existingProduct.imagePublicId);
+    if (before.imagePublicId && before.imagePublicId !== product.imagePublicId) {
+      await discardStoredImage(req.log, before.imagePublicId);
     }
     return res.json(productDto(product, category?.name ?? "Noma'lum"));
   } catch (error) {
@@ -2050,7 +2166,7 @@ router.delete("/admin/products/:id", async (req, res, next) => {
       .where(and(eq(productsTable.id, id), eq(productsTable.shopId, adminShopId(res))))
       .returning();
     if (!product) return res.status(404).json({ error: "Product not found" });
-    await discardStoredImage(req, product.imagePublicId);
+    await discardStoredImage(req.log, product.imagePublicId);
     return res.status(204).send();
   } catch (error) {
     return next(error);
@@ -2066,6 +2182,20 @@ router.post("/admin/uploads/signature", (_req, res, next) => {
       return res.status(503).json({ error: "Rasm ombori sozlanmagan" });
     }
     return res.status(201).json(createUploadTicket());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// A picture uploaded for a form that was then not saved (the save failed, or
+// the admin picked another or left). Deleted only when it is a file of our
+// upload folder that no product or shop uses (discardStoredImage), so naming
+// a picture in use, anyone's, deletes nothing.
+router.post("/admin/uploads/discard", async (req, res, next) => {
+  try {
+    const { public_id: publicId } = DiscardAdminUploadBody.parse(req.body);
+    if (publicId.startsWith(`${UPLOAD_FOLDER}/`)) await discardStoredImage(req.log, publicId);
+    return res.status(204).end();
   } catch (error) {
     return next(error);
   }
@@ -2219,7 +2349,7 @@ router.post("/admin/chats/:id/messages", async (req, res, next) => {
     if (!copied.sent) {
       req.log.warn({ reason: copied.error }, "Telegram operator reply copy failed");
     }
-    await deliverReplyToCustomerTelegram(req, thread.userId, message.body, chats);
+    await deliverReplyToCustomerTelegram(req, thread, message.body, chats);
     });
     return res.status(201).json({ ...chatMessageDto(message), admin_name: admin.displayName });
   } catch (error) {

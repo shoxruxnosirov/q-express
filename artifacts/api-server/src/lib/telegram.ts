@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { sizedImageUrl } from "./cloudinary.ts";
 import { inScript, translate, type Lang } from "./i18n.ts";
 import { botMessages } from "./messages.ts";
 
@@ -146,7 +147,7 @@ export function formatQuantity(quantity: unknown, unit: unknown) {
 // One line of an order for the admins: how many, at what price, for how much.
 // A line bought by amount ("30 000 so'mlik go'sht") says the amount and the
 // weight it came to.
-export function orderLineText(item: unknown) {
+export function orderLineText(item: unknown, withLink = true) {
   const line = (item ?? {}) as {
     name?: string;
     quantity?: number;
@@ -155,8 +156,13 @@ export function orderLineText(item: unknown) {
     total?: number;
     purchase_mode?: "quantity" | "amount";
     requested_amount?: number | null;
+    image_url?: string;
   };
-  const name = escapeHtml(shorten(line.name ?? "Mahsulot", 120));
+  // The name opens the product's picture (as it was when ordered): the link
+  // itself is not shown, and the message carries no preview of it.
+  const label = escapeHtml(shorten(line.name ?? "Mahsulot", 120));
+  const picture = withLink && typeof line.image_url === "string" && /^https:\/\/[^\s"<>]+$/.test(line.image_url) ? sizedImageUrl(line.image_url, 800) : undefined;
+  const name = picture ? `<a href="${escapeHtml(picture)}">${label}</a>` : label;
   const quantity = escapeHtml(formatQuantity(line.quantity, line.unit));
   if (line.purchase_mode === "amount" && line.requested_amount != null) {
     return `▫️ ${name} — <b>${formatMoney(line.requested_amount)}lik</b> (~${quantity})`;
@@ -174,9 +180,12 @@ export function itemsWithinLimit(lines: string[]) {
   const shown: string[] = [];
   let length = 0;
   for (const line of lines) {
-    if (length + line.length + 1 > ITEMS_TEXT_LIMIT) break;
+    // A picture link's address is not shown, so it does not count: as many
+    // lines fit as before the names were linked.
+    const size = line.replace(/<a href="[^"]*">|<\/a>/g, "").length;
+    if (length + size + 1 > ITEMS_TEXT_LIMIT) break;
     shown.push(line);
-    length += line.length + 1;
+    length += size + 1;
   }
   const rest = lines.length - shown.length;
   if (rest > 0) shown.push(`… va yana <b>${rest}</b> ta mahsulot (to‘liq ro‘yxat admin panelda)`);
@@ -447,6 +456,7 @@ type TelegramUpdate = {
     text?: string;
     contact?: { phone_number?: string; user_id?: number };
     reply_to_message?: {
+      message_id?: number;
       from?: { id?: number; is_bot?: boolean };
       text?: string;
     };
@@ -468,7 +478,7 @@ export type AdminUpdate =
   // A customer writing to the bot in their private chat: it goes into their
   // conversation with the shop, the same one the Mini App shows. The name is
   // Telegram's, for an account the message itself creates.
-  | { kind: "customer-message"; chatId: string; telegramUserId: string; name: string; username: string | null; body: string; messageId: number; ref: string; languageCode?: string }
+  | { kind: "customer-message"; chatId: string; telegramUserId: string; name: string; username: string | null; body: string; messageId: number; ref: string; languageCode?: string; replyToMessageId?: number }
   // A customer sent something the chat cannot hold (a photo, a sticker, a
   // text over the limit); answer with what is accepted.
   | { kind: "customer-unsupported"; chatId: string; messageId: number; languageCode?: string }
@@ -547,6 +557,10 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
       messageId: message.message_id,
       ref: updateRef(bot.token, chatId, message.message_id),
       ...language,
+      // An answer to one of this bot's own messages names it.
+      ...(message.reply_to_message?.from?.is_bot === true && message.reply_to_message.from.id === Number(bot.token.split(":")[0]) && typeof message.reply_to_message.message_id === "number"
+        ? { replyToMessageId: message.reply_to_message.message_id }
+        : {}),
     };
   }
 
@@ -574,9 +588,13 @@ export function parseAdminUpdate(update: unknown, linkedChatIds: readonly string
 // "<chat>:<message>" names a message within one bot. Q express's keeps the
 // form it always had; another shop's bot puts its own id in front, since two
 // bots number their messages to one person independently.
+// The legacy bot (TELEGRAM_BOT_TOKEN) keeps that form; every other bot,
+// TELEGRAM_BOT_MODE=new's included, is named, so the two Q express bots never
+// collide after a switch of mode.
 function updateRef(token: string, chatId: string, messageId: number) {
   const ref = `${chatId}:${messageId}`;
-  return activeBot().platform ? ref : `b${token.split(":")[0]}:${ref}`;
+  const botId = token.split(":")[0];
+  return botId === process.env.TELEGRAM_BOT_TOKEN?.split(":")[0] ? ref : `b${botId}:${ref}`;
 }
 
 // A thumbs-up on the admin's own message says "delivered" without adding
@@ -687,28 +705,43 @@ export function customerEchoText(body: string, lang: Lang = "uz") {
   return [botText(lang, "echoTitle"), quote(body)].join("\n");
 }
 
-export async function sendCustomerEcho(telegramUserId: string, body: string, lang: Lang = "uz") {
+export async function sendCustomerEcho(telegramUserId: string, body: string, lang: Lang = "uz"): Promise<SentMessage> {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
-  const { sent, error } = await callBotApi(bot.token, "sendMessage", {
+  return sentMessage(await callBotApi(bot.token, "sendMessage", {
     chat_id: telegramUserId,
     text: customerEchoText(body, lang),
     parse_mode: "HTML",
     disable_notification: true,
-  });
-  return error === undefined ? { sent } : { sent, error };
+  }));
 }
 
-async function sendToChatWithMarkup(chatId: string, text: string, replyMarkup: Record<string, unknown>) {
+// A message sent, with its id in the chat when Telegram gave one: a customer's
+// answer to it names that id (reply_to_message), which tells which shop's
+// conversation it belongs to on a bot several shops share.
+export type SentMessage = TelegramResult & { messageId?: number };
+
+function sentMessage({ sent, error, result }: BotApiResult): SentMessage {
+  if (error !== undefined) return { sent, error };
+  const messageId = (result as { message_id?: unknown } | undefined)?.message_id;
+  return typeof messageId === "number" ? { sent, messageId } : { sent };
+}
+
+// The id of the bot in use ("<id>" of its "<id>:<secret>" token), or undefined.
+export function currentBotId(): string | undefined {
+  const bot = resolveBotToken();
+  return "token" in bot ? bot.token.split(":")[0] : undefined;
+}
+
+async function sendToChatWithMarkup(chatId: string, text: string, replyMarkup: Record<string, unknown>): Promise<SentMessage> {
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
-  const { sent, error } = await callBotApi(bot.token, "sendMessage", {
+  return sentMessage(await callBotApi(bot.token, "sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     reply_markup: replyMarkup,
-  });
-  return error === undefined ? { sent } : { sent, error };
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,11 +1076,29 @@ export async function sendNewOrderNotification(
   linkedChatIds: readonly string[] = [],
 ): Promise<TelegramResult> {
   const lines = Array.isArray(order.items) ? order.items : [];
-  const items = lines.length > 0 ? itemsWithinLimit(lines.map(orderLineText)) : "• Mahsulotlar ro‘yxati mavjud emas";
+  const text = newOrderText(order, lines, true);
+  const chats = recipientChats(linkedChatIds);
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return bot;
+  if (chats.length === 0) return { sent: false, error: MISSING_CONFIGURATION };
+  // Telegram refuses a whole message over one link it dislikes (400), and
+  // then no admin hears of the order. A refused chat gets it once more
+  // without the picture links. Only a 400: a timeout may have been delivered.
+  const results = await Promise.all(chats.map(async (chatId) => {
+    const first = await sendToChat(chatId, text);
+    if (first.sent || first.error !== "Telegram returned 400") return first;
+    return sendToChat(chatId, newOrderText(order, lines, false));
+  }));
+  if (results.some((result) => result.sent)) return { sent: true };
+  return { sent: false, error: results[0]?.error ?? "Telegram request failed" };
+}
+
+function newOrderText(order: TelegramOrder, lines: unknown[], withLinks: boolean) {
+  const items = lines.length > 0 ? itemsWithinLimit(lines.map((line) => orderLineText(line, withLinks))) : "• Mahsulotlar ro‘yxati mavjud emas";
 
   const number = `<b>#${escapeHtml(order.orderNumber)}</b>`;
   const free = Number(order.deliveryFee ?? 0) === 0;
-  const text = [
+  return [
     order.scheduledLabel ? `🟠⏰ <b>OLDINDAN BUYURTMA</b> · ${number}` : `🟢🛒 <b>YANGI BUYURTMA</b> · ${number}`,
     ...(order.scheduledLabel ? [`🗓 <b>Yetkazish: ${escapeHtml(order.scheduledLabel)}</b>`] : []),
     RULE,
@@ -1066,6 +1117,4 @@ export async function sendNewOrderNotification(
     `🧾 Mahsulotlar: ${formatMoney(order.subtotal)} · 🚚 Yetkazish: ${free ? "bepul 🎁" : formatMoney(order.deliveryFee)}`,
     `💳 To‘lov: ${escapeHtml(paymentLabel(order.paymentMethod))}`,
   ].join("\n");
-
-  return sendToChats(recipientChats(linkedChatIds), text);
 }

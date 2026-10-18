@@ -119,12 +119,16 @@ before(async () => {
       NODE_ENV: "development",
       TELEGRAM_BOT_MODE: "legacy",
       TELEGRAM_BOT_TOKEN: QE_TOKEN,
+      TELEGRAM_NEW_BOT_TOKEN: "424243:new-mode-token-for-the-test",
       TELEGRAM_ADMIN_CHAT_ID: QE_OWNER_CHAT,
       SESSION_SECRET,
       ADMIN_ACCESS_CODE: ADMIN_CODE,
       TG_STUB_LOG: LOG,
       PUBLIC_BASE_URL: "",
       RENDER_EXTERNAL_URL: "",
+      CLOUDINARY_CLOUD_NAME: "qe-test",
+      CLOUDINARY_API_KEY: "111",
+      CLOUDINARY_API_SECRET: "test-secret",
     },
     stdio: ["ignore", "ignore", "inherit"],
   });
@@ -160,9 +164,13 @@ test("a shop is created with its own bot and first super admin", async () => {
   };
   assert.equal((await platform.call("POST", "/admin/shops", { ...base, bot_token: "not-a-token" })).status, 400, "a token of the wrong shape");
   assert.equal((await platform.call("POST", "/admin/shops", { ...base, bot_token: "777002:unknown-token-unknown-token-unknown" })).status, 400, "a token Telegram does not know");
-  assert.equal((await platform.call("POST", "/admin/shops", { ...base, bot_token: "424242:AAqexpress-bot-token-used-for-testing" })).status, 400, "Q express's own bot");
-  const created = await platform.call("POST", "/admin/shops", { ...base, bot_token: SHOP_TOKEN });
+  const foreignIcon = { url: "https://example.com/icon.png", public_id: "icon" };
+  assert.equal((await platform.call("POST", "/admin/shops", { ...base, bot_token: SHOP_TOKEN, icon: foreignIcon })).status, 400, "a picture not in our cloud");
+  const icon = { url: "https://res.cloudinary.com/qe-test/image/upload/v1/qorasuv-express/products/om-icon.webp", public_id: "qorasuv-express/products/om-icon" };
+  const created = await platform.call("POST", "/admin/shops", { ...base, bot_token: SHOP_TOKEN, icon, background: null });
   assert.equal(created.status, 201);
+  assert.equal(created.body.shop.icon_url, icon.url);
+  assert.equal(created.body.shop.background_url, null);
   assert.equal(created.body.shop.bot_username, "bot777001_bot");
   assert.equal(created.body.admin.role, "super_admin");
   assert.equal(created.body.admin.must_change_password, true);
@@ -190,7 +198,6 @@ test("a shop is created with its own bot and first super admin", async () => {
   assert.deepEqual(menu.body.menu_button, { type: "default" });
   // Taken slug and taken bot.
   assert.equal((await platform.call("POST", "/admin/shops", { ...base, order_prefix: "OX", bot_token: "777003:AAanother-bot-token-for-the-test-xx", super_admin: { ...base.super_admin, username: "other" } })).status, 409);
-  assert.equal((await platform.call("POST", "/admin/shops", { ...base, slug: "boshqa", order_prefix: "BX", bot_token: SHOP_TOKEN, super_admin: { ...base.super_admin, username: "other2" } })).status, 400);
 });
 
 test("the shop's super admin works in their own shop only", async () => {
@@ -318,6 +325,8 @@ test("an order belongs to one shop, its number, its fee and its bot", async () =
   state.shopOrder = shopOrder.body.id;
   const announced = calls().slice(before).filter((c) => c.method === "sendMessage");
   assert.ok(announced.some((c) => c.bot === 777001 && String(c.body.chat_id) === SHOP_OWNER_CHAT && c.body.text.includes("YANGI BUYURTMA")));
+  // Each product's name opens its picture; the link itself is not shown.
+  assert.ok(announced.some((c) => c.body.text.includes('<a href="https://example.com/milk.jpg">Oila sut</a>')));
   assert.ok(!announced.some((c) => c.bot === 424242), "Q express's bot says nothing about another shop's order");
   const qeOrder = await customer.call("POST", "/orders", order(state.qeProduct));
   assert.equal(qeOrder.status, 201);
@@ -454,6 +463,61 @@ test("a shop's card is changed by its admins and Q express's", async () => {
   assert.equal((await platform.call("GET", "/admin/shops")).body.length, 2);
 });
 
+test("a shop's background and icon are our own files, and a replaced one is deleted", async () => {
+  const image = (name) => ({ url: `https://res.cloudinary.com/qe-test/image/upload/v1/qorasuv-express/products/${name}.webp`, public_id: `qorasuv-express/products/${name}` });
+  const destroyed = () => calls().filter((c) => c.cloudinary === "destroy").map((c) => c.public_id);
+  const card = { uz: "<p>Rasmli</p>" };
+  const path = `/admin/shops/${state.shopId}/card`;
+  // Someone else's picture, or an id that is not the file, is refused.
+  const foreign = { url: "https://res.cloudinary.com/someone/image/upload/v1/x/bg.jpg", public_id: "x/bg" };
+  assert.equal((await owner.call("PUT", path, { card, background: foreign })).status, 400);
+  assert.equal((await owner.call("PUT", path, { card, icon: { ...image("i1"), public_id: "qorasuv-express/products/other" } })).status, 400);
+
+  const set = await owner.call("PUT", path, { card, background: image("bg1"), icon: image("i1") });
+  assert.equal(set.status, 200);
+  assert.equal(set.body.background_url, image("bg1").url);
+  const shop = (await customer.call("GET", "/shops")).body.find((s) => s.slug === "oila-market");
+  assert.equal(shop.background_url, image("bg1").url);
+  assert.equal(shop.icon_url, image("i1").url);
+
+  // Saving the card alone keeps both pictures.
+  const kept = await owner.call("PUT", path, { card: { uz: "<p>Faqat matn</p>" } });
+  assert.equal(kept.body.background_url, image("bg1").url);
+  assert.equal(kept.body.icon_url, image("i1").url);
+  // The icon given at creation was replaced, so its file went.
+  assert.deepEqual(destroyed(), [image("om-icon").public_id]);
+
+  // A new background replaces the old file; the icon is untouched.
+  assert.equal((await owner.call("PUT", path, { card, background: image("bg2") })).status, 200);
+  assert.deepEqual(destroyed(), [image("om-icon").public_id, "qorasuv-express/products/bg1"]);
+
+  // A file a product still shows stays when the shop lets it go.
+  const [product] = await q("select id, image_public_id from products order by id limit 1");
+  await q("update products set image_public_id = $1 where id = $2", ["qorasuv-express/products/bg2", product.id]);
+  const removed = await owner.call("PUT", path, { card, background: null });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.background_url, null);
+  assert.deepEqual(destroyed(), [image("om-icon").public_id, "qorasuv-express/products/bg1"]);
+  await q("update products set image_public_id = $1 where id = $2", [product.image_public_id, product.id]);
+
+  assert.equal((await owner.call("PUT", path, { card, icon: null })).status, 200);
+  assert.deepEqual(destroyed(), [image("om-icon").public_id, "qorasuv-express/products/bg1", "qorasuv-express/products/i1"]);
+
+  // A picture uploaded for a save that never happened goes; one in use, or
+  // not in our folder, stays whoever names it.
+  assert.equal((await owner.call("PUT", path, { card, background: image("bg3") })).status, 200);
+  for (const publicId of ["qorasuv-express/products/bg3", "someone/else", "qorasuv-express/products/unsaved"]) {
+    assert.equal((await owner.call("POST", "/admin/uploads/discard", { public_id: publicId })).status, 204);
+  }
+  assert.deepEqual(destroyed().slice(-1), ["qorasuv-express/products/unsaved"]);
+  // A picture an order still shows stays too: the admin's order list and the
+  // link in the bot's order message keep working.
+  await q(`update orders set items = jsonb_set(items, '{0,image_url}', '"https://res.cloudinary.com/qe-test/image/upload/v1/qorasuv-express/products/ordered1.webp"') where id = (select min(id) from orders)`);
+  assert.equal((await owner.call("POST", "/admin/uploads/discard", { public_id: "qorasuv-express/products/ordered1" })).status, 204);
+  assert.ok(!destroyed().includes("qorasuv-express/products/ordered1"));
+  assert.equal((await new Client("stranger").call("POST", "/admin/uploads/discard", { public_id: "qorasuv-express/products/x" })).status, 401);
+});
+
 test("a hidden shop leaves the storefront", async () => {
   assert.equal((await platform.call("PATCH", `/admin/shops/${state.shopId}`, { active: false })).status, 200);
   assert.deepEqual((await customer.call("GET", "/shops")).body.map((s) => s.slug), ["qexpress"]);
@@ -527,4 +591,128 @@ test("a large card is accepted, an oversized body refused cleanly", async () => 
   assert.equal((await new Client("stranger").call("PUT", `/admin/shops/${state.shopId}/card`, { card: { uz: "<p>x</p>" } })).status, 401);
   // The larger limit is the card's alone: an open route keeps the default.
   assert.equal((await customer.call("POST", "/chat/messages?shop=oila-market", { body: "a".repeat(200_000) })).status, 413);
+});
+
+test("one bot serves several shops: Q express's, or another shop's", async () => {
+  const shopBase = { open_time: "00:00", close_time: "00:00", delivery_fee: 5000, free_first_delivery: false, card: {} };
+  const owner2 = (username) => ({ username, display_name: username, role: "super_admin", temporary_password: `temp-pass-${username}-1` });
+  // Q express's own token: the shop speaks through Q express's bot.
+  const onQe = await platform.call("POST", "/admin/shops", { ...shopBase, name: "Bozor", slug: "bozor", order_prefix: "BZ", owner_chat_id: "7770001", bot_token: "424242:AAqexpress-bot-token-used-for-testing", super_admin: owner2("bozorchi") });
+  assert.equal(onQe.status, 201);
+  assert.equal(onQe.body.shop.bot_shop_id, 1);
+  // Another shop's token, or that shop picked: that shop's bot.
+  const byToken = await platform.call("POST", "/admin/shops", { ...shopBase, name: "Ikkinchi", slug: "ikkinchi", order_prefix: "IK", bot_token: SHOP_TOKEN, super_admin: owner2("ikkinchi") });
+  assert.equal(byToken.status, 201);
+  assert.equal(byToken.body.shop.bot_shop_id, state.shopId);
+  assert.equal(byToken.body.shop.bot_username, "bot777001_bot");
+  const picked = await platform.call("POST", "/admin/shops", { ...shopBase, name: "Uchinchi", slug: "uchinchi", order_prefix: "UC", bot_shop_id: state.shopId, super_admin: owner2("uchinchi") });
+  assert.equal(picked.status, 201);
+  assert.equal(picked.body.shop.bot_shop_id, state.shopId);
+  assert.equal((await platform.call("POST", "/admin/shops", { ...shopBase, name: "Botsiz", slug: "botsiz", order_prefix: "BS", super_admin: owner2("botsiz") })).status, 400, "a bot is still needed");
+  // Telegram keeps calling each bot's own address: none was pointed at a guest.
+  const hooks = calls().filter((c) => c.method === "setWebhook");
+  assert.ok(hooks.filter((h) => h.bot === 424242).every((h) => h.body.url.endsWith("/api/telegram/webhook")));
+  assert.ok(hooks.filter((h) => h.bot === 777001).every((h) => h.body.url.endsWith(`/api/telegram/webhook/${state.shopId}`)));
+  // A shop whose bot others use is not archived from under them.
+  assert.equal((await platform.call("POST", `/admin/shops/${state.shopId}/archive`)).status, 409);
+
+  // The guest's admin links Telegram through Q express's bot.
+  const bozorchi = new Client("bozorchi");
+  assert.equal((await bozorchi.call("POST", "/admin/auth", { username: "bozorchi", password: "temp-pass-bozorchi-1" })).status, 200);
+  assert.equal((await bozorchi.call("POST", "/admin/me/password", { current_password: "temp-pass-bozorchi-1", new_password: "Bozorchi-own-pass-7" })).status, 200);
+  const link = await bozorchi.call("POST", "/admin/me/telegram");
+  assert.ok(link.body.url.startsWith("https://t.me/Q_express_bot?start="), link.body.url);
+  const code = link.body.url.split("start=")[1];
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: 7770002, type: "private" }, from: { id: 7770002, first_name: "Bozorchi" }, text: `/start ${code}` }), 200);
+  const [linked] = await q("select telegram_chat_id from admins where username = 'bozorchi'");
+  assert.equal(linked.telegram_chat_id, "7770002");
+
+  // A customer's message to the guest shop reaches its admin and owner through
+  // Q express's bot, not Q express's own owner.
+  assert.equal((await customer.call("POST", "/chat/session?shop=bozor", {})).status, 200);
+  assert.equal((await customer.call("POST", "/chat/messages?shop=bozor", { body: "Bozorda non bormi?" })).status, 201);
+  // Telegram hands back the text of the message replied to without its markup.
+  const plain = (html) => html.replace(/<[^>]+>/g, "");
+  const notice = sentBy(424242, "7770002").find((m) => m.text.includes("Bozorda non bormi?"));
+  assert.ok(notice, "the guest's admin is told through Q express's bot");
+  assert.ok(sentBy(424242, "7770001").some((m) => m.text.includes("Bozorda non bormi?")), "and its owner");
+  assert.ok(!sentBy(424242, QE_OWNER_CHAT).some((m) => m.text.includes("Bozorda non bormi?")), "Q express's owner is not");
+  // The admin's answer in Telegram lands in the guest shop's conversation.
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: 7770002, type: "private" }, from: { id: 7770002, first_name: "Bozorchi" }, text: "Ha, bor", reply_to_message: { from: { id: 424242, is_bot: true }, text: plain(notice.text) } }), 200);
+  const [chat] = (await bozorchi.call("GET", "/admin/chats")).body;
+  const transcript = (await bozorchi.call("GET", `/admin/chats/${chat.id}/messages`)).body.messages.map((m) => m.body);
+  assert.deepEqual(transcript, ["Bozorda non bormi?", "Ha, bor"]);
+  // The customer answering the guest's reply in the bot reaches the guest, not
+  // the bot's own shop; so does their next plain message, the conversation
+  // they were last in.
+  const replyToCustomer = calls().filter((c) => c.bot === 424242 && c.method === "sendMessage" && String(c.body.chat_id) === String(customerUser.id) && c.body.text.includes("Ha, bor")).at(-1);
+  assert.ok(replyToCustomer, "the answer reached the customer through Q express's bot");
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: customerUser.id, type: "private" }, from: customerUser, text: "Rahmat, olaman", reply_to_message: { message_id: replyToCustomer.messageId, from: { id: 424242, is_bot: true }, text: plain(replyToCustomer.body.text) } }), 200);
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: customerUser.id, type: "private" }, from: customerUser, text: "Yana bitta non" }), 200);
+  const bozorBodies = (await bozorchi.call("GET", `/admin/chats/${chat.id}/messages`)).body.messages.map((m) => m.body);
+  assert.deepEqual(bozorBodies.slice(-2), ["Rahmat, olaman", "Yana bitta non"]);
+  const [inQe] = await q("select count(*)::int as n from chat_messages m join chat_threads t on t.id = m.thread_id where t.shop_id = 1 and m.body in ('Rahmat, olaman', 'Yana bitta non')");
+  assert.equal(inQe.n, 0, "nothing of it in Q express's chat");
+  // The guest hidden: their next message is not lost, it reaches the bot's own shop.
+  assert.equal((await platform.call("PATCH", `/admin/shops/${onQe.body.shop.id}`, { active: false })).status, 200);
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: customerUser.id, type: "private" }, from: customerUser, text: "Bozor yopiqmi?" }), 200);
+  const [whileHidden] = await q("select t.shop_id from chat_messages m join chat_threads t on t.id = m.thread_id where m.body = 'Bozor yopiqmi?'");
+  assert.equal(whileHidden?.shop_id, 1);
+  assert.equal((await platform.call("PATCH", `/admin/shops/${onQe.body.shop.id}`, { active: true })).status, 200);
+  // The guest's admin answering some other notice is told how to answer, and
+  // nothing reaches Q express as a customer's message.
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: 7770002, type: "private" }, from: { id: 7770002, first_name: "Bozorchi" }, text: "Buyurtma tayyor", reply_to_message: { message_id: 1, from: { id: 424242, is_bot: true }, text: "BUYURTMA BZ-0000001" } }), 200);
+  const [stray] = await q("select count(*)::int as n from chat_messages where body = 'Buyurtma tayyor'");
+  assert.equal(stray.n, 0);
+
+  // Q express's owner answering that notice is no one in the guest's chat.
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: Number(QE_OWNER_CHAT), type: "private" }, from: { id: Number(QE_OWNER_CHAT), first_name: "QE" }, text: "Men ham", reply_to_message: { from: { id: 424242, is_bot: true }, text: plain(notice.text) } }), 200);
+  assert.ok(!(await bozorchi.call("GET", `/admin/chats/${chat.id}/messages`)).body.messages.some((m) => m.body === "Men ham"));
+
+  // Back to a bot of its own needs its token; a host cannot move onto another bot.
+  assert.equal((await platform.call("PATCH", `/admin/shops/${picked.body.shop.id}`, { bot_shop_id: null })).status, 400);
+  assert.equal((await platform.call("PATCH", `/admin/shops/${state.shopId}`, { bot_shop_id: 1 })).status, 409);
+  // A visitor sent to Telegram lands on the guest shop itself, in Q express's
+  // Mini App, not on the shared bot's own shop.
+  assert.equal((await new Client("visitor").call("GET", "/customer/login?shop=bozor")).body.url, "https://t.me/Q_express_bot?startapp=bozor");
+  assert.equal((await new Client("visitor").call("GET", "/customer/login?shop=oila-market")).body.url, "https://t.me/bot777001_bot");
+  // The listing names the bot a guest uses.
+  const listed = (await platform.call("GET", "/admin/shops")).body.find((s) => s.slug === "bozor");
+  assert.equal(listed.bot_shop_id, 1);
+  assert.equal(listed.bot_configured, true);
+
+  // The guest's owner writing to Q express's bot, not answering a notice, is
+  // a Q express customer like anyone else, not told how to reply.
+  assert.equal(await webhook("/telegram/webhook", QE_TOKEN, { chat: { id: 7770001, type: "private" }, from: { id: 7770001, first_name: "Egasi" }, text: "Q expressga savolim bor" }), 200);
+  const [asked] = await q("select t.shop_id from chat_messages m join chat_threads t on t.id = m.thread_id where m.body = 'Q expressga savolim bor'");
+  assert.equal(asked?.shop_id, 1);
+
+  // A guest whose host was archived is not brought back onto a silent bot.
+  for (const guest of [byToken, picked]) assert.equal((await platform.call("POST", `/admin/shops/${guest.body.shop.id}/archive`)).status, 200);
+  assert.equal((await platform.call("POST", `/admin/shops/${state.shopId}/archive`)).status, 200, "no guests left in business");
+  assert.equal((await platform.call("POST", `/admin/shops/${picked.body.shop.id}/restore`)).status, 409);
+  assert.equal((await platform.call("POST", `/admin/shops/${state.shopId}/restore`)).status, 200);
+  assert.equal((await platform.call("POST", `/admin/shops/${picked.body.shop.id}/restore`)).status, 200);
+
+  // Q express's bot of the other mode is no shop's to take.
+  const otherMode = await platform.call("POST", "/admin/shops", { ...shopBase, name: "Zaxira", slug: "zaxira", order_prefix: "ZX", bot_token: "424243:AAanother-qexpress-bot-token-xxxxxx", super_admin: owner2("zaxira") });
+  assert.equal(otherMode.status, 400);
+
+  // Moving to another bot: refused while a shop in business uses this one's;
+  // then the shops in the archive on it move along (no shop two bots away),
+  // and the chats linked through the old bot are dropped, to be linked anew.
+  assert.equal((await platform.call("PATCH", `/admin/shops/${state.shopId}`, { bot_shop_id: 1 })).status, 409);
+  assert.equal((await platform.call("POST", `/admin/shops/${picked.body.shop.id}/archive`)).status, 200);
+  await q("update admins set telegram_chat_id = '77700099' where username = 'aziz'");
+  const moved = await platform.call("PATCH", `/admin/shops/${state.shopId}`, { bot_shop_id: 1 });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.bot_shop_id, 1);
+  const hosts = await q("select slug, bot_shop_id from shops where slug in ('ikkinchi', 'uchinchi') order by slug");
+  assert.deepEqual(hosts.map((row) => row.bot_shop_id), [1, 1]);
+  const [aziz] = await q("select telegram_chat_id from admins where username = 'aziz'");
+  assert.equal(aziz.telegram_chat_id, null);
+  // Bozor stayed on the same bot: its admin's link holds.
+  assert.equal((await platform.call("PATCH", `/admin/shops/${onQe.body.shop.id}`, { name: "Bozor", bot_shop_id: 1 })).status, 200);
+  const [bozorLink] = await q("select telegram_chat_id from admins where username = 'bozorchi'");
+  assert.equal(bozorLink.telegram_chat_id, "7770002");
 });

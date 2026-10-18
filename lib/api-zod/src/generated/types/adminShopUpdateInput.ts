@@ -21,6 +21,11 @@ export interface AdminShopUpdateInput {
   /** @maxLength 100 */
   bot_token?: string;
   /**
+     * Speak through this shop's bot (1 for Q express's) instead of a bot of its own; null for its own bot. A token of a bot already on the platform is taken as that bot too.
+     * @nullable
+     */
+  bot_shop_id?: number | null;
+  /**
      * @maxLength 20
      * @nullable
      */

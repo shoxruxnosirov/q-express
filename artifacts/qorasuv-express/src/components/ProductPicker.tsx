@@ -6,6 +6,7 @@ import { Product } from '@workspace/api-client-react';
 import { useT } from '@/i18n';
 import messages from '@/i18n/messages/productPicker';
 import { unitLabel } from '@/i18n/messages/units';
+import { Price } from '@/components/Price';
 
 export function ProductPicker() {
   const { pickerProduct, closePicker, lines, setLine, remove } = useCart();
@@ -142,7 +143,7 @@ function ProductPickerContent({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[hsl(var(--foreground)/.4)] backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
+    <div className="phone-span fixed inset-0 z-50 flex items-end justify-center bg-[hsl(var(--foreground)/.4)] backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
       <div 
         ref={modalRef}
         role="dialog" 
@@ -155,7 +156,7 @@ function ProductPickerContent({
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h3 id="picker-title" className="display text-xl font-bold">{script(product.name)}</h3>
-            <p className="text-sm text-[hsl(var(--muted-foreground))]">1 {unit} = {money(product.price)}</p>
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">1 {unit} = <Price value={product.price} /></p>
           </div>
           <button data-testid="button-picker-close" aria-label={t('close')} onClick={onClose} className="rounded-full p-2 hover:bg-[hsl(var(--muted))] transition"><X size={18} /></button>
         </div>

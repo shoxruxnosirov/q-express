@@ -67,7 +67,7 @@ function SearchableSelect({ testId, label, value, options, optionLabel, onChange
       <span className="truncate">{value ? optionLabel(value) : t('choose')}</span>
       <ChevronDown size={16} className="shrink-0 text-[hsl(var(--muted-foreground))]" />
     </button>
-    {open && createPortal(<div className="fixed inset-0 z-[60] flex items-start justify-center bg-[hsl(var(--foreground)/.4)] p-3 backdrop-blur-sm sm:items-center" onClick={close}>
+    {open && createPortal(<div className="phone-span fixed inset-0 z-[60] flex items-start justify-center bg-[hsl(var(--foreground)/.4)] p-3 backdrop-blur-sm sm:items-center" onClick={close}>
       <div
         role="dialog"
         aria-modal="true"

@@ -298,6 +298,16 @@ export interface Shop {
   /** Q express, the platform's own shop. */
   is_platform: boolean;
   card: ShopCard;
+  /**
+     * The card's background picture, cropped 4:3; null for none.
+     * @nullable
+     */
+  background_url: string | null;
+  /**
+     * The shop's square icon; null for none.
+     * @nullable
+     */
+  icon_url: string | null;
   sort_order: number;
   delivery_fee: number;
   /** The first order to each flat is delivered free. */
@@ -308,6 +318,19 @@ export interface AdminSession {
   authenticated: boolean;
   admin?: AdminAccount;
   shop?: Shop | null;
+}
+
+/**
+ * A picture uploaded to our Cloudinary account from the admin's browser: its delivery URL and public id, which must name that very file.
+ */
+export interface ShopImageInput {
+  /** @maxLength 500 */
+  url: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  public_id: string;
 }
 
 /**
@@ -329,6 +352,11 @@ export type AdminShop = Shop & ({
   open_time: string;
   close_time: string;
   accepting_orders: boolean;
+  /**
+     * The shop whose bot this shop speaks through (1 for Q express's); null when it has a bot of its own.
+     * @nullable
+     */
+  bot_shop_id: number | null;
   /** @nullable */
   bot_username: string | null;
   bot_configured: boolean;
@@ -360,7 +388,12 @@ export interface AdminShopCreateInput {
   /** @pattern ^[A-Z]{2,4}$ */
   order_prefix: string;
   /** @maxLength 100 */
-  bot_token: string;
+  bot_token?: string;
+  /**
+     * Speak through this shop's bot (1 for Q express's) instead of a bot of its own; null for its own bot. A token of a bot already on the platform is taken as that bot too.
+     * @nullable
+     */
+  bot_shop_id?: number | null;
   /**
      * @maxLength 20
      * @nullable
@@ -377,6 +410,8 @@ export interface AdminShopCreateInput {
   delivery_fee: number;
   free_first_delivery: boolean;
   card?: ShopCard;
+  background?: ShopImageInput | null;
+  icon?: ShopImageInput | null;
   super_admin: AdminCreateInput;
 }
 
@@ -394,6 +429,11 @@ export interface AdminShopUpdateInput {
   sort_order?: number;
   /** @maxLength 100 */
   bot_token?: string;
+  /**
+     * Speak through this shop's bot (1 for Q express's) instead of a bot of its own; null for its own bot. A token of a bot already on the platform is taken as that bot too.
+     * @nullable
+     */
+  bot_shop_id?: number | null;
   /**
      * @maxLength 20
      * @nullable
@@ -419,6 +459,10 @@ export interface AdminShopCreated {
 
 export interface ShopCardInput {
   card: ShopCard;
+  /** A new background; null removes it, left out keeps it. */
+  background?: ShopImageInput | null;
+  /** A new icon; null removes it, left out keeps it. */
+  icon?: ShopImageInput | null;
 }
 
 export interface TelegramLink {
@@ -753,6 +797,14 @@ export interface AdminDashboard {
   customer_count: number;
   product_count: number;
   low_stock_count: number;
+}
+
+export interface UploadDiscardInput {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  public_id: string;
 }
 
 export interface UploadTicket {
