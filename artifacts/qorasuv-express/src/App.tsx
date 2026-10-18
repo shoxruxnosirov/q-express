@@ -1,8 +1,8 @@
-import { type ComponentType, type FormEvent, type ReactNode, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { type ComponentType, type FormEvent, type ReactNode, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { keepPreviousData, QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Switch, Router as WouterRouter, useLocation, useParams } from 'wouter';
 import {
-  ArrowLeft, ArrowRight, BadgeCheck, Banknote, BarChart3, Bike, Boxes, Check, ChevronDown,
+  ArrowLeft, ArrowRight, BadgeCheck, Banknote, BarChart3, Bike, Boxes, Check, ChevronDown, Flame,
   ChevronRight, Clock3, CreditCard, Gift, Headphones, Heart, Home as HomeIcon, Info, LayoutDashboard,
   ListFilter, LoaderCircle, MapPin, Menu, MessageCircle, Minus, Package, Phone, Plus, RefreshCw, Search,
   Palette, ShieldCheck, ShoppingBag, ShoppingBasket, SlidersHorizontal, Store, Trophy, Truck,
@@ -241,14 +241,14 @@ function QueryError({ retry }: { retry: () => void }) {
 
 // The picture is sent in the size its place needs: `sizes` is how wide it is
 // shown, and the phone picks the copy for its screen (lib/images).
-function ProductVisual({ product, className = '', sizes = '200px' }: { product: Product; className?: string; sizes?: string }) {
+function ProductVisual({ product, className = '', sizes = '200px', lazy = true }: { product: Product; className?: string; sizes?: string; lazy?: boolean }) {
   // The address that failed to load: a new picture gets its own chance at
   // once (a cart row follows the product as it changes).
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const broken = !product.image_url || failedUrl === product.image_url;
   const { t, script } = useT(storeMessages);
   return <div className={`relative overflow-hidden bg-[#eef2df] ${className}`}>
-    {!broken ? <img {...imageSources(product.image_url, PRODUCT_WIDTHS)} sizes={sizes} alt={script(product.name)} onError={() => setFailedUrl(product.image_url)} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" /> : <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_70%_25%,#fff2ca,transparent_34%),linear-gradient(135deg,#d9eadc,#eff0d9)]"><ShoppingBasket size={42} strokeWidth={1.2} className="text-[hsl(var(--primary)/.5)]" /></div>}
+    {!broken ? <img {...imageSources(product.image_url, PRODUCT_WIDTHS)} sizes={sizes} loading={lazy ? 'lazy' : 'eager'} alt={script(product.name)} onError={() => setFailedUrl(product.image_url)} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" /> : <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_70%_25%,#fff2ca,transparent_34%),linear-gradient(135deg,#d9eadc,#eff0d9)]"><ShoppingBasket size={42} strokeWidth={1.2} className="text-[hsl(var(--primary)/.5)]" /></div>}
     {isSoldOut(product) && <div data-testid={`overlay-sold-out-${product.id}`} className="absolute inset-0 flex items-center justify-center bg-white/55"><span className="rounded-full bg-[#5b5f5a] px-3 py-1.5 text-xs font-extrabold uppercase tracking-wide text-white">{t('soldOut')}</span></div>}<div className="absolute left-3 top-3 flex gap-1.5">{product.is_new && <span className="rounded-full bg-[hsl(var(--primary))] px-2 py-1 text-[10px] font-bold text-white">{t('badgeNew')}</span>}{product.old_price && <span className="rounded-full bg-[hsl(var(--accent))] px-2 py-1 text-[10px] font-bold text-white">-{Math.round((1 - product.price / product.old_price) * 100)}%</span>}</div>
   </div>;
 }
@@ -263,29 +263,158 @@ function ProductCard({ product, index = 0 }: { product: Product; index?: number 
   </article>;
 }
 
-function CategoryStrip({ categories, onPick }: { categories: Category[]; onPick?: (slug: string) => void }) {
-  const { t, script } = useT(storeMessages);
-  return <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none]">{categories.map((category, i) => { const Icon = categoryIcon(category.icon, i); return <button data-testid={`button-category-${category.id}`} key={category.id} onClick={() => onPick?.(category.slug)} className="group flex min-w-[112px] flex-col items-center gap-2 rounded-[20px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-4 transition hover:-translate-y-1 hover:border-[hsl(var(--primary)/.35)] hover:shadow-[var(--shadow-sm)]"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e8efdc] text-[hsl(var(--primary))] transition group-hover:bg-[hsl(var(--primary))] group-hover:text-white"><Icon size={22} /></span><span className="text-center text-[12px] font-bold leading-tight">{script(category.name)}</span><span className="text-[10px] text-[hsl(var(--muted-foreground))]">{t('categoryCount', { n: category.product_count })}</span></button>; })}</div>;
+// The home page shows the whole shop: a search at the very top, the shop's
+// banner, then every product under tabs: Popular first (what the admins
+// marked), then All, then each category that has products. The tabs stay
+// under the header while scrolling. While a search is typed the banner steps
+// aside, so the results are right under the search box.
+const HOME_PAGE_SIZE = 24;
+// The header's height with its border: where the sticky tabs sit.
+const HEADER_HEIGHT = 73;
+type HomeTab = 'popular' | 'all' | string;
+
+// Each shop starts its home afresh (Popular, no search): the page is the same
+// component for every shop, only its address changes.
+function HomeRoute() {
+  const { slug } = useShop();
+  return <Home key={slug ?? ''} />;
 }
 
-// The shop being visited is shown big (Q express's own hero, or another
-// shop's card), the other shops small beside it.
 function Home() {
   const { params, shop, isPlatform } = useShop();
-  const categories = useListCategories(params, { query: { queryKey: getListCategoriesQueryKey(params) } });
-  const productParams = { sort: 'popular' as const, ...params };
-  const products = useListProducts(productParams, { query: { queryKey: getListProductsQueryKey(productParams) } });
-  const [, setLocation] = useLocation();
   const { t } = useT(storeMessages);
-  return <div className="container-wide py-7 sm:py-10">
-    <div className="animate-rise flex flex-col gap-8">
-      {isPlatform ? <PlatformHero /> : shop ? <ShopHero shop={shop} /> : <div className="skeleton h-64 rounded-[30px]" />}
-      <ShopStrip />
-      <section><div className="mb-4 flex items-end justify-between"><div><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">{t('pickEyebrow')}</p><h2 className="display mt-1 text-2xl font-extrabold sm:text-3xl">{t('pickTitle')}</h2></div><Link href="/catalog" data-testid="link-see-all-categories" className="hidden items-center gap-1 text-sm font-bold text-[hsl(var(--primary))] sm:flex">{t('everything')} <ChevronRight size={16} /></Link></div>{categories.isLoading ? <div className="skeleton h-36 rounded-[20px]" /> : categories.isError ? <QueryError retry={() => categories.refetch()} /> : <CategoryStrip categories={(categories.data || []).slice(0, 6)} onPick={slug => setLocation(`/catalog?category=${slug}`)} />}</section>
-      <section><div className="mb-4 flex items-end justify-between"><div><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">{t('popularEyebrow')}</p><h2 className="display mt-1 text-2xl font-extrabold sm:text-3xl">{t('popularTitle')}</h2></div><Link href="/catalog" data-testid="link-see-all-products" className="flex items-center gap-1 text-sm font-bold text-[hsl(var(--primary))]">{t('seeAll')} <ArrowRight size={16} /></Link></div>{products.isLoading ? <LoadingGrid rows={4} /> : products.isError ? <QueryError retry={() => products.refetch()} /> : products.data?.length ? <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">{inStockFirst(products.data).slice(0, 8).map((product, i) => <ProductCard key={product.id} product={product} index={i} />)}</div> : <EmptyState title={t('emptyHomeTitle')} text={t('emptyHomeText')} action={t('emptyHomeAction')} href="/catalog" />}</section>
-      {isPlatform && <section className="grid gap-3 sm:grid-cols-3"><MiniPromise icon={Truck} title={t('promiseFastTitle')} text={t('promiseFastText')} /><MiniPromise icon={BadgeCheck} title={t('promiseFreshTitle')} text={t('promiseFreshText')} /><MiniPromise icon={Headphones} title={t('promiseHelpTitle')} text={t('promiseHelpText')} /></section>}
+  const [typed, setTyped] = useState('');
+  const [search, setSearch] = useState('');
+  const [tab, setTab] = useState<HomeTab>('popular');
+  // The search as last asked, to tell a search starting from one carrying on.
+  const asked = useRef('');
+  // Asked of the server a moment after the typing stops, not on every key. A
+  // search that starts looks through the whole shop, so it moves to All in the
+  // same step; a section picked after narrows it and stays while the search is
+  // refined. A search erased goes back to Popular.
+  useEffect(() => {
+    const next = typed.trim();
+    const timer = window.setTimeout(() => {
+      const before = asked.current;
+      asked.current = next;
+      setSearch(next);
+      if (next && !before) setTab('all');
+      else if (!next && before) setTab('popular');
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [typed]);
+  const clear = () => {
+    asked.current = '';
+    setTyped('');
+    setSearch('');
+    setTab('popular');
+  };
+  const searching = search !== '';
+  return <div className="container-wide py-5 sm:py-10">
+    <div className="animate-rise flex flex-col gap-6">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" size={18} />
+        <input
+          data-testid="input-home-search"
+          type="search"
+          value={typed}
+          onChange={event => setTyped(event.target.value)}
+          placeholder={t('searchPlaceholder')}
+          aria-label={t('searchPlaceholder')}
+          enterKeyHint="search"
+          className="h-12 w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] pl-11 pr-11 text-sm outline-none transition focus:border-[hsl(var(--primary))] focus:ring-4 focus:ring-[hsl(var(--primary)/.1)] [&::-webkit-search-cancel-button]:hidden"
+        />
+        {typed && <button type="button" data-testid="button-home-search-clear" aria-label={t('clearSearch')} onClick={clear} className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]"><X size={16} /></button>}
+      </div>
+      {!searching && <>
+        {isPlatform ? <PlatformHero /> : shop ? <ShopHero shop={shop} /> : <div className="skeleton h-64 rounded-[30px]" />}
+        <ShopStrip />
+      </>}
+      <HomeProducts shopParams={params} search={search} tab={tab} onTab={setTab} />
+      {isPlatform && !searching && <section className="grid gap-3 sm:grid-cols-3"><MiniPromise icon={Truck} title={t('promiseFastTitle')} text={t('promiseFastText')} /><MiniPromise icon={BadgeCheck} title={t('promiseFreshTitle')} text={t('promiseFreshText')} /><MiniPromise icon={Headphones} title={t('promiseHelpTitle')} text={t('promiseHelpText')} /></section>}
     </div>
   </div>;
+}
+
+function HomeProducts({ shopParams, search, tab, onTab }: {
+  shopParams: ReturnType<typeof useShop>['params'];
+  search: string;
+  tab: HomeTab;
+  onTab: (tab: HomeTab) => void;
+}) {
+  const { t, script } = useT(storeMessages);
+  const [shown, setShown] = useState(HOME_PAGE_SIZE);
+  const sectionRef = useRef<HTMLElement>(null);
+  const categories = useListCategories(shopParams, { query: { queryKey: getListCategoriesQueryKey(shopParams) } });
+  // One list for every tab: Popular and the sections are picked from it here,
+  // so changing tabs asks the server nothing. A search is the server's (it
+  // matches Cyrillic and Latin); the last results stay, dimmed, until the
+  // new ones come.
+  const productParams = { sort: 'popular' as const, search: search || undefined, ...shopParams };
+  const products = useListProducts(productParams, { query: { queryKey: getListProductsQueryKey(productParams), placeholderData: keepPreviousData } });
+
+  // Only sections with something in them; a section hidden or emptied while
+  // open falls back to All.
+  const sections = (categories.data ?? []).filter(item => item.product_count > 0);
+  const section = tab !== 'popular' && tab !== 'all' ? sections.find(item => item.slug === tab) : undefined;
+  const active: HomeTab = tab !== 'popular' && tab !== 'all' && categories.data && !section ? 'all' : tab;
+
+  // A new tab or search starts from its first products.
+  useEffect(() => setShown(HOME_PAGE_SIZE), [active, search]);
+
+  const pick = (next: HomeTab, button: HTMLElement) => {
+    onTab(next);
+    // The picked tab fully in view in its row.
+    button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // Picked with the tabs stuck under the header: back to the list's top.
+    const element = sectionRef.current;
+    if (element && element.getBoundingClientRect().top < HEADER_HEIGHT) {
+      window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - HEADER_HEIGHT });
+    }
+  };
+
+  const all = products.data ?? [];
+  // Popular is what the admins marked so; a shop that marked nothing yet shows
+  // everything rather than an empty tab.
+  const marked = all.filter(product => product.is_popular);
+  const chosen = active === 'popular' ? (marked.length > 0 ? marked : all)
+    : section ? all.filter(product => product.category_id === section.id)
+    : all;
+  const list = inStockFirst(chosen);
+  const visible = list.slice(0, shown);
+
+  const chip = (on: boolean) => `flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold transition ${on ? 'bg-[hsl(var(--primary))] text-white' : 'border border-[hsl(var(--border))] bg-[hsl(var(--card))] hover:border-[hsl(var(--primary))]'}`;
+  return <section ref={sectionRef} data-testid="section-home-products">
+    {/* Under the header while scrolling, so another tab is always a tap away. */}
+    <div className="sticky top-[72px] z-30 -mx-4 bg-[hsl(var(--background)/.94)] px-4 py-2.5 backdrop-blur-xl">
+      <div role="group" aria-label={t('sectionsLabel')} className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none]">
+        <button type="button" aria-pressed={active === 'popular'} data-testid="button-home-tab-popular" onClick={event => pick('popular', event.currentTarget)} className={chip(active === 'popular')}><Flame size={14} />{t('tabPopular')}</button>
+        <button type="button" aria-pressed={active === 'all'} data-testid="button-home-tab-all" onClick={event => pick('all', event.currentTarget)} className={chip(active === 'all')}>{t('everything')}</button>
+        {sections.map((item, i) => {
+          const Icon = categoryIcon(item.icon, i);
+          return <button type="button" key={item.id} aria-pressed={active === item.slug} data-testid={`button-home-tab-${item.slug}`} onClick={event => pick(item.slug, event.currentTarget)} className={chip(active === item.slug)}><Icon size={14} />{script(item.name)}</button>;
+        })}
+      </div>
+    </div>
+    <div className={`mt-3 transition-opacity ${products.isPlaceholderData ? 'opacity-60' : ''}`} aria-busy={products.isFetching}>
+      {products.isLoading ? <LoadingGrid rows={4} />
+        : products.isError ? <QueryError retry={() => products.refetch()} />
+        : list.length === 0
+          ? (search
+            ? <EmptyState title={t('searchEmptyTitle')} text={t('searchEmptyText')} />
+            : section
+              ? <EmptyState title={t('categoryEmptyTitle')} text={t('categoryEmptyText')} />
+              : <EmptyState title={t('emptyHomeTitle')} text={t('emptyHomeText')} />)
+          : <>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">{visible.map((product, i) => <ProductCard key={product.id} product={product} index={i} />)}</div>
+            {list.length > shown && (
+              <button type="button" data-testid="button-home-show-more" onClick={() => setShown(count => count + HOME_PAGE_SIZE)} className="tap mt-5 flex h-12 w-full items-center justify-center rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm font-bold text-[hsl(var(--primary))] transition hover:border-[hsl(var(--primary))]">
+                {t('showMore', { n: list.length - shown })}
+              </button>
+            )}
+          </>}
+    </div>
+  </section>;
 }
 // Q express's own hero: the platform's shop, as it always looked.
 function PlatformHero() {
@@ -345,7 +474,7 @@ function ProductDetail() {
   if (product.isLoading) return <div className="container-wide py-10"><div className="skeleton h-[520px] rounded-[30px]" /></div>;
   if (product.isError || !product.data) return <div className="container-wide py-10"><QueryError retry={() => product.refetch()} /></div>;
   const item = product.data;
-  return <div className="container-wide py-7 sm:py-10"><Link href="/catalog" data-testid="link-back-catalog" className="mb-6 inline-flex items-center gap-2 text-sm font-bold text-[hsl(var(--muted-foreground))] transition hover:text-[hsl(var(--primary))]"><ArrowLeft size={16} /> {t('backToCatalog')}</Link><div className="animate-rise grid overflow-hidden rounded-[30px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] lg:grid-cols-[1.04fr_.96fr]"><ProductVisual product={item} sizes="(max-width: 430px) calc(100vw - 32px), 398px" className="min-h-[340px] lg:min-h-[590px]" /><div className="flex flex-col justify-center p-6 sm:p-10 lg:p-14"><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">{script(item.category)} / {localUnit(item.unit, lang)}</p><h1 className="display mt-3 text-4xl font-extrabold leading-tight sm:text-5xl">{script(item.name)}</h1><p className="mt-5 max-w-[500px] leading-relaxed text-[hsl(var(--muted-foreground))]">{item.description ? script(item.description) : t('defaultDescription')}</p><div className="mt-8 flex items-end gap-3"><span className="display text-3xl font-extrabold"><Price value={item.price} /></span>{item.old_price && <span className="mb-1 text-sm text-[hsl(var(--muted-foreground))]"><Price value={item.old_price} strike /></span>}<span className="mb-1 text-sm text-[hsl(var(--muted-foreground))]">/ {localUnit(item.unit, lang)}</span></div><div className="mt-8 flex flex-col gap-3 sm:flex-row"><button data-testid="button-add-detail" onClick={() => openPicker(item)} disabled={isSoldOut(item)} className="tap flex h-14 shrink-0 items-center justify-center gap-2 rounded-2xl sm:flex-1 bg-[hsl(var(--primary))] px-6 text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.22)] disabled:cursor-not-allowed disabled:bg-[#8a8f89] disabled:opacity-70">{isSoldOut(item) ? t('soldOutLong') : line ? <><Check size={18} /> {t('addedToCart')}</> : <><ShoppingBag size={18} /> {t('addToCart')}</>}</button><Link href="/cart" data-testid="link-detail-cart" className="flex h-14 items-center justify-center rounded-2xl border border-[hsl(var(--border))] px-6 text-sm font-bold transition hover:bg-[hsl(var(--muted))]">{line ? t('inCart') : t('viewCart')}</Link></div><div className="mt-8 grid grid-cols-2 gap-3 border-t border-[hsl(var(--border))] pt-6"><div className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]"><Truck size={16} className="text-[hsl(var(--primary))]" /> {t('deliveryToday')}</div><div className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]"><BadgeCheck size={16} className="text-[hsl(var(--primary))]" /> {item.stock > 0 ? t('inStock') : t('soldOut')}</div></div></div></div></div>;
+  return <div className="container-wide py-7 sm:py-10"><Link href="/catalog" data-testid="link-back-catalog" className="mb-6 inline-flex items-center gap-2 text-sm font-bold text-[hsl(var(--muted-foreground))] transition hover:text-[hsl(var(--primary))]"><ArrowLeft size={16} /> {t('backToCatalog')}</Link><div className="animate-rise grid overflow-hidden rounded-[30px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] lg:grid-cols-[1.04fr_.96fr]"><ProductVisual product={item} lazy={false} sizes="(max-width: 430px) calc(100vw - 32px), 398px" className="min-h-[340px] lg:min-h-[590px]" /><div className="flex flex-col justify-center p-6 sm:p-10 lg:p-14"><p className="mono text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--accent))]">{script(item.category)} / {localUnit(item.unit, lang)}</p><h1 className="display mt-3 text-4xl font-extrabold leading-tight sm:text-5xl">{script(item.name)}</h1><p className="mt-5 max-w-[500px] leading-relaxed text-[hsl(var(--muted-foreground))]">{item.description ? script(item.description) : t('defaultDescription')}</p><div className="mt-8 flex items-end gap-3"><span className="display text-3xl font-extrabold"><Price value={item.price} /></span>{item.old_price && <span className="mb-1 text-sm text-[hsl(var(--muted-foreground))]"><Price value={item.old_price} strike /></span>}<span className="mb-1 text-sm text-[hsl(var(--muted-foreground))]">/ {localUnit(item.unit, lang)}</span></div><div className="mt-8 flex flex-col gap-3 sm:flex-row"><button data-testid="button-add-detail" onClick={() => openPicker(item)} disabled={isSoldOut(item)} className="tap flex h-14 shrink-0 items-center justify-center gap-2 rounded-2xl sm:flex-1 bg-[hsl(var(--primary))] px-6 text-sm font-extrabold text-white transition hover:shadow-[0_12px_24px_rgba(22,116,96,.22)] disabled:cursor-not-allowed disabled:bg-[#8a8f89] disabled:opacity-70">{isSoldOut(item) ? t('soldOutLong') : line ? <><Check size={18} /> {t('addedToCart')}</> : <><ShoppingBag size={18} /> {t('addToCart')}</>}</button><Link href="/cart" data-testid="link-detail-cart" className="flex h-14 items-center justify-center rounded-2xl border border-[hsl(var(--border))] px-6 text-sm font-bold transition hover:bg-[hsl(var(--muted))]">{line ? t('inCart') : t('viewCart')}</Link></div><div className="mt-8 grid grid-cols-2 gap-3 border-t border-[hsl(var(--border))] pt-6"><div className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]"><Truck size={16} className="text-[hsl(var(--primary))]" /> {t('deliveryToday')}</div><div className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]"><BadgeCheck size={16} className="text-[hsl(var(--primary))]" /> {item.stock > 0 ? t('inStock') : t('soldOut')}</div></div></div></div></div>;
 }
 
 // Every shop has its own cart (the owner's choice): the cart and the checkout
@@ -797,7 +926,7 @@ function StoreRoutes() {
           <Route path="/orders/:id" component={OrderDetail} />
           <Route><div className="container-wide py-10"><EmptyState title={t('shopMissingTitle')} text={t('shopMissingText')} action={t('goToCatalog')} href="~/" /></div></Route>
         </Switch> : waiting ? <div className="container-wide py-10">{failed ? <QueryError retry={retry} /> : <div data-testid="skeleton-shop" className="skeleton h-64 rounded-[30px]" />}</div> : <Switch>
-          <Route path="/" component={Home} />
+          <Route path="/" component={HomeRoute} />
           <Route path="/catalog" component={Catalog} />
           <Route path="/product/:id" component={ProductDetail} />
           <Route path="/cart" component={Cart} />

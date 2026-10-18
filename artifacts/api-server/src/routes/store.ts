@@ -921,7 +921,10 @@ router.get("/products", async (req, res, next) => {
       .from(productsTable)
       .innerJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
       .where(and(...filters))
-      .orderBy(orderBy);
+      // Products equal by that order keep one order, so a list does not
+      // reshuffle between two reads (a "show more" page stays in place);
+      // among the new ones the latest added comes first.
+      .orderBy(orderBy, query.sort === "newest" ? desc(productsTable.id) : asc(productsTable.id));
     res.json(rows.map(({ product, category }) => productDto(product, category)));
   } catch (error) {
     return next(error);
