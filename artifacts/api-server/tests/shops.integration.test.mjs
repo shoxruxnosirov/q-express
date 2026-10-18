@@ -627,6 +627,21 @@ test("one bot serves several shops: Q express's, or another shop's", async () =>
   const [linked] = await q("select telegram_chat_id from admins where username = 'bozorchi'");
   assert.equal(linked.telegram_chat_id, "7770002");
 
+  // An order of the shop on Q express's bot reaches everyone Q express's own
+  // orders reach (its owner's chat), as well as the shop's own admin and owner.
+  const category = await bozorchi.call("POST", "/admin/categories", { name: "Non", slug: "non", icon: "bread" });
+  assert.equal(category.status, 201);
+  const bread = await bozorchi.call("POST", "/admin/products", { category_id: category.body.id, name: "Bozor noni", description: "issiq", image_url: "https://example.com/non.jpg", price: 4000, unit: "dona", stock: 20 });
+  assert.equal(bread.status, 201);
+  const before = calls().length;
+  const bozorOrder = await customer.call("POST", "/orders", order(bread.body.id));
+  assert.equal(bozorOrder.status, 201);
+  const told = calls().slice(before).filter((c) => c.method === "sendMessage" && c.body.text.includes(bozorOrder.body.order_number));
+  const toldChats = told.map((c) => `${c.bot}:${c.body.chat_id}`);
+  assert.ok(toldChats.includes(`424242:${QE_OWNER_CHAT}`), "Q express's owner, as for its own orders");
+  assert.ok(toldChats.includes("424242:7770002"), "the shop's own admin");
+  assert.ok(toldChats.includes("424242:7770001"), "the shop's owner");
+
   // A customer's message to the guest shop reaches its admin and owner through
   // Q express's bot, not Q express's own owner.
   assert.equal((await customer.call("POST", "/chat/session?shop=bozor", {})).status, 200);
@@ -680,6 +695,13 @@ test("one bot serves several shops: Q express's, or another shop's", async () =>
   const listed = (await platform.call("GET", "/admin/shops")).body.find((s) => s.slug === "bozor");
   assert.equal(listed.bot_shop_id, 1);
   assert.equal(listed.bot_configured, true);
+  // Who hears of its orders: its one linked admin and its owner's chat; a
+  // shop with neither is flagged so no orders go unheard of.
+  assert.equal(listed.telegram_admins, 1);
+  assert.equal(listed.owner_chat_set, true);
+  const silent = (await platform.call("GET", "/admin/shops")).body.find((s) => s.slug === "uchinchi");
+  assert.equal(silent.telegram_admins, 0);
+  assert.equal(silent.owner_chat_set, false);
 
   // The guest's owner writing to Q express's bot, not answering a notice, is
   // a Q express customer like anyone else, not told how to reply.

@@ -106,20 +106,21 @@ export function ShopStrip() {
 /** The small card, 188×141 (4:3, like the background); also the editor's preview. */
 export function ShopTileFace({ shop }: { shop: Pick<Shop, 'name' | 'card' | 'is_platform' | 'background_url' | 'icon_url'> }) {
   const { script } = useT(storeMessages);
-  // Q express is always shown as itself: its home page keeps its own design,
-  // so a card written for it could only make its tile read as another shop.
+  // Q express is always shown as itself, its name with its icon (the green Q
+  // until one is uploaded): its home page keeps its own design, so a card
+  // written for it could only make its tile read as another shop.
   if (shop.is_platform) {
     return shop.background_url ? (
       <div className="relative h-full w-full">
         <img {...imageSources(shop.background_url, [400, 800])} sizes="188px" alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-[linear-gradient(180deg,transparent,rgba(0,0,0,.62))] px-3 pb-2.5 pt-6">
-          <img src="/brand/icon.svg" alt="" className="h-7 w-7" />
+          {shop.icon_url ? <ShopIcon url={shop.icon_url} className="h-7 w-7 rounded-lg border border-white/60" /> : <img src="/brand/icon.svg" alt="" className="h-7 w-7" />}
           <span className="display text-[16px] font-extrabold tracking-[-.04em] text-white [text-shadow:0_1px_4px_rgba(0,0,0,.4)]">Q express</span>
         </div>
       </div>
     ) : (
       <div className="flex h-full items-center gap-2.5 bg-[hsl(var(--primary))] px-4">
-        <img src="/brand/icon.svg" alt="" className="h-9 w-9" />
+        {shop.icon_url ? <ShopIcon url={shop.icon_url} className="h-9 w-9 rounded-xl" /> : <img src="/brand/icon.svg" alt="" className="h-9 w-9" />}
         <span className="display text-[18px] font-extrabold tracking-[-.04em] text-white">Q express</span>
       </div>
     );

@@ -1721,7 +1721,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/Shop"
         - type: object
-          required: [order_prefix, active, open_time, close_time, accepting_orders, bot_shop_id, bot_username, bot_configured, bot_status, bot_error, owner_chat_id, archived_at, created_at]
+          required: [order_prefix, active, open_time, close_time, accepting_orders, bot_shop_id, bot_username, bot_configured, bot_status, bot_error, owner_chat_id, owner_chat_set, telegram_admins, archived_at, created_at]
           properties:
             order_prefix:
               type: string
@@ -1753,6 +1753,16 @@ components:
               type: [string, "null"]
             owner_chat_id:
               type: [string, "null"]
+            owner_chat_set:
+              description: >-
+                Whether the shop has an owner chat its orders also go to (Q
+                express's is TELEGRAM_ADMIN_CHAT_ID in the environment).
+              type: boolean
+            telegram_admins:
+              description: >-
+                How many of the shop's admins linked their Telegram, and so hear
+                of its orders. With none and no owner chat, no one does.
+              type: integer
             archived_at:
               description: When the shop was "deleted" (archived); null while in business.
               type: [string, "null"]

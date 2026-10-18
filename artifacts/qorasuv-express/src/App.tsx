@@ -146,7 +146,7 @@ function Shell({ children }: { children: ReactNode }) {
         <div className="container-wide flex h-[72px] items-center justify-between gap-3">
           <button data-testid="button-open-menu" className="tap flex h-10 w-10 items-center justify-center rounded-full text-[hsl(var(--foreground))] md:hidden" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
           <Link href={isAdmin ? '/admin' : '/'} data-testid="link-brand" className={`group flex items-center gap-2.5 ${isAdmin ? 'shrink-0' : ''}`}>
-            {!isAdmin && !isPlatform && shop?.icon_url
+            {!isAdmin && shop?.icon_url
               ? <ShopIcon url={shop.icon_url} className="h-9 w-9 rounded-xl transition-transform group-hover:scale-105" />
               : <img src="/brand/icon.svg" alt="Q express" className="h-9 w-9 transition-transform group-hover:scale-105" />}
             {!isAdmin && !isPlatform && shop
@@ -169,6 +169,7 @@ function Shell({ children }: { children: ReactNode }) {
         {isAdmin && <nav data-testid="nav-admin" className="container-wide hidden flex-wrap items-center gap-1 pb-2.5 md:flex">{nav.map(navLink)}</nav>}
       </header>
       {!isAdmin && shopKnown && <StoreClosedBanner />}
+      {isAdmin && adminSession.data?.admin && !adminSession.data.admin.telegram_linked && location !== '/admin/profile' && <TelegramLinkNudge />}
       {menuOpen && <div className="phone-span fixed inset-0 z-50 bg-[hsl(var(--foreground)/.22)] md:hidden" onClick={() => setMenuOpen(false)}>
         <aside className="h-full w-[290px] bg-[hsl(var(--card))] p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
           <div className="mb-10 flex items-center justify-between"><span className="display text-[18px] font-extrabold">{isAdmin ? 'Menyu' : t('menu')}</span><button data-testid="button-close-menu" className="rounded-full p-2 hover:bg-[hsl(var(--muted))]" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
@@ -736,6 +737,31 @@ function AdminOrders() {
 
 // The dashboard's shop: a platform super admin picks it, everyone else sees
 // the shop they run.
+// An admin whose Telegram is not linked hears of no order there; this says so
+// above every admin page until they link it or put it off for this tab.
+const NUDGE_KEY = 'qe-telegram-nudge-later';
+function TelegramLinkNudge() {
+  const [later, setLater] = useState(() => {
+    try { return sessionStorage.getItem(NUDGE_KEY) === '1'; } catch { return false; }
+  });
+  if (later) return null;
+  const putOff = () => {
+    try { sessionStorage.setItem(NUDGE_KEY, '1'); } catch { /* the banner just goes for now */ }
+    setLater(true);
+  };
+  return (
+    <div data-testid="banner-telegram-nudge" className="border-b border-[#f3d9a4] bg-[#fff6dc]">
+      <div className="container-wide flex flex-wrap items-center justify-between gap-2 py-2.5 text-xs font-semibold text-[#7a4f07]">
+        <span>📨 Yangi buyurtmalar Telegram'ingizga kelishi uchun Telegramni ulang.</span>
+        <span className="flex gap-2">
+          <Link href="/admin/profile" data-testid="link-telegram-nudge" className="rounded-full bg-[#229ED9] px-3 py-1.5 font-extrabold text-white">Ulash</Link>
+          <button type="button" onClick={putOff} className="rounded-full border border-[#e4c27a] px-3 py-1.5 font-bold">Keyinroq</button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function AdminShopSwitch() {
   const { admin, shops, acting, actingId, platformSuper, switchTo } = useAdminShop();
   const confirm = useConfirm();

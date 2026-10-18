@@ -48,6 +48,7 @@ import {
   listShops,
   botFamily,
   loadShop,
+  orderRecipientChatIds,
   PLATFORM_SHOP_ID,
   requestShop,
   shopBot,
@@ -1034,7 +1035,7 @@ router.post("/orders/:id/feedback", async (req, res, next) => {
       return res.status(429).json({ error: orderText(lang, "feedbackLimit") });
     }
     // To the admins of the shop the order was placed with, through its bot.
-    const chats = await linkedTelegramChatIds(shop.id);
+    const chats = await orderRecipientChatIds(shop);
     const sent = await withBot(await shopBot(shop), () => sendOrderFeedback(
       {
         orderNumber: order.orderNumber,
@@ -1293,7 +1294,7 @@ router.post("/orders", async (req, res, next) => {
     });
     if (order.userId) await rememberOrderAddress(order.userId, order.address);
     // To the shop's own admins, through the shop's own bot.
-    const chats = await linkedTelegramChatIds(shop.id);
+    const chats = await orderRecipientChatIds(shop);
     const notification = await withBot(await shopBot(shop), () => sendNewOrderNotification(
       {
         ...order,

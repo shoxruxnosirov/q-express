@@ -167,10 +167,9 @@ export function ShopCardEditor() {
             onRemoveBackground={() => { setBackground(null); setBackgroundRemoved(Boolean(shop.background_url)); }}
             onRemoveIcon={() => { setIcon(null); setIconRemoved(Boolean(shop.icon_url)); }}
             disabled={busy}
-            withIcon={!shop.is_platform}
           />
           {shop.is_platform ? (
-            <p data-testid="text-platform-card" className="rounded-xl bg-[hsl(var(--muted)/.6)] p-3 text-[12px] text-[hsl(var(--muted-foreground))]">Q express bosh sahifasi o‘zining doimiy dizaynida qoladi. Boshqa do‘konlar sahifasida esa Q express doim o‘z belgisi va nomi bilan ko‘rinadi; bu yerda faqat o‘sha kichik kartochkaning fon rasmini tanlash mumkin. Yangi do‘kon kartochkasini «Do‘konlar» bo‘limida, o‘sha do‘kon yonidagi «Ko‘rinish» tugmasi orqali tahrirlang.</p>
+            <p data-testid="text-platform-card" className="rounded-xl bg-[hsl(var(--muted)/.6)] p-3 text-[12px] text-[hsl(var(--muted-foreground))]">Q express bosh sahifasining yashil banneri o‘zining doimiy dizaynida qoladi. Ikonka yuklansa, u sayt sarlavhasida va boshqa do‘konlar sahifasidagi kichik kartochkada yashil «Q» belgisi o‘rnida chiqadi (yuklanmasa, belgining o‘zi qoladi). Fon rasmi o‘sha kichik kartochkada ishlatiladi. Yangi do‘kon kartochkasini «Do‘konlar» bo‘limida, o‘sha do‘kon yonidagi «Ko‘rinish» tugmasi orqali tahrirlang.</p>
           ) : loadedFor === shop.id
             ? <RichHtmlField key={shop.id} name="Do‘kon ko‘rinishi" value={card} original={saved} onChange={setCard} />
             : <div className="skeleton h-64 rounded-xl" />}

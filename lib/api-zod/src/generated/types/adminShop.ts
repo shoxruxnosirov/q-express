@@ -31,6 +31,10 @@ export type AdminShop = Shop & ({
   bot_error: string | null;
   /** @nullable */
   owner_chat_id: string | null;
+  /** Whether the shop has an owner chat its orders also go to (Q express's is TELEGRAM_ADMIN_CHAT_ID in the environment). */
+  owner_chat_set: boolean;
+  /** How many of the shop's admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does. */
+  telegram_admins: number;
   /**
      * When the shop was "deleted" (archived); null while in business.
      * @nullable

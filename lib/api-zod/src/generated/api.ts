@@ -1766,6 +1766,8 @@ export const ListAdminShopsResponseItem = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 }))
@@ -1880,6 +1882,8 @@ export const CreateAdminShopResponse = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 })),
@@ -1972,6 +1976,8 @@ export const UpdateAdminShopResponse = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 }))
@@ -2020,6 +2026,8 @@ export const ConnectAdminShopBotResponse = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 }))
@@ -2068,6 +2076,8 @@ export const ArchiveAdminShopResponse = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 }))
@@ -2116,6 +2126,8 @@ export const RestoreAdminShopResponse = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 }))
@@ -2196,6 +2208,8 @@ export const UpdateShopCardResponse = zod.object({
   "bot_status": zod.enum(['unknown', 'connecting', 'connected', 'failed']).describe('Whether the bot is pointed at this server, as the server last tried it since it started: unknown before any try.'),
   "bot_error": zod.string().nullable().describe('What Telegram answered when the bot failed to connect.'),
   "owner_chat_id": zod.string().nullable(),
+  "owner_chat_set": zod.boolean().describe('Whether the shop has an owner chat its orders also go to (Q express\'s is TELEGRAM_ADMIN_CHAT_ID in the environment).'),
+  "telegram_admins": zod.number().int().describe('How many of the shop\'s admins linked their Telegram, and so hear of its orders. With none and no owner chat, no one does.'),
   "archived_at": zod.string().nullable().describe('When the shop was "deleted" (archived); null while in business.'),
   "created_at": zod.coerce.date()
 }))

@@ -1,9 +1,8 @@
 import { and, eq, gt, inArray, isNotNull, isNull, lte, notInArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { ordersTable } from "@workspace/db/schema";
-import { linkedTelegramChatIds } from "./admin-directory";
 import { logger } from "./logger";
-import { isArchived, loadShop, shopBot, type ShopRow } from "./shops";
+import { isArchived, loadShop, orderRecipientChatIds, shopBot, type ShopRow } from "./shops";
 import { formatTashkent } from "./store-hours";
 import { sendPreorderReminder, withBot } from "./telegram";
 
@@ -64,7 +63,8 @@ export async function sendDueReminders(now = new Date()) {
   // Each reminder goes to the admins of the order's shop, through its bot.
   const shops = new Map<number, { shop: ShopRow | undefined; chats: string[] }>();
   for (const shopId of new Set(due.map((order) => order.shopId))) {
-    shops.set(shopId, { shop: await loadShop(shopId), chats: await linkedTelegramChatIds(shopId) });
+    const shop = await loadShop(shopId);
+    shops.set(shopId, { shop, chats: shop ? await orderRecipientChatIds(shop) : [] });
   }
   let sent = due.length;
   for (const order of due) {

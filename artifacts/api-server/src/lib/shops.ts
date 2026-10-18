@@ -1,9 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { asc } from "drizzle-orm";
+import { asc, count, isNotNull } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { PLATFORM_SHOP_ID, shopsTable } from "@workspace/db/schema";
+import { adminsTable, PLATFORM_SHOP_ID, shopsTable } from "@workspace/db/schema";
 import type { StoreHours } from "./store-hours";
 import { logger } from "./logger";
+import { linkedTelegramChatIds } from "./admin-directory";
 import { envBotContext, getBotUsername, knownBotUsername, registerMenuButton, registerWebhook, unregisterWebhook, withBot, type BotContext } from "./telegram";
 
 // The platform runs several shops. Shop 1 is Q express, the platform's own:
@@ -186,6 +187,19 @@ export async function botHost(shop: ShopRow): Promise<ShopRow> {
   return host.botShopId === null || host.botShopId === host.id ? host : shop;
 }
 
+// Who hears of a shop's orders in Telegram, besides its own owner's chat
+// (which its bot context adds): its admins who linked their Telegram, and, for
+// a shop on another shop's bot, everyone that bot's own shop tells of its
+// orders, its admins and owner, Q express's for a shop on Q express's bot
+// (the owner's choice). New orders, comments on them and pre-order reminders.
+export async function orderRecipientChatIds(shop: ShopRow): Promise<string[]> {
+  const own = await linkedTelegramChatIds(shop.id);
+  const host = await botHost(shop);
+  if (host === shop) return own;
+  const hostOwner = isPlatformShop(host) ? envBotContext().ownerChatId : (host.ownerChatId ?? undefined);
+  return [...new Set([...own, ...(await linkedTelegramChatIds(host.id)), ...(hostOwner ? [hostOwner] : [])])];
+}
+
 // A host and the shops on its bot, archived ones left out.
 export async function botFamily(host: ShopRow): Promise<ShopRow[]> {
   const shops = await listShops();
@@ -351,10 +365,22 @@ export function effectiveBotId(shop: ShopRow, shops: readonly ShopRow[]): string
 // The admin view with the shop list read now, so a shop on another shop's bot
 // names that bot correctly even right after a restart or a change.
 export async function adminShopView(shop: ShopRow) {
-  return adminShopDto(shop, await listShops());
+  return adminShopDto(shop, await listShops(), await telegramAdminCounts());
 }
 
-export function adminShopDto(shop: ShopRow, shops: readonly ShopRow[]) {
+// How many admins of each shop have linked their Telegram: they, and the
+// owner's chat, are who hears of the shop's orders. None of either means no
+// one does, which the dashboard warns about.
+export async function telegramAdminCounts(): Promise<Map<number, number>> {
+  const rows = await db
+    .select({ shopId: adminsTable.shopId, linked: count() })
+    .from(adminsTable)
+    .where(isNotNull(adminsTable.telegramChatId))
+    .groupBy(adminsTable.shopId);
+  return new Map(rows.map((row) => [row.shopId, Number(row.linked)]));
+}
+
+export function adminShopDto(shop: ShopRow, shops: readonly ShopRow[], telegramAdmins: ReadonlyMap<number, number>) {
   return {
     ...shopDto(shop),
     order_prefix: shop.orderPrefix,
@@ -364,6 +390,9 @@ export function adminShopDto(shop: ShopRow, shops: readonly ShopRow[]) {
     accepting_orders: shop.acceptingOrders,
     ...botFields(shop, shops),
     owner_chat_id: isPlatformShop(shop) ? null : shop.ownerChatId,
+    // Q express's owner chat lives in the environment (TELEGRAM_ADMIN_CHAT_ID).
+    owner_chat_set: isPlatformShop(shop) ? Boolean(envBotContext().ownerChatId) : Boolean(shop.ownerChatId),
+    telegram_admins: telegramAdmins.get(shop.id) ?? 0,
     archived_at: shop.archivedAt ? shop.archivedAt.toISOString() : null,
     created_at: shop.createdAt.toISOString(),
   };

@@ -112,7 +112,7 @@ function BotFields({ value, onChange, creating, saved }: { value: Settings; onCh
             <option value="" disabled>Botni tanlang</option>
             {hosts.map(shop => <option key={shop.id} value={shop.id}>{botName(shop)}</option>)}
           </select>
-          <span className="mt-1 block text-[11px] font-normal text-[hsl(var(--muted-foreground))]">Bitta bot bir nechta do‘konga xizmat qiladi: bu do‘kon buyurtmalari va xabarlari shu bot orqali o‘z adminlariga boradi. Botga to‘g‘ridan-to‘g‘ri /start bosgan yoki yozgan mijoz esa bot egasi do‘koniga tushadi.</span>
+          <span className="mt-1 block text-[11px] font-normal text-[hsl(var(--muted-foreground))]">Bitta bot bir nechta do‘konga xizmat qiladi. Bu do‘kon buyurtmalari tanlangan bot egasi do‘konining buyurtmalari boradigan hamma adminlarga (Q express boti bo‘lsa — Q express adminlariga) va bu do‘konning o‘z adminlariga boradi. Mijoz bilan chat xabarlari esa faqat bu do‘kon adminlariga boradi.</span>
         </label>
       ) : (
         <label className="mt-2 block text-xs font-bold">Bot tokeni
@@ -188,7 +188,7 @@ export function asInput(image: UploadedImage): ShopImageInput {
 
 // The shop's two pictures: the background of its card, cropped 4:3, and its
 // square icon. Picked here, uploaded when the form is saved.
-export function ShopPictureFields({ background, icon, onBackground, onIcon, currentBackground, currentIcon, onRemoveBackground, onRemoveIcon, disabled, withIcon = true }: {
+export function ShopPictureFields({ background, icon, onBackground, onIcon, currentBackground, currentIcon, onRemoveBackground, onRemoveIcon, disabled }: {
   background: File | null;
   icon: File | null;
   onBackground: (file: File | null) => void;
@@ -198,8 +198,6 @@ export function ShopPictureFields({ background, icon, onBackground, onIcon, curr
   onRemoveBackground?: () => void;
   onRemoveIcon?: () => void;
   disabled?: boolean;
-  /** Q express keeps its own logo. */
-  withIcon?: boolean;
 }) {
   return (
     <div className="grid gap-4 rounded-2xl bg-[hsl(var(--muted)/.6)] p-4 sm:grid-cols-2">
@@ -208,11 +206,11 @@ export function ShopPictureFields({ background, icon, onBackground, onIcon, curr
         <p className="mb-2 mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">4:3 ramkaga kesiladi. Rasm bo‘lsa, kartochka matni doim oq bo‘ladi (ranglar faqat rasmsiz kartochkada).</p>
         <ImageField format="background" currentUrl={currentBackground} file={background} onPick={onBackground} onRemove={onRemoveBackground ?? (() => onBackground(null))} disabled={disabled} testId="field-shop-background" />
       </div>
-      {withIcon && <div>
+      <div>
         <p className="text-xs font-extrabold">Do‘kon ikonkasi</p>
         <p className="mb-2 mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">Kvadrat; sarlavhada va boshqa do‘konlar ro‘yxatida nom yonida turadi.</p>
         <ImageField format="icon" currentUrl={currentIcon} file={icon} onPick={onIcon} onRemove={onRemoveIcon ?? (() => onIcon(null))} disabled={disabled} testId="field-shop-icon" />
-      </div>}
+      </div>
     </div>
   );
 }
@@ -319,7 +317,8 @@ function CreateShop({ onDone }: { onDone: (text: string) => void }) {
           Super admin logini: <b className="mono select-all">{created.username}</b><br />
           Vaqtinchalik parol: <b className="mono select-all text-sm">{created.password}</b><br />
           Buni do‘kon egasiga bering. Bu parol boshqa ko‘rsatilmaydi.<br />
-          Bot hozir ulanmoqda: natijasi pastdagi ro‘yxatda, do‘kon yonida ko‘rinadi.
+          Bot hozir ulanmoqda: natijasi pastdagi ro‘yxatda, do‘kon yonida ko‘rinadi.<br />
+          Buyurtmalar Telegram'ga kelishi uchun super admin birinchi kirgandan keyin «Profilim» bo‘limida Telegramni ulasin (do‘konning boshqa adminlari ham).
         </p>
       )}
     </form>
@@ -372,6 +371,39 @@ function EditShop({ shop, onDone }: { shop: AdminShop; onDone: (text: string, is
         {update.isPending && <LoaderCircle size={14} className="animate-spin" />} Saqlash
       </button>
     </form>
+  );
+}
+
+// Who hears of the shop's orders in Telegram: its admins who linked their
+// Telegram (in Profilim) and its owner's chat. With neither, no one does, and
+// orders are seen on the dashboard only: said in red.
+function OrderRecipients({ shop }: { shop: AdminShop }) {
+  const { shops } = useAdminShop();
+  const admins = shop.telegram_admins;
+  const owner = shop.owner_chat_set;
+  // On another shop's bot its orders also go to everyone that shop's orders
+  // go to (Q express's admins for Q express's bot).
+  const host = shop.bot_shop_id === null ? undefined : shops.find(item => item.id === shop.bot_shop_id);
+  if (host) {
+    const extra = [admins > 0 ? `${admins} ta o‘z admini` : null, owner ? 'egasining chati' : null].filter(Boolean).join(' va ');
+    return (
+      <p data-testid={`order-recipients-${shop.id}`} className="mt-2 text-[11px] font-semibold text-[hsl(var(--muted-foreground))]">
+        📨 Buyurtmalar Telegram'ga: {host.name} buyurtmalari boradigan hamma adminlarga{extra ? `, yana ${extra}` : ''}
+      </p>
+    );
+  }
+  if (admins === 0 && !owner) {
+    return (
+      <p data-testid={`order-recipients-${shop.id}`} className="mt-2 rounded-xl bg-[#fdf0ed] px-2.5 py-1.5 text-[11px] font-semibold text-[#9d493e]">
+        ⚠️ Buyurtmalar Telegram'ga hech kimga bormaydi. Do‘kon adminlari «Profilim» bo‘limida Telegramni ulasin{shop.is_platform ? '' : ' yoki sozlamalarda egasining chat ID raqamini kiriting'}.
+      </p>
+    );
+  }
+  const parts = [admins > 0 ? `${admins} ta admin` : null, owner ? 'egasining chati' : null].filter(Boolean).join(' va ');
+  return (
+    <p data-testid={`order-recipients-${shop.id}`} className="mt-2 text-[11px] font-semibold text-[hsl(var(--muted-foreground))]">
+      📨 Buyurtmalar Telegram'ga: {parts}
+    </p>
   );
 }
 
@@ -486,6 +518,7 @@ function ShopRow({ shop, canManage, onMessage }: { shop: AdminShop; canManage: b
             {!shop.is_platform && <span className="inline-flex items-center gap-1"><Bot size={11} />{shop.bot_username ? `@${shop.bot_username}` : botHost ? `${botHost} boti` : 'bot kiritilmagan'}{botHost && ` · ${botHost} bilan umumiy`}{!shop.bot_configured && (botHost ? ' · bot egasining tokeni o‘qilmadi' : ' · token o‘qilmadi, qayta kiriting')}</span>}
           </div>
           {canManage && <BotStatusLine shop={shop} onMessage={onMessage} />}
+          <OrderRecipients shop={shop} />
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href={`/admin/shop-card?shop=${shop.id}`} data-testid={`link-shop-card-${shop.id}`} className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-1.5 text-xs font-bold"><Palette size={13} /> Ko‘rinish</Link>

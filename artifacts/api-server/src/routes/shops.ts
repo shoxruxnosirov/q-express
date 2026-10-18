@@ -18,6 +18,7 @@ import { isUniqueViolation } from "../lib/pg-error";
 import {
   adminShopDto,
   adminShopView,
+  telegramAdminCounts,
   effectiveBotId,
   connectPlatformBot,
   connectShopBot,
@@ -187,7 +188,8 @@ router.get("/admin/shops", async (_req, res, next) => {
     // Q express's admins may edit every shop's card, so they see them all.
     // A copy: the list is shared with every other request.
     const visible = admin.shopId === PLATFORM_SHOP_ID ? [...shops] : shops.filter((shop) => shop.id === admin.shopId);
-    res.json(visible.sort(platformFirst).map((shop) => adminShopDto(shop, shops)));
+    const telegramAdmins = await telegramAdminCounts();
+    res.json(visible.sort(platformFirst).map((shop) => adminShopDto(shop, shops, telegramAdmins)));
   } catch (error) {
     return next(error);
   }
