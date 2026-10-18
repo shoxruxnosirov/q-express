@@ -94,7 +94,7 @@ const when = (value: string, lang: Lang) => dateTimeLabel(new Date(value), undef
 const statusTone: Record<string, string> = { new: 'bg-[#fff0d4] text-[#a25e08]', preparing: 'bg-[#e9f3e9] text-[#23735e]', courier: 'bg-[#e1f0ed] text-[#17695e]', delivered: 'bg-[#dfeee2] text-[#287244]', cancelled: 'bg-[#f8e3de] text-[#a64b3f]' };
 
 function Shell({ children }: { children: ReactNode }) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { count, subtotal } = useCart();
   const [menuOpen, setMenuOpen] = useState(false);
   const logout = useAdminLogout();
@@ -106,7 +106,7 @@ function Shell({ children }: { children: ReactNode }) {
   const isSuperAdmin = adminSession.data?.admin?.role === 'super_admin';
   const isPlatformAdmin = adminSession.data?.admin?.shop_id === PLATFORM_SHOP_ID;
   // The storefront shop being visited; Q express at the root.
-  const { shop, isPlatform, slug } = useShop();
+  const { shop, isPlatform, slug, missing } = useShop();
   // A shop's own widgets (its hours, its chat) only while it is a shop the
   // customer can visit: not for an unknown, hidden or archived one.
   const shopKnown = isPlatform || Boolean(shop);
@@ -145,17 +145,19 @@ function Shell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 border-b border-[hsl(var(--border))] bg-[hsl(var(--background)/.9)] backdrop-blur-xl">
         <div className="container-wide flex h-[72px] items-center justify-between gap-3">
           <button data-testid="button-open-menu" className="tap flex h-10 w-10 items-center justify-center rounded-full text-[hsl(var(--foreground))] md:hidden" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
-          <Link href={isAdmin ? '/admin' : '/'} data-testid="link-brand" className={`group flex items-center gap-2.5 ${isAdmin ? 'shrink-0' : ''}`}>
+          <Link href={isAdmin ? '/admin' : '/'} data-testid="link-brand" className={`group flex items-center gap-2.5 ${isAdmin ? 'shrink-0' : 'min-w-0'}`}>
             {!isAdmin && shop?.icon_url
               ? <ShopIcon url={shop.icon_url} className="h-9 w-9 rounded-xl transition-transform group-hover:scale-105" />
               : <img src="/brand/icon.svg" alt="Q express" className="h-9 w-9 transition-transform group-hover:scale-105" />}
             {!isAdmin && !isPlatform && shop
-              ? <span data-testid="text-brand-shop" className="display max-w-[150px] truncate text-[19px] font-extrabold tracking-[-.03em] text-[hsl(var(--foreground))] sm:max-w-[260px]">{shop.name}</span>
+              ? <span data-testid="text-brand-shop" className="display min-w-0 truncate text-[19px] font-extrabold tracking-[-.03em] text-[hsl(var(--foreground))] sm:max-w-[260px]">{shop.name}</span>
               : <span className={`display ${isAdmin ? 'whitespace-nowrap' : ''} text-[20px] font-extrabold tracking-[-.04em] text-[hsl(var(--primary))]`}>Q <span className="text-[hsl(var(--foreground))]">express</span></span>}
           </Link>
           {isAdmin && <div className="mr-auto"><AdminShopSwitch /></div>}
           {!isAdmin && <nav className="hidden items-center gap-1 md:flex">{nav.map(navLink)}</nav>}
-          <div className={`flex items-center gap-2 ${isAdmin ? 'shrink-0' : ''}`}>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Not on a shop that is gone: it has no home page to search. */}
+            {!isAdmin && !missing && <button type="button" data-testid="button-header-search" aria-label={t('searchPlaceholder')} onClick={() => openHomeSearch(location === '/', () => navigate(slug ? `~/s/${slug}` : '~/'))} className="tap flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--primary))]"><Search size={16} /></button>}
             {!isAdmin && <LanguageSwitcher compact />}
             {!isAdmin && <Link href="/cart" data-testid="link-cart" className="tap relative flex h-11 items-center gap-2 rounded-full bg-[hsl(var(--primary))] px-3.5 text-[hsl(var(--primary-foreground))] transition hover:translate-y-[-1px] hover:shadow-[0_8px_18px_rgba(22,116,96,.2)]"><ShoppingBag size={18} /><span className="hidden text-[13px] font-bold sm:inline">{money(subtotal)}</span>{count > 0 && <span data-testid="text-cart-count" className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[hsl(var(--background))] bg-[hsl(var(--accent))] px-1 text-[10px] font-bold text-white">{count}</span>}</Link>}
             {isAdmin && <Link href="/" data-testid="link-customer-view" className="hidden items-center gap-2 rounded-full border border-[hsl(var(--border))] px-4 py-2 text-[12px] font-bold text-[hsl(var(--primary))] transition hover:bg-[hsl(var(--muted))] sm:flex"><Store size={15} /> Mijoz ko‘rinishi</Link>}
@@ -273,6 +275,24 @@ const HOME_PAGE_SIZE = 24;
 const HEADER_HEIGHT = 73;
 type HomeTab = 'popular' | 'all' | string;
 
+// The header's magnifier opens the home page's search: at once on the home
+// page (inside the tap, so a phone opens its keyboard), or after going there.
+const HOME_SEARCH_EVENT = 'qe:home-search';
+let homeSearchRequested = false;
+function openHomeSearch(onHome: boolean, goHome: () => void) {
+  if (onHome) {
+    window.dispatchEvent(new Event(HOME_SEARCH_EVENT));
+    return;
+  }
+  homeSearchRequested = true;
+  goHome();
+}
+function takeHomeSearchRequest() {
+  const requested = homeSearchRequested;
+  homeSearchRequested = false;
+  return requested;
+}
+
 // Each shop starts its home afresh (Popular, no search): the page is the same
 // component for every shop, only its address changes.
 function HomeRoute() {
@@ -310,11 +330,49 @@ function Home() {
     setTab('popular');
   };
   const searching = search !== '';
-  return <div className="container-wide py-5 sm:py-10">
-    <div className="animate-rise flex flex-col gap-6">
-      <div className="relative">
+  const inputRef = useRef<HTMLInputElement>(null);
+  // The search box brought up under the header, wherever the page was, with
+  // the keyboard open: from the header's magnifier, or tapped where it is.
+  const alignSearch = () => {
+    const input = inputRef.current;
+    if (!input) return;
+    const top = window.scrollY + input.getBoundingClientRect().top - HEADER_HEIGHT - 8;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  };
+  useEffect(() => {
+    // Focused within the tap itself, so a phone opens its keyboard.
+    const open = () => {
+      inputRef.current?.focus({ preventScroll: true });
+      alignSearch();
+    };
+    window.addEventListener(HOME_SEARCH_EVENT, open);
+    // Asked for from another page: there once this page is up, and once more
+    // when the banner and lists above it have settled to their height.
+    // The second step is dropped once the customer scrolls or types, so it
+    // never pulls the page back from under them (its own scrolling is not
+    // the customer's, so scroll events cannot tell).
+    let settle = 0;
+    const HANDS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    const stop = () => {
+      window.clearTimeout(settle);
+      HANDS.forEach(name => window.removeEventListener(name, stop));
+    };
+    if (takeHomeSearchRequest()) {
+      requestAnimationFrame(open);
+      settle = window.setTimeout(() => { stop(); alignSearch(); }, 600);
+      HANDS.forEach(name => window.addEventListener(name, stop, { passive: true }));
+    }
+    return () => {
+      stop();
+      window.removeEventListener(HOME_SEARCH_EVENT, open);
+    };
+  }, []);
+  const searchBox = (
+    <div className="relative mb-3">
         <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" size={18} />
         <input
+          ref={inputRef}
+          onFocus={alignSearch}
           data-testid="input-home-search"
           type="search"
           value={typed}
@@ -325,22 +383,24 @@ function Home() {
           className="h-12 w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] pl-11 pr-11 text-sm outline-none transition focus:border-[hsl(var(--primary))] focus:ring-4 focus:ring-[hsl(var(--primary)/.1)] [&::-webkit-search-cancel-button]:hidden"
         />
         {typed && <button type="button" data-testid="button-home-search-clear" aria-label={t('clearSearch')} onClick={clear} className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]"><X size={16} /></button>}
-      </div>
-      {!searching && <>
-        {isPlatform ? <PlatformHero /> : shop ? <ShopHero shop={shop} /> : <div className="skeleton h-64 rounded-[30px]" />}
-        <ShopStrip />
-      </>}
-      <HomeProducts shopParams={params} search={search} tab={tab} onTab={setTab} />
+    </div>
+  );
+  return <div className="container-wide py-5 sm:py-10">
+    <div className="animate-rise flex flex-col gap-6">
+      {isPlatform ? <PlatformHero /> : shop ? <ShopHero shop={shop} /> : <div className="skeleton h-64 rounded-[30px]" />}
+      <ShopStrip />
+      <HomeProducts shopParams={params} search={search} tab={tab} onTab={setTab} searchBox={searchBox} />
       {isPlatform && !searching && <section className="grid gap-3 sm:grid-cols-3"><MiniPromise icon={Truck} title={t('promiseFastTitle')} text={t('promiseFastText')} /><MiniPromise icon={BadgeCheck} title={t('promiseFreshTitle')} text={t('promiseFreshText')} /><MiniPromise icon={Headphones} title={t('promiseHelpTitle')} text={t('promiseHelpText')} /></section>}
     </div>
   </div>;
 }
 
-function HomeProducts({ shopParams, search, tab, onTab }: {
+function HomeProducts({ shopParams, search, tab, onTab, searchBox }: {
   shopParams: ReturnType<typeof useShop>['params'];
   search: string;
   tab: HomeTab;
   onTab: (tab: HomeTab) => void;
+  searchBox: ReactNode;
 }) {
   const { t, script } = useT(storeMessages);
   const [shown, setShown] = useState(HOME_PAGE_SIZE);
@@ -366,10 +426,11 @@ function HomeProducts({ shopParams, search, tab, onTab }: {
     onTab(next);
     // The picked tab fully in view in its row.
     button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    // Picked with the tabs stuck under the header: back to the list's top.
+    // Picked with the tabs stuck under the header: back to the list's top,
+    // its search where the magnifier puts it.
     const element = sectionRef.current;
-    if (element && element.getBoundingClientRect().top < HEADER_HEIGHT) {
-      window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - HEADER_HEIGHT });
+    if (element && element.getBoundingClientRect().top < HEADER_HEIGHT + 8) {
+      window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - HEADER_HEIGHT - 8 });
     }
   };
 
@@ -385,6 +446,7 @@ function HomeProducts({ shopParams, search, tab, onTab }: {
 
   const chip = (on: boolean) => `flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold transition ${on ? 'bg-[hsl(var(--primary))] text-white' : 'border border-[hsl(var(--border))] bg-[hsl(var(--card))] hover:border-[hsl(var(--primary))]'}`;
   return <section ref={sectionRef} data-testid="section-home-products">
+    {searchBox}
     {/* Under the header while scrolling, so another tab is always a tap away. */}
     <div className="sticky top-[72px] z-30 -mx-4 bg-[hsl(var(--background)/.94)] px-4 py-2.5 backdrop-blur-xl">
       <div role="group" aria-label={t('sectionsLabel')} className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none]">
