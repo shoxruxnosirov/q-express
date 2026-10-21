@@ -5,7 +5,11 @@ import {
   preorderReminderText,
   customerReplyText,
   isAdminChat,
+  refreshChatMenuButtons,
+  registerMenuButton,
   registerWebhook,
+  unregisterWebhook,
+  webhookPointsAt,
   sendChatMessageNotification,
   sendNewOrderNotification,
   sendOperatorReplyNotification,
@@ -19,6 +23,7 @@ const keys = [
   "TELEGRAM_NEW_BOT_TOKEN",
   "TELEGRAM_ADMIN_CHAT_ID",
   "SESSION_SECRET",
+  "TELEGRAM_CONNECT",
 ];
 const originalEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 const originalFetch = globalThis.fetch;
@@ -760,4 +765,121 @@ test("text that would push a message past Telegram's limits is cut, never droppe
   // An old order with a long address is printed short.
   const reminder = preorderReminderText({ orderNumber: "QE-1", customerName: "A", phone: "998901112233", address: "y".repeat(3000), total: "1", scheduledLabel: "09:00", minutesLeft: 5 });
   assert.ok(reminder.length < 600);
+});
+
+// --- Moving the bots to a new server ---------------------------------------
+
+test("TELEGRAM_CONNECT=off leaves the bots where they are", async () => {
+  configureInbound();
+  process.env.TELEGRAM_CONNECT = "off";
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  for (const result of [
+    await registerWebhook("https://new.example"),
+    await unregisterWebhook(),
+    await registerMenuButton("https://new.example"),
+    await registerMenuButton("https://new.example", "5550002", "ru"),
+  ]) {
+    assert.equal(result.sent, false);
+    assert.match(result.error, /TELEGRAM_CONNECT=off/);
+  }
+  assert.deepEqual(await refreshChatMenuButtons("https://new.example", [{ chatId: "5550002", lang: "ru" }]), { updated: 0, failed: 0, stopped: false });
+  assert.equal(called, false, "not one call reaches Telegram");
+  // Anything but "off" connects as before.
+  process.env.TELEGRAM_CONNECT = "on";
+  assert.deepEqual(await registerWebhook("https://new.example"), { sent: true });
+  assert.equal(called, true);
+});
+
+test("the webhook in place is compared with the address the bot would get", async () => {
+  configureInbound();
+  let reply = { ok: true, result: { url: "https://q-express.onrender.com/api/telegram/webhook" } };
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /\/getWebhookInfo$/);
+    return new Response(JSON.stringify(reply));
+  };
+  assert.equal(await webhookPointsAt("https://q-express.onrender.com/"), true);
+  assert.equal(await webhookPointsAt("https://130-61-1-2.sslip.io"), false);
+  reply = { ok: true, result: { url: "" } };
+  assert.equal(await webhookPointsAt("https://130-61-1-2.sslip.io"), false, "no webhook yet");
+  reply = { ok: false, error_code: 500 };
+  assert.equal(await webhookPointsAt("https://130-61-1-2.sslip.io"), undefined, "unknown, not different");
+  globalThis.fetch = async () => {
+    throw new Error("offline");
+  };
+  assert.equal(await webhookPointsAt("https://130-61-1-2.sslip.io"), undefined);
+});
+
+test("each chat's menu button moves in its own language or back to the bot's", async () => {
+  configureInbound();
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    if (body.chat_id === "5550004") return new Response(JSON.stringify({ ok: false, error_code: 403 }), { status: 403 });
+    return new Response(JSON.stringify({ ok: true, result: true }));
+  };
+  const outcome = await refreshChatMenuButtons(
+    "https://new.example/",
+    [
+      { chatId: "5550001", lang: "ru" },
+      { chatId: "5550002", lang: null },
+      { chatId: "5550003", lang: "uz" },
+      { chatId: "5550004", lang: "en" },
+      { chatId: "-100123", lang: "ru" },
+    ],
+    async () => {},
+  );
+  assert.deepEqual(outcome, { updated: 3, failed: 1, stopped: false }, "a chat that blocked the bot only fails");
+  assert.deepEqual(calls[0], {
+    chat_id: "5550001",
+    menu_button: { type: "web_app", text: "Магазин", web_app: { url: "https://new.example/" } },
+  });
+  assert.deepEqual(calls[1], { chat_id: "5550002" }, "no saved language: back to the bot's own button");
+  assert.deepEqual(calls[2], { chat_id: "5550003" });
+  assert.equal(calls.length, 4, "a group is never written to");
+});
+
+test("moving the menu buttons waits when Telegram asks, and stops when it is gone", async () => {
+  configureInbound();
+  const waits = [];
+  let tries = 0;
+  globalThis.fetch = async () => {
+    tries++;
+    if (tries === 1) return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 3 } }), { status: 429 });
+    return new Response(JSON.stringify({ ok: true, result: true }));
+  };
+  const chats = Array.from({ length: 3 }, (_, i) => ({ chatId: `555000${i + 1}`, lang: null }));
+  assert.deepEqual(await refreshChatMenuButtons("https://new.example", chats, async (ms) => { waits.push(ms); }), { updated: 3, failed: 0, stopped: false });
+  assert.equal(tries, 4, "the chat asked to wait is tried again");
+  assert.equal(waits[0], 3000);
+
+  tries = 0;
+  globalThis.fetch = async () => {
+    tries++;
+    throw new Error("offline");
+  };
+  const many = Array.from({ length: 20 }, (_, i) => ({ chatId: `55501${String(i).padStart(2, "0")}`, lang: null }));
+  assert.deepEqual(await refreshChatMenuButtons("https://new.example", many, async () => {}), { updated: 0, failed: 5, stopped: true });
+  assert.equal(tries, 5);
+});
+
+test("while the bots are left alone, a bot that could not connect still says so", async () => {
+  configureInbound();
+  process.env.TELEGRAM_CONNECT = "off";
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response(JSON.stringify({ ok: true }));
+  };
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  // deploy/oracle's --go-live looks for exactly this error.
+  assert.deepEqual(await registerWebhook("https://new.example"), { sent: false, error: "Telegram bot configuration is missing" });
+  process.env.TELEGRAM_BOT_TOKEN = `${BOT_ID}:test-inbound-token`;
+  delete process.env.SESSION_SECRET;
+  assert.deepEqual(await registerWebhook("https://new.example"), { sent: false, error: "SESSION_SECRET is required for the Telegram webhook" });
+  assert.equal(called, false);
 });

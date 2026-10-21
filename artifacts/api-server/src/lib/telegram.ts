@@ -303,7 +303,10 @@ function recipientChats(linkedChatIds: readonly string[], exclude?: string) {
   return [...new Set(all)].filter((chatId) => chatId !== exclude && isPrivateChatId(chatId));
 }
 
-type BotApiResult = TelegramResult & { result?: unknown };
+const REQUEST_FAILED = "Telegram request failed or timed out";
+
+// retryAfter: the seconds Telegram asked to wait (429, too many requests).
+type BotApiResult = TelegramResult & { result?: unknown; retryAfter?: number };
 
 async function callBotApi(
   token: string,
@@ -318,18 +321,25 @@ async function callBotApi(
       body: JSON.stringify(payload),
     });
 
-    const body = (await response.json()) as { ok?: boolean; error_code?: number; result?: unknown };
+    const body = (await response.json()) as {
+      ok?: boolean;
+      error_code?: number;
+      result?: unknown;
+      parameters?: { retry_after?: unknown };
+    };
     if (!response.ok || !body.ok) {
-      return { sent: false, error: `Telegram returned ${body.error_code ?? response.status}` };
+      const retryAfter = body.parameters?.retry_after;
+      return {
+        sent: false,
+        error: `Telegram returned ${body.error_code ?? response.status}`,
+        ...(typeof retryAfter === "number" ? { retryAfter } : {}),
+      };
     }
 
     return { sent: true, result: body.result };
   } catch {
-    return {
-      sent: false,
-      // Fetch errors may contain the token-bearing URL. Never return raw errors.
-      error: "Telegram request failed or timed out",
-    };
+    // Fetch errors may contain the token-bearing URL. Never return raw errors.
+    return { sent: false, error: REQUEST_FAILED };
   }
 }
 
@@ -390,16 +400,35 @@ export function webhookSecretMatches(provided: unknown) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+// TELEGRAM_CONNECT=off is a server being tried out before the move to it
+// (deploy/oracle): it leaves every bot where it is. No webhook is set or
+// removed and no menu button changed, so a mistyped secret or address on the
+// new server cannot take the bots away from the one serving customers.
+// Messages are still sent.
+const BOTS_LEFT_ALONE = "TELEGRAM_CONNECT=off: the bots are left where they are";
+
+export function botsLeftAlone() {
+  return process.env.TELEGRAM_CONNECT?.trim().toLowerCase() === "off";
+}
+
+function webhookUrl(baseUrl: string) {
+  return `${baseUrl.replace(/\/+$/, "")}${activeBot().webhookPath}`;
+}
+
 // Points the bot at this server. Called on every start, which is harmless:
 // setWebhook with the same URL is idempotent. Note that a bot with a webhook
 // can no longer be read with getUpdates by any other program.
 export async function registerWebhook(baseUrl: string): Promise<TelegramResult> {
+  // A bot with no token, or a shop's token this SESSION_SECRET cannot open,
+  // says so even while the bots are left alone: deploy/oracle's --go-live
+  // looks for that error before it lets the bots move.
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
   const secret = webhookSecret();
   if (!secret) return { sent: false, error: "SESSION_SECRET is required for the Telegram webhook" };
+  if (botsLeftAlone()) return { sent: false, error: BOTS_LEFT_ALONE };
   const { sent, error } = await callBotApi(bot.token, "setWebhook", {
-    url: `${baseUrl.replace(/\/+$/, "")}${activeBot().webhookPath}`,
+    url: webhookUrl(baseUrl),
     secret_token: secret,
     // my_chat_member: the bot being added to a group or channel, which it
     // then leaves (a channel never sends it a message to react to).
@@ -410,10 +439,22 @@ export async function registerWebhook(baseUrl: string): Promise<TelegramResult> 
 
 // Stops Telegram calling this server for the bot: an archived shop's bot.
 export async function unregisterWebhook(): Promise<TelegramResult> {
+  if (botsLeftAlone()) return { sent: false, error: BOTS_LEFT_ALONE };
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
   const { sent, error } = await callBotApi(bot.token, "deleteWebhook", {});
   return error === undefined ? { sent } : { sent, error };
+}
+
+// Whether Telegram already delivers this bot's updates to baseUrl: true or
+// false, or undefined when Telegram could not be asked.
+export async function webhookPointsAt(baseUrl: string): Promise<boolean | undefined> {
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return undefined;
+  const { sent, result } = await callBotApi(bot.token, "getWebhookInfo", {});
+  const url = (result as { url?: unknown } | undefined)?.url;
+  if (!sent || typeof url !== "string") return undefined;
+  return url === webhookUrl(baseUrl);
 }
 
 // The bot's @username, needed to build t.me links. Cached per token after the
@@ -827,19 +868,74 @@ export async function sendWelcome(
 // Without a chat, the default button for everyone (Uzbek); with one, that
 // customer's own button in their language.
 export async function registerMenuButton(baseUrl: string, chatId?: string, lang: Lang = "uz"): Promise<TelegramResult> {
+  if (botsLeftAlone()) return { sent: false, error: BOTS_LEFT_ALONE };
   const bot = resolveBotToken();
   if (!("token" in bot)) return bot;
-  // Another shop's bot has no Mini App of its own (see appButton): its menu
-  // button stays Telegram's default, and its messages carry the links.
-  if (!activeBot().platform) {
-    const { sent, error } = await callBotApi(bot.token, "setChatMenuButton", { ...(chatId ? { chat_id: chatId } : {}), menu_button: { type: "default" } });
-    return error === undefined ? { sent } : { sent, error };
-  }
   const { sent, error } = await callBotApi(bot.token, "setChatMenuButton", {
     ...(chatId ? { chat_id: chatId } : {}),
-    menu_button: { type: "web_app", text: translate(botMessages, lang, "menuButton"), web_app: { url: shopUrl(baseUrl, "/") } },
+    menu_button: menuButton(baseUrl, lang),
   });
   return error === undefined ? { sent } : { sent, error };
+}
+
+function menuButton(baseUrl: string, lang: Lang) {
+  // Another shop's bot has no Mini App of its own (see appButton): its menu
+  // button stays Telegram's default, and its messages carry the links.
+  if (!activeBot().platform) return { type: "default" };
+  return { type: "web_app", text: translate(botMessages, lang, "menuButton"), web_app: { url: shopUrl(baseUrl, "/") } };
+}
+
+export type MenuChat = { chatId: string; lang: Lang | null };
+export type MenuRefresh = { updated: number; failed: number; stopped: boolean };
+
+// Under Telegram's limit of about 30 calls a second.
+const MENU_REFRESH_PAUSE_MS = 50;
+// This many requests in a row that never reached Telegram: it is unreachable,
+// and the rest would only wait out their timeouts.
+const MENU_REFRESH_OFFLINE_LIMIT = 5;
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// The bot's own menu button follows it to a new address, but a chat's own
+// button (a customer who reads the shop in another language than Uzbek, see
+// sendWelcome's caller) keeps the address it was set with, and once the old
+// server is gone it opens nothing. So after a move each chat's button is set
+// again: in the customer's saved language, or else reset to the bot's own.
+// A chat that blocked the bot just fails.
+export async function refreshChatMenuButtons(
+  baseUrl: string,
+  chats: readonly MenuChat[],
+  wait: (ms: number) => Promise<void> = pause,
+): Promise<MenuRefresh> {
+  const outcome: MenuRefresh = { updated: 0, failed: 0, stopped: false };
+  if (botsLeftAlone()) return outcome;
+  const bot = resolveBotToken();
+  if (!("token" in bot)) return outcome;
+  let offline = 0;
+  for (const chat of chats) {
+    if (!isPrivateChatId(chat.chatId)) continue;
+    const payload = chat.lang && chat.lang !== "uz"
+      ? { chat_id: chat.chatId, menu_button: menuButton(baseUrl, chat.lang) }
+      : { chat_id: chat.chatId };
+    let result = await callBotApi(bot.token, "setChatMenuButton", payload);
+    for (let retry = 0; retry < 3 && result.retryAfter !== undefined; retry++) {
+      await wait(result.retryAfter * 1000);
+      result = await callBotApi(bot.token, "setChatMenuButton", payload);
+    }
+    if (result.sent) {
+      outcome.updated++;
+      offline = 0;
+    } else {
+      outcome.failed++;
+      offline = result.error === REQUEST_FAILED ? offline + 1 : 0;
+      if (offline >= MENU_REFRESH_OFFLINE_LIMIT) {
+        outcome.stopped = true;
+        break;
+      }
+    }
+    await wait(MENU_REFRESH_PAUSE_MS);
+  }
+  return outcome;
 }
 
 // A Mini App receives initData signed with a key derived from the bot token.

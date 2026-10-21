@@ -1,0 +1,11 @@
+[Unit]
+Description=Q express nightly database copy
+
+[Timer]
+# 04:30 Tashkent time (23:30 UTC), when the shop is quietest. Persistent runs a
+# missed copy after the server was off.
+OnCalendar=*-*-* 23:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

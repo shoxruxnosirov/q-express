@@ -53,6 +53,8 @@ async function connectOtherShopBots(publicUrl: string) {
     try {
       const shops = await otherShopsWithBots();
       for (const shop of shops) await connectShopBot(shop, publicUrl);
+      // deploy/oracle's --go-live waits for this line.
+      logger.info({ shops: shops.length }, "Shop bots checked");
       return;
     } catch (error) {
       const delay = RETRY_DELAYS_MS[attempt];

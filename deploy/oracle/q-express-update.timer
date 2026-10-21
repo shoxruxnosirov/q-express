@@ -1,0 +1,12 @@
+[Unit]
+Description=Q express: look for a new commit every two minutes
+
+[Timer]
+# On the clock rather than after the last run, so a run that failed does not
+# stop the next one. A build still going when the next tick comes is left to
+# finish: systemd does not start a unit that is still running.
+OnCalendar=*:0/2
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

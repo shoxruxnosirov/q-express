@@ -1,0 +1,25 @@
+[Unit]
+Description=Q express (API and web app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=qexpress
+Group=qexpress
+# The release update.sh switched to; relative paths in the settings resolve
+# against it.
+WorkingDirectory=/opt/q-express/current
+EnvironmentFile=/etc/q-express/env
+ExecStart=/usr/local/bin/node --enable-source-maps artifacts/api-server/dist/index.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+# The app writes nothing to disk itself (the database is PostgreSQL's, reached
+# over its socket; pictures are on Cloudinary; logs go to the journal), so the
+# whole file system is read-only to it, its own code included.
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

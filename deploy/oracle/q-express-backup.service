@@ -1,0 +1,7 @@
+[Unit]
+Description=Q express nightly database copy
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/q-express/backup.sh

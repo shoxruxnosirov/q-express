@@ -1,0 +1,9 @@
+[Unit]
+Description=Q express: build and start the newest commit on main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/q-express/update.sh
+TimeoutStartSec=30min

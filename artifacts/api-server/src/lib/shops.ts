@@ -1,11 +1,27 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { asc, count, isNotNull } from "drizzle-orm";
+import { asc, count, eq, isNotNull } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { adminsTable, PLATFORM_SHOP_ID, shopsTable } from "@workspace/db/schema";
+import { adminsTable, botCustomerMessagesTable, PLATFORM_SHOP_ID, shopsTable, usersTable } from "@workspace/db/schema";
 import type { StoreHours } from "./store-hours";
 import { logger } from "./logger";
 import { linkedTelegramChatIds } from "./admin-directory";
-import { envBotContext, getBotUsername, knownBotUsername, registerMenuButton, registerWebhook, unregisterWebhook, withBot, type BotContext } from "./telegram";
+import { isLang } from "./i18n";
+import {
+  botsLeftAlone,
+  currentBotId,
+  envBotContext,
+  getBotUsername,
+  knownBotUsername,
+  refreshChatMenuButtons,
+  registerMenuButton,
+  registerWebhook,
+  unregisterWebhook,
+  webhookPointsAt,
+  webhookSecret,
+  withBot,
+  type BotContext,
+  type MenuChat,
+} from "./telegram";
 
 // The platform runs several shops. Shop 1 is Q express, the platform's own:
 // its bot comes from the environment as it always did. Every other shop was
@@ -259,6 +275,20 @@ async function connectBot(bot: BotContext, baseUrl: string): Promise<BotStatus> 
   let status: BotStatus;
   try {
     status = await withBot(bot, async () => {
+      // Moving to a new address: the chats' own menu buttons go first, so a
+      // move cut short is finished by the next start, which still finds the
+      // bot pointed at the old address.
+      // Not for a bot that cannot be pointed here anyway (no token or
+      // SESSION_SECRET): its webhook would never match, and every start would
+      // move the buttons again.
+      if (bot.platform && !botsLeftAlone() && webhookSecret() && (await webhookPointsAt(baseUrl)) === false) {
+        // One move at a time: a super admin's "connect again" during the
+        // one on start waits for it instead of running a second.
+        movingMenuButtons ??= moveChatMenuButtons(baseUrl).finally(() => {
+          movingMenuButtons = undefined;
+        });
+        await movingMenuButtons;
+      }
       const webhook = await registerWebhook(baseUrl);
       if (webhook.sent) logger.info({ shopId: bot.shopId }, "Telegram webhook registered");
       else logger.warn({ shopId: bot.shopId, reason: webhook.error }, "Telegram webhook not registered");
@@ -273,6 +303,54 @@ async function connectBot(bot: BotContext, baseUrl: string): Promise<BotStatus> 
   }
   botStatuses.set(bot.shopId, status);
   return status;
+}
+
+// Every chat Q express's bot may have given a menu button of its own: the
+// customers with a Telegram account, and anyone it has written to about a
+// conversation. Their saved language comes along.
+async function chatsWithMenuButtons(): Promise<MenuChat[]> {
+  const chats = new Map<string, MenuChat>();
+  const botId = currentBotId();
+  if (botId) {
+    const written = await db
+      .selectDistinct({ chatId: botCustomerMessagesTable.chatId })
+      .from(botCustomerMessagesTable)
+      .where(eq(botCustomerMessagesTable.botId, botId));
+    for (const { chatId } of written) chats.set(chatId, { chatId, lang: null });
+  }
+  const customers = await db
+    .select({ chatId: usersTable.telegramId, language: usersTable.language })
+    .from(usersTable)
+    .where(isNotNull(usersTable.telegramId));
+  for (const { chatId, language } of customers) {
+    if (chatId) chats.set(chatId, { chatId, lang: isLang(language) ? language : null });
+  }
+  return [...chats.values()];
+}
+
+let movingMenuButtons: Promise<void> | undefined;
+
+// A database that does not answer yet is asked again a few times; without it
+// the bot still moves, and the buttons then follow as each customer starts it.
+async function moveChatMenuButtons(baseUrl: string) {
+  let chats: MenuChat[] | undefined;
+  for (const delay of [0, 5_000, 15_000]) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      chats = await chatsWithMenuButtons();
+      break;
+    } catch (error) {
+      logger.warn({ error }, "Chats for the menu buttons not read");
+    }
+  }
+  if (!chats) {
+    logger.error("The chats' menu buttons were not moved to the new address");
+    return;
+  }
+  logger.info({ chats: chats.length }, "Moving the chats' menu buttons to the new address");
+  const outcome = await refreshChatMenuButtons(baseUrl, chats);
+  if (outcome.stopped) logger.error(outcome, "Telegram stopped answering while the menu buttons were moved");
+  else logger.info(outcome, "The chats' menu buttons were moved");
 }
 
 export function connectPlatformBot(baseUrl: string) {
